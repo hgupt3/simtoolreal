@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
 import rospy
@@ -282,7 +288,16 @@ class VisualizationNode:
 
         # Load the object mesh
         FAR_AWAY_OBJECT_POSITION = np.ones(3)
-        from dextoolbench.objects import NAME_TO_OBJECT
+        # from dextoolbench.objects import NAME_TO_OBJECT
+        from fabrica.objects import NAME_TO_OBJECT
+
+        if object_name not in NAME_TO_OBJECT:
+            available_object_names = sorted(NAME_TO_OBJECT.keys())
+            raise KeyError(
+                "Object name not found in NAME_TO_OBJECT. "
+                f"Searched for: {object_name!r}. "
+                f"Available object names ({len(available_object_names)}): {available_object_names}"
+            )
 
         object_urdf = NAME_TO_OBJECT[object_name].urdf_path
         goal_object_urdf = object_urdf

@@ -2,10 +2,15 @@
 
 import copy
 import datetime
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional, Tuple
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
 import rospy
@@ -17,7 +22,10 @@ from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import JointState
 from termcolor import colored
 
-from dextoolbench.objects import (
+# from dextoolbench.objects import (
+#     NAME_TO_OBJECT,
+# )
+from fabrica.objects import (
     NAME_TO_OBJECT,
 )
 from isaacgymenvs.utils.observation_action_utils_sharpa import (
@@ -27,12 +35,15 @@ from isaacgymenvs.utils.observation_action_utils_sharpa import (
     Q_UPPER_LIMITS_restricted_np as Q_UPPER_LIMITS_np,
 )
 from isaacgymenvs.utils.observation_action_utils_sharpa import (
+    _compute_keypoint_positions,
     compute_joint_pos_targets,
     compute_observation,
     create_urdf_object,
 )
 
 FORCE_FIXED_ORIENTATION = False
+HACK_SNAP_OBJECT_POSE_TO_GOAL_IF_KEYPOINT_DISTANCE_SMALL = True
+OBJECT_TO_GOAL_KEYPOINT_SNAP_DISTANCE_THRESHOLD = 0.02
 
 
 T_W_R = np.eye(4)
@@ -80,6 +91,34 @@ def info(message: str):
 
 def assert_equals(a, b):
     assert a == b, f"a: {a}, b: {b}"
+
+
+def keypoint_distance(
+    pose1_xyzw: np.ndarray, pose2_xyzw: np.ndarray, object_scales: np.ndarray
+) -> np.ndarray:
+    """Compute max keypoint L2 distance for one or more pose pairs."""
+    assert pose1_xyzw.shape == pose2_xyzw.shape, (
+        f"Expected matching pose shapes, got {pose1_xyzw.shape} and {pose2_xyzw.shape}"
+    )
+    assert pose1_xyzw.ndim == 2 and pose1_xyzw.shape[1] == 7, (
+        f"Expected pose shape (N, 7), got {pose1_xyzw.shape}"
+    )
+    n_poses = pose1_xyzw.shape[0]
+    assert object_scales.shape == (3,), (
+        f"Expected object scales shape (3,), got {object_scales.shape}"
+    )
+
+    repeated_object_scales = np.repeat(object_scales[None], n_poses, axis=0)
+    object_keypoint_positions = _compute_keypoint_positions(
+        pose=pose1_xyzw, scales=repeated_object_scales
+    )
+    goal_keypoint_positions = _compute_keypoint_positions(
+        pose=pose2_xyzw, scales=repeated_object_scales
+    )
+    keypoints_rel_goal = object_keypoint_positions - goal_keypoint_positions
+    keypoint_distances_l2 = np.linalg.norm(keypoints_rel_goal, axis=-1).max(axis=-1)
+    assert keypoint_distances_l2.shape == (n_poses,), keypoint_distances_l2.shape
+    return keypoint_distances_l2
 
 
 def get_ros_loop_rate_str(
@@ -424,6 +463,34 @@ class RLPolicyNode:
         goal_object_pose_W = np.concatenate(
             [goal_object_pos_W, goal_object_quat_xyzw_W]
         )
+
+        if HACK_SNAP_OBJECT_POSE_TO_GOAL_IF_KEYPOINT_DISTANCE_SMALL:
+            object_to_goal_keypoint_distance = keypoint_distance(
+                pose1_xyzw=object_pose_W[None],
+                pose2_xyzw=goal_object_pose_W[None],
+                object_scales=self.object_scales,
+            )[0]
+            if (
+                object_to_goal_keypoint_distance
+                < OBJECT_TO_GOAL_KEYPOINT_SNAP_DISTANCE_THRESHOLD
+            ):
+                print()
+                print("=" * 100)
+                print(
+                    colored(
+                        "HACK SNAP TRIGGERED: overwriting object_pose_W with goal_object_pose_W",
+                        "red",
+                    )
+                )
+                print(
+                    colored(
+                        f"object_to_goal_keypoint_distance: {object_to_goal_keypoint_distance:.6f} < {OBJECT_TO_GOAL_KEYPOINT_SNAP_DISTANCE_THRESHOLD:.6f}",
+                        "red",
+                    )
+                )
+                print("=" * 100)
+                print()
+                object_pose_W = np.copy(goal_object_pose_W)
 
         q = np.concatenate([iiwa_position, sharpa_position])
         qd = np.concatenate([iiwa_velocity, sharpa_velocity])
