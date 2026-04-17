@@ -32,8 +32,8 @@ def warn(message: str):
 # Constants
 # ###########
 GREEN_RGBA = (0, 255, 0, 0.5)
-AXES_LENGTH = 0.2
-AXES_RADIUS = 0.01
+AXES_LENGTH = 0.1
+AXES_RADIUS = 0.005
 
 DISABLE_AXES = False
 if DISABLE_AXES:

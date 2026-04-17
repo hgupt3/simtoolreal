@@ -312,7 +312,7 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
-    ONLY_LAST_GOAL = True
+    ONLY_LAST_GOAL = False
     if ONLY_LAST_GOAL:
         goal_poses_robot_frame = [goal_poses_robot_frame[-1]]
 
