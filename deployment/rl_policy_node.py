@@ -1529,6 +1529,15 @@ def main():
     assert config_path.exists(), f"Config path not found: {config_path}"
     assert checkpoint_path.exists(), f"Checkpoint path not found: {checkpoint_path}"
 
+
+    if args.object_name not in NAME_TO_OBJECT:
+        available_object_names = sorted(NAME_TO_OBJECT.keys())
+        raise KeyError(
+            "Object name not found in NAME_TO_OBJECT. "
+            f"Searched for: {args.object_name!r}. "
+            f"Available object names ({len(available_object_names)}): {available_object_names}"
+        )
+
     try:
         rl_policy_node = RLPolicyNode(
             config_path=config_path,
