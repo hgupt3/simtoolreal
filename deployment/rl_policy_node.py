@@ -25,7 +25,10 @@ from termcolor import colored
 # from dextoolbench.objects import (
 #     NAME_TO_OBJECT,
 # )
-from fabrica.objects import (
+# from fabrica.objects import (
+#     NAME_TO_OBJECT,
+# )
+from peg_in_hole.objects import (
     NAME_TO_OBJECT,
 )
 from isaacgymenvs.utils.observation_action_utils_sharpa import (
