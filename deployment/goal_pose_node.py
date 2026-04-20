@@ -291,16 +291,18 @@ def main():
         / f"{args.task_name}.json"
     )
     if not trajectory_path.exists():
-        print(f"Trajectory file not found: {trajectory_path}, trying Fabrica trajectory")
+        print(f"Trajectory file not found: {trajectory_path}, trying Peg-in-Hole trajectory")
         trajectory_path = (
             get_repo_root_dir()
-            / "assets/urdf/fabrica"
-            / args.object_category
-            / "trajectories"
-            / args.object_name
-            / f"{args.task_name}.json"
+            / "assets/urdf/peg_in_hole/holes/hole_tol10mm/trajectories/peg/pick_place.json"
+            # / "assets/urdf/fabrica"
+            # / "assets/urdf/"
+            # / args.object_category
+            # / "trajectories"
+            # / args.object_name
+            # / f"{args.task_name}.json"
         )
-        print(f"Fabrica trajectory path: {trajectory_path}")
+        print(f"Peg-in-Hole trajectory path: {trajectory_path}")
         assert trajectory_path.exists(), f"Trajectory file not found: {trajectory_path}"
     with open(trajectory_path) as f:
         traj_data = json.load(f)
@@ -312,11 +314,11 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
-    ONLY_LAST_TWO_GOALS = False
+    ONLY_LAST_TWO_GOALS = True
     if ONLY_LAST_TWO_GOALS:
         goal_poses_robot_frame = goal_poses_robot_frame[-2:]
 
-    ONLY_LAST_GOAL = True
+    ONLY_LAST_GOAL = False
     if ONLY_LAST_GOAL:
         goal_poses_robot_frame = [goal_poses_robot_frame[-1]]
 
