@@ -289,8 +289,8 @@ class VisualizationNode:
         # Load the object mesh
         FAR_AWAY_OBJECT_POSITION = np.ones(3)
         # from dextoolbench.objects import NAME_TO_OBJECT
-        # from fabrica.objects import NAME_TO_OBJECT
-        from peg_in_hole.objects import NAME_TO_OBJECT
+        from fabrica.objects import NAME_TO_OBJECT
+        # from peg_in_hole.objects import NAME_TO_OBJECT
 
         if object_name not in NAME_TO_OBJECT:
             available_object_names = sorted(NAME_TO_OBJECT.keys())

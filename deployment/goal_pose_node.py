@@ -314,13 +314,39 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
-    ONLY_LAST_TWO_GOALS = True
+    ONLY_LAST_TWO_GOALS = False
     if ONLY_LAST_TWO_GOALS:
         goal_poses_robot_frame = goal_poses_robot_frame[-2:]
 
     ONLY_LAST_GOAL = False
     if ONLY_LAST_GOAL:
         goal_poses_robot_frame = [goal_poses_robot_frame[-1]]
+
+    OVERWRITE_WITH_FIXED_GOALS = True
+    if OVERWRITE_WITH_FIXED_GOALS:
+        DZ = 0.025 # 2.5cm up
+        goal_poses_robot_frame = [
+            # [x, y, z, qx, qy, qz, qw]
+            [-0.13820114040414633, -0.7945828086288749, 0.6142241720692808 + DZ, 0.05030480113277667, -0.7076525950454406, 0.04521812018367412, 0.7033154010225426],
+            [-0.13820114040414633, -0.7945828086288749, 0.6142241720692808, 0.05030480113277667, -0.7076525950454406, 0.04521812018367412, 0.7033154010225426],
+        ]
+        # header: 
+        #   seq: 1323
+        #   stamp: 
+        #     secs: 1776816607
+        #     nsecs: 262202978
+        #   frame_id: "robot_frame"
+        # pose: 
+        #   position: 
+        #     x: -0.13820114040414633
+        #     y: -0.7945828086288749
+        #     z: 0.6142241720692808
+        #   orientation: 
+        #     x: 0.05030480113277667
+        #     y: -0.7076525950454406
+        #     z: 0.04521812018367412
+        #     w: 0.7033154010225426
+
 
     # Adjustments
     # goal_poses_robot_frame = [
