@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from fabrica.fabrica_eval_all import (
+from peg_in_hole_dynamic.fabrica.fabrica_eval_all import (
     ASSETS_DIR,
     BASE_OVERRIDES,
     CONTROL_DT,
@@ -43,7 +43,7 @@ from fabrica.fabrica_eval_all import (
     _table_urdf_rel,
     parse_overrides,
 )
-from fabrica.fabrica_multi_init_eval import (
+from peg_in_hole_dynamic.fabrica.fabrica_multi_init_eval import (
     GOAL_MODES,
     _GOAL_MODE_CAMEL,
 )
@@ -126,7 +126,7 @@ def _eval_scene_task(conn, assembly, part_id, config_path, checkpoint_path,
         from isaacgym import gymapi  # noqa: F401 isort:skip
         import torch
         from deployment.rl_player import RlPlayer
-        import fabrica.objects  # noqa: F401
+        import peg_in_hole_dynamic.fabrica.objects  # noqa: F401
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         obj_suffix = {"vhacd": "", "sdf": "_sdf", "coacd": "_coacd"}[collision_method]

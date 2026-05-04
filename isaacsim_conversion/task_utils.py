@@ -105,7 +105,7 @@ def load_task_spec(
         )
         traj_path = repo_root / f"assets/urdf/fabrica/{assembly}/trajectories/{part_id}/pick_place.json"
         object_name = f"{assembly}_{part_id}_{collision_method}"
-        import fabrica.objects  # noqa: F401
+        import peg_in_hole_dynamic.fabrica.objects  # noqa: F401
     else:
         table_urdf = str(
             repo_root

@@ -213,7 +213,7 @@ def run_viz(port):
     """Interactive trajectory playback viewer."""
     import viser
     from viser.extras import ViserUrdf
-    from fabrica.viser_utils import COLORS, SceneManager
+    from peg_in_hole_dynamic.fabrica.viser_utils import COLORS, SceneManager
 
     ALL_ASSEMBLIES = ["beam", "car", "cooling_manifold", "duct",
                       "gamepad", "plumbers_block", "stool_circular"]

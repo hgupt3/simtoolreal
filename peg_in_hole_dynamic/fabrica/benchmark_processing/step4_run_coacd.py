@@ -17,7 +17,7 @@ from typing import List, Literal
 import trimesh
 import tyro
 
-from fabrica.viser_utils import ASSETS_DIR
+from peg_in_hole_dynamic.fabrica.viser_utils import ASSETS_DIR
 
 
 COACD_URDF_TEMPLATE = """\
@@ -276,7 +276,7 @@ def visualize_coacd(args: RunCoacdArgs):
     import numpy as np
     import viser
 
-    from fabrica.viser_utils import load_assembly_parts, SceneManager
+    from peg_in_hole_dynamic.fabrica.viser_utils import load_assembly_parts, SceneManager
 
     server = viser.ViserServer(host="0.0.0.0", port=args.port)
     scene_mgr = SceneManager()

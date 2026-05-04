@@ -5,6 +5,12 @@ defaults:
 name: PegInHoleDynamicEnv
 
 env:
+  # Optional named problem from peg_in_hole_dynamic.PROBLEM_REGISTRY
+  # (e.g. "peg.tol0p5mm", "fabrica.beam_2x.part_2", "fmb.board_1.peg_1").
+  # When set, overrides objectName / holeUrdf / insertPoseRelHole /
+  # insertionDirection / preInsertOffset below.
+  problem: null
+
   objectName: "peg"
   useFixedGoalStates: True
   useFixedInitObjectPose: True

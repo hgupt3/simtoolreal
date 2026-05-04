@@ -38,6 +38,24 @@ class PegInHoleDynamicEnv(SimToolReal):
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id,
                  headless, virtual_screen_capture, force_render):
+        # ── Resolve `task.env.problem` against PROBLEM_REGISTRY ──
+        # If set, it overrides the flat asset/pose keys below. Lookup happens
+        # before any of those keys are read so the override is transparent.
+        problem_name = cfg["env"].get("problem", None)
+        if problem_name is not None:
+            from peg_in_hole_dynamic import PROBLEM_REGISTRY
+            if problem_name not in PROBLEM_REGISTRY:
+                raise KeyError(
+                    f"Unknown problem {problem_name!r}; "
+                    f"known problems: {sorted(PROBLEM_REGISTRY)}"
+                )
+            p = PROBLEM_REGISTRY[problem_name]
+            cfg["env"]["objectName"] = p.insertion_object_name
+            cfg["env"]["holeUrdf"] = p.receptive_urdf
+            cfg["env"]["insertPoseRelHole"] = list(p.insert_pose_rel_receptive)
+            cfg["env"]["insertionDirection"] = list(p.insertion_direction)
+            cfg["env"]["preInsertOffset"] = p.pre_insert_offset
+
         # ── Config ──
         self.enable_retract = cfg["env"].get("enableRetract", False)
         self.retract_reward_scale = cfg["env"].get("retractRewardScale", 1.0)

@@ -56,7 +56,7 @@ from pytorch3d.transforms import (
 )
 
 from dextoolbench.objects import NAME_TO_OBJECT
-import fabrica.objects  # noqa: F401 — registers fabrica parts into NAME_TO_OBJECT
+import peg_in_hole_dynamic.fabrica.objects  # noqa: F401 — registers fabrica parts into NAME_TO_OBJECT
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from isaacgymenvs.tasks.simtoolreal.utils import (
     final_goal_tolerance_curriculum,

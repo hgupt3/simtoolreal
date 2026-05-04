@@ -48,11 +48,11 @@ import numpy as np
 import trimesh
 from scipy.spatial.transform import Rotation as R
 
-from fabrica.benchmark_processing.step3_generate_trajectories import (
+from peg_in_hole_dynamic.fabrica.benchmark_processing.step3_generate_trajectories import (
     load_assembly_config,
     quat_inverse_wxyz,
 )
-from fabrica.scene_generation.trajectory_generation import generate_variable_trajectory
+from peg_in_hole_dynamic.fabrica.scene_generation.trajectory_generation import generate_variable_trajectory
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ASSETS_DIR = REPO_ROOT / "assets" / "urdf" / "fabrica"

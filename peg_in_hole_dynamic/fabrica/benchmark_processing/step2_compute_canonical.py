@@ -89,7 +89,7 @@ def find_parts(source_dir, part_filter=None):
 def run_viz(assembly, part_filter, port):
     """Viser viewer: two rows of individual parts — assembled frame vs canonical frame."""
     import viser
-    from fabrica.viser_utils import COLORS
+    from peg_in_hole_dynamic.fabrica.viser_utils import COLORS
 
     source_dir = ASSETS_DIR / assembly
     part_ids = find_parts(source_dir, part_filter)

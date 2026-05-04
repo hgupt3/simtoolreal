@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test 6 axis-aligned face-down resting orientations for FMB parts in Isaac Gym.
 
-Adapted from fabrica/scene_generation/compute_stable_rests_isaacgym.py
+Adapted from peg_in_hole_dynamic.fabrica/scene_generation/compute_stable_rests_isaacgym.py
 with ASSETS_DIR pointing to assets/urdf/fmb/.
 
 Usage:

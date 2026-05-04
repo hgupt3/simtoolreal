@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Dynamic peg-in-hole evaluation with pretrained policy (viser).
 
-Same architecture as ``peg_multi_init_eval.py`` (main-process viser GUI +
-IsaacGym subprocess) but for ``PegInHoleDynamicEnv``: no scenes.npz, hole
-position randomized each episode.
+Main-process viser GUI + IsaacGym subprocess, for ``PegInHoleDynamicEnv``:
+no scenes.npz, hole position randomized each episode.
 
 UI controls:
   - Policy      — pick from --policies-dir / --config-path subfolders
@@ -11,7 +10,7 @@ UI controls:
   - Random goal fraction — slider [0, 1] for co-training mix
 
 Usage:
-    python peg_in_hole/peg_dynamic_eval.py \\
+    python peg_in_hole_dynamic/eval.py \\
         --config-path pretrained_policy/config.yaml \\
         --checkpoint-path pretrained_policy/model.pth \\
         --port 8043
@@ -298,7 +297,7 @@ def sim_worker(conn, config_path, checkpoint_path, goal_mode,
         from isaacgym import gymapi  # noqa: F401 isort:skip
         import torch
         from deployment.rl_player import RlPlayer
-        import peg_in_hole.objects  # noqa: F401  (registers peg)
+        import peg_in_hole_dynamic.peg.objects  # noqa: F401  (registers peg)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         overrides = {

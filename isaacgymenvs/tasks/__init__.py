@@ -27,14 +27,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from .simtoolreal.env import SimToolReal
-from .fabrica_env import FabricaEnv
 from .peg_in_hole_dynamic_env import PegInHoleDynamicEnv
-from .fmb_env import FMBEnv
 
 # Mappings from strings to environments
 isaacgym_task_map = {
     "SimToolReal": SimToolReal,
-    "FabricaEnv": FabricaEnv,
-    "FMBEnv": FMBEnv,
     "PegInHoleDynamicEnv": PegInHoleDynamicEnv,
 }

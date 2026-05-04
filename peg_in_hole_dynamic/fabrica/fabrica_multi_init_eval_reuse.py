@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from fabrica.fabrica_eval_all import (
+from peg_in_hole_dynamic.fabrica.fabrica_eval_all import (
     ASSETS_DIR,
     BASE_OVERRIDES,
     N_ACT,
@@ -37,7 +37,7 @@ from fabrica.fabrica_eval_all import (
     _table_urdf_rel,
     parse_overrides,
 )
-from fabrica.fabrica_multi_init_eval import (
+from peg_in_hole_dynamic.fabrica.fabrica_multi_init_eval import (
     GOAL_MODES,
     SPLIT_FILES,
     _load_scenes,
@@ -80,7 +80,7 @@ def persistent_eval_worker(conn, assembly, part_id, collision_method,
         from isaacgym import gymapi  # noqa: F401 isort:skip
         import torch
         from deployment.rl_player import RlPlayer
-        import fabrica.objects  # noqa: F401
+        import peg_in_hole_dynamic.fabrica.objects  # noqa: F401
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         obj_suffix = {"vhacd": "", "sdf": "_sdf", "coacd": "_coacd"}[collision_method]

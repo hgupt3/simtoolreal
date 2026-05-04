@@ -557,7 +557,7 @@ def run_phase5_test():
 
     # Find object URDF (these imports are safe — no omni/isaaclab deps)
     sys.path.insert(0, str(repo_root))
-    import fabrica.objects  # noqa: registers fabrica parts
+    import peg_in_hole_dynamic.fabrica.objects  # noqa: registers fabrica parts
     from dextoolbench.objects import NAME_TO_OBJECT
     obj_info = NAME_TO_OBJECT.get("beam_2_coacd")
     if obj_info:

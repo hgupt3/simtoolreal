@@ -71,10 +71,10 @@ NAME_TO_OBJECT.update(FABRICA_NAME_TO_OBJECT)
 # code path which imports fabrica.objects (including FabricaEnv construction)
 # also picks up their NAME_TO_OBJECT entries.
 try:
-    import peg_in_hole.objects  # noqa: F401
+    import peg_in_hole_dynamic.peg.objects  # noqa: F401
 except ImportError:
     pass
 try:
-    import fmb.objects  # noqa: F401
+    import peg_in_hole_dynamic.fmb.objects  # noqa: F401
 except ImportError:
     pass

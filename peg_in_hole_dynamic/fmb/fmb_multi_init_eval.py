@@ -24,13 +24,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 FMB_ASSETS_DIR = REPO_ROOT / "assets" / "urdf" / "fmb"
 
 # Patch asset paths before importing anything else.
-import fabrica.scene_generation.generate_scenes as gen_mod
+import peg_in_hole_dynamic.fabrica.scene_generation.generate_scenes as gen_mod
 gen_mod.ASSETS_DIR = FMB_ASSETS_DIR
 
-import fabrica.benchmark_processing.step3_generate_trajectories as step3_mod
+import peg_in_hole_dynamic.fabrica.benchmark_processing.step3_generate_trajectories as step3_mod
 step3_mod.ASSETS_DIR = FMB_ASSETS_DIR
 
-import fabrica.fabrica_eval as eval_mod
+import peg_in_hole_dynamic.fabrica.fabrica_eval as eval_mod
 eval_mod.ASSETS_DIR = FMB_ASSETS_DIR
 
 # Patch _create_fabrica_env to use FMBEnv instead of FabricaEnv.
@@ -64,7 +64,7 @@ def _create_fmb_env(config_path, headless, device, overrides):
     for k, v in fmb_defaults.items():
         OmegaConf.update(cfg, f"task.env.{k}", v, force_add=True)
 
-    import fmb.objects  # noqa: F401
+    import peg_in_hole_dynamic.fmb.objects  # noqa: F401
 
     OmegaConf.update(cfg, "task.sim.physx.max_gpu_contact_pairs", 16777216, force_add=True)
     OmegaConf.update(cfg, "task.sim.physx.contact_offset", 0.005, force_add=True)
@@ -76,7 +76,7 @@ def _create_fmb_env(config_path, headless, device, overrides):
 eval_mod._create_fabrica_env = _create_fmb_env
 
 # Patch the multi-init eval module.
-import fabrica.fabrica_multi_init_eval as multi_eval_mod
+import peg_in_hole_dynamic.fabrica.fabrica_multi_init_eval as multi_eval_mod
 multi_eval_mod.ASSETS_DIR = FMB_ASSETS_DIR
 
 def _discover_fmb_assemblies():
@@ -88,8 +88,8 @@ def _discover_fmb_assemblies():
 multi_eval_mod.ALL_ASSEMBLIES = _discover_fmb_assemblies()
 
 # Inject FMB objects into FABRICA_NAME_TO_OBJECT so the eval can look them up.
-import fmb.objects
-import fabrica.objects
+import peg_in_hole_dynamic.fmb.objects
+import peg_in_hole_dynamic.fabrica.objects
 fabrica.objects.FABRICA_NAME_TO_OBJECT.update(fmb.objects.FMB_NAME_TO_OBJECT)
 
 GOAL_MODES = multi_eval_mod.GOAL_MODES

@@ -80,7 +80,7 @@ def main():
         )
         traj_path = repo_root / f"assets/urdf/fabrica/{args.assembly}/trajectories/{args.part_id}/pick_place.json"
         object_name = f"{args.assembly}_{args.part_id}_{args.collision_method}"
-        import fabrica.objects  # noqa: registers fabrica parts
+        import peg_in_hole_dynamic.fabrica.objects  # noqa: registers fabrica parts
     else:
         table_urdf = str(
             repo_root

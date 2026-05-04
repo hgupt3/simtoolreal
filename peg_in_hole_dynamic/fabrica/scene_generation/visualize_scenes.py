@@ -30,7 +30,7 @@ import trimesh
 import viser
 from viser.extras import ViserUrdf
 
-from fabrica.viser_utils import COLORS, SceneManager
+from peg_in_hole_dynamic.fabrica.viser_utils import COLORS, SceneManager
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ASSETS_DIR = REPO_ROOT / "assets" / "urdf" / "fabrica"

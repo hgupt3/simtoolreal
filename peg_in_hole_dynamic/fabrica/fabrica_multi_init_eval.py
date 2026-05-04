@@ -30,8 +30,8 @@ import trimesh
 import viser
 from viser.extras import ViserUrdf
 
-from fabrica.viser_utils import COLORS
-from fabrica.fabrica_eval import (
+from peg_in_hole_dynamic.fabrica.viser_utils import COLORS
+from peg_in_hole_dynamic.fabrica.fabrica_eval import (
     ASSETS_DIR,
     DEFAULT_DOF_POS,
     N_ACT,
@@ -387,7 +387,7 @@ class MultiInitAssemblyDemo:
         dynamic inserting part per scene.
         """
         self._clear_dynamic()
-        from fabrica.objects import FABRICA_NAME_TO_OBJECT
+        from peg_in_hole_dynamic.fabrica.objects import FABRICA_NAME_TO_OBJECT
 
         scenes = self._get_scenes(assembly)
         assembly_order = scenes["assembly_order"]
@@ -403,7 +403,7 @@ class MultiInitAssemblyDemo:
 
         # Fixture parts (everything strictly before `part_id` in assembly_order),
         # positioned at the scene's partial_assembly_offset via world_assembled_pose.
-        from fabrica.benchmark_processing.step3_generate_trajectories import (
+        from peg_in_hole_dynamic.fabrica.benchmark_processing.step3_generate_trajectories import (
             quat_inverse_wxyz,
         )
         ct_path = ASSETS_DIR / assembly / "canonical_transforms.json"

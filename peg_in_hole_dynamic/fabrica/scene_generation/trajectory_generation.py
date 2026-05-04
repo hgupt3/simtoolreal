@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from fabrica.benchmark_processing.step3_generate_trajectories import slerp_wxyz
+from peg_in_hole_dynamic.fabrica.benchmark_processing.step3_generate_trajectories import slerp_wxyz
 
 
 def generate_variable_trajectory(

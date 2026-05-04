@@ -77,13 +77,9 @@ include = [
     "isaacsim_conversion*",
     "dextoolbench*",
     "deployment*",
-    "fabrica*",
     "baselines*",
     "recorded_data*",
-    "peg_in_hole*",
-    "peg_in_hole_fixtured*",
-    "peg_in_hole_tolerances*",
-    "fmb*",
+    "peg_in_hole_dynamic*",
 ]
 
 [tool.uv]

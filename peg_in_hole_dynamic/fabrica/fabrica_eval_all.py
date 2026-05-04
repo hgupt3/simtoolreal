@@ -270,7 +270,7 @@ def eval_single_task(conn, assembly, part_id, config_path, checkpoint_path,
         from isaacgym import gymapi  # noqa: F401 isort:skip
         import torch  # noqa: E401
         from deployment.rl_player import RlPlayer
-        import fabrica.objects  # noqa: F401
+        import peg_in_hole_dynamic.fabrica.objects  # noqa: F401
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         obj_suffix = {"vhacd": "", "sdf": "_sdf", "coacd": "_coacd"}[collision_method]

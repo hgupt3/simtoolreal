@@ -48,7 +48,7 @@ def run_viz(assemblies, output_dir, port):
     """Viser viewer: all parts in assembled frame with explode/assemble animation."""
     import numpy as np
     import viser
-    from fabrica.viser_utils import COLORS, compute_explode_offsets, load_all_assemblies
+    from peg_in_hole_dynamic.fabrica.viser_utils import COLORS, compute_explode_offsets, load_all_assemblies
 
     print("Loading meshes...")
     all_parts = load_all_assemblies(output_dir)
