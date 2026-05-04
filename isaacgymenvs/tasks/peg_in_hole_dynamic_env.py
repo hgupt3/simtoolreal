@@ -42,11 +42,17 @@ class PegInHoleDynamicEnv(SimToolReal):
         self.enable_retract = cfg["env"].get("enableRetract", False)
         self.retract_reward_scale = cfg["env"].get("retractRewardScale", 1.0)
         self.retract_distance_threshold = cfg["env"].get("retractDistanceThreshold", 0.1)
-        self.retract_success_bonus = cfg["env"].get("retractSuccessBonus", 1000.0)
+        # retract_success_bonus is derived in code (see post-super() block)
         self.retract_success_tolerance = cfg["env"].get("retractSuccessTolerance", 0.005)
 
         self.random_goal_fraction = cfg["env"].get("randomGoalFraction", 0.0)
-        self.random_goal_max_successes = cfg["env"].get("randomGoalMaxSuccesses", 50)
+        self.random_goal_max_successes = cfg["env"].get("randomGoalMaxSuccesses", 5)
+
+        self.insertion_success_tolerance = cfg["env"].get("insertionSuccessTolerance", 0.01)
+        self.lift_bonus_fade_threshold = cfg["env"].get("liftBonusFadeThreshold", 2.0)
+        self.random_goal_curriculum_success_threshold = cfg["env"].get(
+            "randomGoalCurriculumSuccessThreshold", 2.0
+        )
 
         self.goal_mode = cfg["env"].get("goalMode", "preInsertAndFinal")
         assert self.goal_mode in VALID_GOAL_MODES, (
@@ -113,6 +119,33 @@ class PegInHoleDynamicEnv(SimToolReal):
             (self.num_envs,), self._num_insertion_goals, dtype=torch.long, device=self.device
         )
         self.prev_episode_env_max_goals = self.env_max_goals.clone()
+
+        # Fixed-at-init allocation: each env is insertion or reaching for the
+        # full run. random_goal_fraction governs the per-env Bernoulli.
+        if self.random_goal_fraction > 0:
+            coin = torch.rand(self.num_envs, device=self.device)
+            self.is_random_goal_env[:] = coin < self.random_goal_fraction
+            self.env_max_goals[:] = torch.where(
+                self.is_random_goal_env,
+                torch.full_like(self.env_max_goals, self.random_goal_max_successes),
+                torch.full_like(self.env_max_goals, self._num_insertion_goals),
+            )
+        else:
+            self.is_random_goal_env[:] = False
+            self.env_max_goals[:] = self._num_insertion_goals
+        self.prev_episode_is_random_goal[:] = self.is_random_goal_env
+        self.prev_episode_env_max_goals[:] = self.env_max_goals
+
+        # Retract bonus is derived so that a successful insertion+retract
+        # episode is worth at least as much as a fully-completed reaching
+        # episode (random_goal_max_successes * reach_goal_bonus).
+        self.retract_success_bonus = float(
+            self.random_goal_max_successes * self.reach_goal_bonus
+        )
+
+        # One-way fade gate for the lift bonus on reaching envs (see
+        # compute_kuka_reward). Insertion envs never get the lift bonus.
+        self.lift_bonus_active = True
 
         self.retract_phase = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.retract_succeeded = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -529,20 +562,6 @@ class PegInHoleDynamicEnv(SimToolReal):
             self.prev_episode_env_max_goals[env_ids] = self.env_max_goals[env_ids]
             self.prev_episode_is_random_goal[env_ids] = self.is_random_goal_env[env_ids]
 
-            # Co-training coin flip
-            if self.random_goal_fraction > 0:
-                coin = torch.rand(len(env_ids), device=self.device)
-                is_rg = coin < self.random_goal_fraction
-                self.is_random_goal_env[env_ids] = is_rg
-                self.env_max_goals[env_ids] = torch.where(
-                    is_rg,
-                    torch.full_like(self.env_max_goals[env_ids], self.random_goal_max_successes),
-                    torch.full_like(self.env_max_goals[env_ids], self._num_insertion_goals),
-                )
-            else:
-                self.is_random_goal_env[env_ids] = False
-                self.env_max_goals[env_ids] = self._num_insertion_goals
-
             # Sample hole XY on table
             table_top_z = self.table_init_state[env_ids, 2] + TABLE_HALF_HEIGHT
             hole_x = torch_rand_float(
@@ -681,6 +700,17 @@ class PegInHoleDynamicEnv(SimToolReal):
     # Retract reward + reset logic (from PegInHoleEnv)
     # ────────────────────────────────────────────────────────────────
 
+    def _curriculum_eligible_mask(self):
+        # Reaching envs only — insertion uses a fixed tolerance.
+        if self.random_goal_fraction <= 0:
+            return None
+        return self.is_random_goal_env
+
+    def _curriculum_success_threshold(self):
+        if self.random_goal_fraction <= 0:
+            return None
+        return float(self.random_goal_curriculum_success_threshold)
+
     def _compute_resets(self, is_success):
         if not self.enable_retract:
             return super()._compute_resets(is_success)
@@ -752,22 +782,42 @@ class PegInHoleDynamicEnv(SimToolReal):
             return super().compute_kuka_reward()
 
         lifting_rew, lift_bonus_rew, lifted_object = self._lifting_reward()
+
+        # Lift bonus policy:
+        #   - Insertion envs never receive the lift bonus.
+        #   - Reaching envs receive it until mean_rg_prev_ep_successes >= fade
+        #     threshold, then it turns off (one-way).
+        mean_rg_eps = 0.0
+        if self.lift_bonus_active and self.is_random_goal_env.any():
+            rg_successes = self.prev_episode_successes[self.is_random_goal_env].float()
+            if rg_successes.numel() > 0:
+                mean_rg_eps = rg_successes.mean().item()
+                if mean_rg_eps >= self.lift_bonus_fade_threshold:
+                    self.lift_bonus_active = False
+        if self.lift_bonus_active:
+            lift_mask = self.is_random_goal_env.float()
+        else:
+            lift_mask = torch.zeros(
+                self.num_envs, dtype=torch.float, device=self.device,
+            )
+        lifting_rew = lifting_rew * lift_mask
+        lift_bonus_rew = lift_bonus_rew * lift_mask
+
         fingertip_delta_rew, hand_delta_penalty = self._distance_delta_rewards(lifted_object)
         keypoint_rew, keypoint_rew_fixed_size = self._keypoint_reward(lifted_object)
         if self.cfg["env"]["fixedSizeKeypointReward"]:
             keypoint_rew = keypoint_rew_fixed_size
 
-        if self.cfg["env"].get("finalGoalToleranceCurriculumEnabled", False):
-            final_tol = self.final_goal_success_tolerance
-        else:
-            final_tol = self.cfg["env"].get("finalGoalSuccessTolerance", None)
-        if final_tol is not None and self.cfg["env"]["useFixedGoalStates"]:
-            is_final_goal = ((self.successes == (self.env_max_goals - 1)) & ~self.is_random_goal_env) | self.retract_phase
-            base_tol = self.success_tolerance * self.keypoint_scale
-            tight_tol = final_tol * self.keypoint_scale
-            keypoint_success_tolerance = torch.where(is_final_goal, tight_tol, base_tol)
-        else:
-            keypoint_success_tolerance = self.success_tolerance * self.keypoint_scale
+        # Insertion envs always evaluate against insertion_success_tolerance
+        # (default 0.01 m). Reaching envs follow the curriculum-driven
+        # success_tolerance.
+        fixed_ins_tol = self.insertion_success_tolerance * self.keypoint_scale
+        curriculum_tol = self.success_tolerance * self.keypoint_scale
+        keypoint_success_tolerance = torch.where(
+            self.is_random_goal_env,
+            torch.full_like(self.keypoints_max_dist, curriculum_tol),
+            torch.full_like(self.keypoints_max_dist, fixed_ins_tol),
+        )
 
         near_goal = self.keypoints_max_dist <= keypoint_success_tolerance
         if self.cfg["env"]["fixedSizeKeypointReward"]:
@@ -852,6 +902,8 @@ class PegInHoleDynamicEnv(SimToolReal):
         self.extras["retract_phase_ratio"] = self.retract_phase.float().mean().item()
         self.extras["retract_success_ratio"] = self.retract_succeeded.float().mean().item()
         self.extras["retract_success_tolerance"] = self.retract_success_tolerance
+        self.extras["lift_bonus_active"] = float(self.lift_bonus_active)
+        self.extras["mean_rg_prev_ep_successes"] = mean_rg_eps
 
         resets = self._compute_resets(is_success)
         self.reset_buf[:] = resets

@@ -1557,6 +1557,18 @@ class SimToolReal(VecTask):
     def _extra_object_indices(self, env_ids: Tensor) -> List[Tensor]:
         return [self.goal_object_indices[env_ids]]
 
+    def _curriculum_eligible_mask(self):
+        """Optional mask over envs that count toward the tolerance curriculum.
+        Default: all envs. Subclasses can override to e.g. restrict the gate
+        to a co-training subset."""
+        return None
+
+    def _curriculum_success_threshold(self):
+        """Optional override for the curriculum-gate threshold.
+        Default: use `min(3.0, 0.8 * max_consecutive_successes)` inside
+        `tolerance_curriculum`."""
+        return None
+
     def _extra_curriculum(self):
         self.success_tolerance, self.last_curriculum_update = tolerance_curriculum(
             self.last_curriculum_update,
@@ -1568,6 +1580,8 @@ class SimToolReal(VecTask):
             self.target_tolerance,
             self.tolerance_curriculum_increment,
             self.max_consecutive_successes,
+            eligible_mask=self._curriculum_eligible_mask(),
+            success_threshold=self._curriculum_success_threshold(),
         )
 
         if self.cfg["env"].get("finalGoalToleranceCurriculumEnabled", False):

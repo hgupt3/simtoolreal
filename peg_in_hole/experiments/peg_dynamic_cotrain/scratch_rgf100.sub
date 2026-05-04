@@ -24,7 +24,7 @@ MINIBATCH_SIZE=98304
 SEED=0
 
 RANDOM_GOAL_FRACTION=1.0
-RANDOM_GOAL_MAX_SUCCESSES=50
+RANDOM_GOAL_MAX_SUCCESSES=5
 
 FINAL_GOAL_TOLERANCE_CURRICULUM=False
 FINAL_GOAL_TOLERANCE_INITIAL=0.01
@@ -46,7 +46,8 @@ LIFTING_BONUS=300.0
 ENABLE_RETRACT=True
 RETRACT_REWARD_SCALE=1.0
 RETRACT_DISTANCE_THRESHOLD=0.1
-RETRACT_SUCCESS_BONUS=1000.0
+# retractSuccessBonus is derived in code as
+# random_goal_max_successes * reach_goal_bonus.
 RETRACT_SUCCESS_TOLERANCE=0.005
 
 WANDB_PROJECT="PEG_IN_HOLE_DYNAMIC"
@@ -133,7 +134,6 @@ python -u -m isaacgymenvs.train \
     task.env.enableRetract=$ENABLE_RETRACT \
     task.env.retractRewardScale=$RETRACT_REWARD_SCALE \
     task.env.retractDistanceThreshold=$RETRACT_DISTANCE_THRESHOLD \
-    task.env.retractSuccessBonus=$RETRACT_SUCCESS_BONUS \
     task.env.retractSuccessTolerance=$RETRACT_SUCCESS_TOLERANCE \
     task.env.randomGoalFraction=$RANDOM_GOAL_FRACTION \
     task.env.randomGoalMaxSuccesses=$RANDOM_GOAL_MAX_SUCCESSES \

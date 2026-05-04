@@ -37,18 +37,35 @@ env:
 
   # Co-training: random goal fraction
   randomGoalFraction: 0.0
-  randomGoalMaxSuccesses: 50
+  randomGoalMaxSuccesses: 5
 
   # Retract phase
   enableRetract: True
   retractRewardScale: 1.0
   retractDistanceThreshold: 0.1
-  retractSuccessBonus: 1000.0
+  # NOTE: retractSuccessBonus is derived in code as
+  # random_goal_max_successes * reach_goal_bonus, so do not set it here.
   retractSuccessTolerance: 0.005
 
-  # Random-goal workspace (match SimToolReal defaults)
-  targetVolumeMins: [-0.35, -0.1, 0.6]
-  targetVolumeMaxs: [0.35, 0.2, 0.95]
+  # Insertion always evaluates against this fixed tolerance (curriculum
+  # only applies to reaching envs).
+  insertionSuccessTolerance: 0.01
+
+  # One-way fade gate for the lift bonus on reaching envs. Lift bonus is
+  # never applied to insertion envs. On reaching envs, the bonus turns
+  # off the first time mean(prev_episode_successes[is_random_goal_env])
+  # crosses this threshold, and never reactivates.
+  liftBonusFadeThreshold: 2.0
+
+  # Reaching-side tolerance curriculum gate. Curriculum advances when the
+  # mean episode successes among reaching envs exceeds this value.
+  randomGoalCurriculumSuccessThreshold: 2.0
+
+  # Random-goal workspace (tightened: 50 x 30 x 25 cm centered above the
+  # hole sampling region, replacing the prior 70 x 30 x 35 cm volume that
+  # extended above the working zone).
+  targetVolumeMins: [-0.25, -0.1, 0.60]
+  targetVolumeMaxs: [ 0.25,  0.2, 0.85]
 
   # Goal observation noise (per-episode XY offset on actor obs only)
   goalXyObsNoise: 0.002

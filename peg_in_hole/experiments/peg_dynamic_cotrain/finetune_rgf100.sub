@@ -12,18 +12,18 @@
 #SBATCH -e /dev/null
 
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  FROM SCRATCH, rgf=0.0 (100% insertion, no random goals).    ║
-# ║  PegInHoleDynamicEnv, preInsertAndFinal, lifting ON, DR ON. ║
-# ║  Control arm — insertion-only from scratch.        ║
+# ║  FINETUNE, rgf=1.0 (100% random-goal, no insertion).         ║
+# ║  PegInHoleDynamicEnv, preInsertAndFinal, lifting ON, DR ON.  ║
+# ║  Warm-started from pretrained SimToolReal checkpoint.        ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 GOAL_MODE="preInsertAndFinal"
-CHECKPOINT=""
+CHECKPOINT="/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth"
 NUM_ENVS=24576
 MINIBATCH_SIZE=98304
 SEED=0
 
-RANDOM_GOAL_FRACTION=0.0
+RANDOM_GOAL_FRACTION=1.0
 RANDOM_GOAL_MAX_SUCCESSES=5
 
 FINAL_GOAL_TOLERANCE_CURRICULUM=False
@@ -52,7 +52,7 @@ RETRACT_SUCCESS_TOLERANCE=0.005
 
 WANDB_PROJECT="PEG_IN_HOLE_DYNAMIC"
 WANDB_GROUP="peg_dynamic_cotrain"
-EXPERIMENT_TAG="scratch_rgf0"
+EXPERIMENT_TAG="finetune_rgf100"
 
 # ╔══════════════════════════════════════════════════════════════╗
 # ║         END CONFIG — generally don't edit below here        ║
