@@ -38,23 +38,22 @@ class PegInHoleDynamicEnv(SimToolReal):
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id,
                  headless, virtual_screen_capture, force_render):
-        # ── Resolve `task.env.problem` against PROBLEM_REGISTRY ──
-        # If set, it overrides the flat asset/pose keys below. Lookup happens
-        # before any of those keys are read so the override is transparent.
-        problem_name = cfg["env"].get("problem", None)
-        if problem_name is not None:
-            from peg_in_hole_dynamic import PROBLEM_REGISTRY
-            if problem_name not in PROBLEM_REGISTRY:
-                raise KeyError(
-                    f"Unknown problem {problem_name!r}; "
-                    f"known problems: {sorted(PROBLEM_REGISTRY)}"
-                )
-            p = PROBLEM_REGISTRY[problem_name]
-            cfg["env"]["objectName"] = p.insertion_object_name
-            cfg["env"]["holeUrdf"] = p.receptive_urdf
-            cfg["env"]["insertPoseRelHole"] = list(p.insert_pose_rel_receptive)
-            cfg["env"]["insertionDirection"] = list(p.insertion_direction)
-            cfg["env"]["preInsertOffset"] = p.pre_insert_offset
+        # ── Resolve `task.env.problem` ──
+        # The problem name is required and is the single source of truth for
+        # (insertion_object, receptive_object, insert_pose). The env never
+        # reads holeUrdf / insertPoseRelHole / insertionDirection /
+        # preInsertOffset / objectName from cfg directly — they come from
+        # PROBLEM_REGISTRY here, then are written into cfg so the parent
+        # SimToolReal class can pick up `objectName`.
+        from peg_in_hole_dynamic import PROBLEM_REGISTRY
+        problem_name = cfg["env"]["problem"]
+        if problem_name not in PROBLEM_REGISTRY:
+            raise KeyError(
+                f"Unknown problem {problem_name!r}; "
+                f"known problems: {sorted(PROBLEM_REGISTRY)}"
+            )
+        p = PROBLEM_REGISTRY[problem_name]
+        cfg["env"]["objectName"] = p.insertion_object_name
 
         # ── Config ──
         self.enable_retract = cfg["env"].get("enableRetract", False)
@@ -79,19 +78,17 @@ class PegInHoleDynamicEnv(SimToolReal):
         self._num_insertion_goals = 2 if self.goal_mode == "preInsertAndFinal" else 1
 
         # Insertion pose relative to hole origin [x, y, z, qx, qy, qz, qw]
-        insert_pose_rel = cfg["env"].get(
-            "insertPoseRelHole", [0.0, 0.0, 0.136, 0.0, -0.70710678, 0.0, 0.70710678]
-        )
+        # comes from the resolved Problem.
+        insert_pose_rel = list(p.insert_pose_rel_receptive)
         self._insert_pos_rel = torch.tensor(insert_pose_rel[:3], dtype=torch.float32)
         self._insert_quat_xyzw = torch.tensor(insert_pose_rel[3:7], dtype=torch.float32)
 
-        # Approach direction + pre-insert back-off distance
-        ins_dir = cfg["env"].get("insertionDirection", [0.0, 0.0, -1.0])
-        self._insertion_dir = torch.tensor(ins_dir, dtype=torch.float32)
+        # Approach direction + pre-insert back-off distance from Problem
+        self._insertion_dir = torch.tensor(list(p.insertion_direction), dtype=torch.float32)
         self._insertion_dir = self._insertion_dir / self._insertion_dir.norm()
-        self.pre_insert_offset = cfg["env"].get("preInsertOffset", 0.05)
+        self.pre_insert_offset = float(p.pre_insert_offset)
 
-        self._hole_urdf = cfg["env"].get("holeUrdf", "urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf")
+        self._hole_urdf = p.receptive_urdf
 
         hole_x_range = cfg["env"].get("holeXRange", [-0.1875, 0.1875])
         hole_y_range = cfg["env"].get("holeYRange", [-0.1, 0.2])

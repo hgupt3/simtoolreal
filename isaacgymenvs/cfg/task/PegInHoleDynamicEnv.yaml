@@ -5,37 +5,26 @@ defaults:
 name: PegInHoleDynamicEnv
 
 env:
-  # Optional named problem from peg_in_hole_dynamic.PROBLEM_REGISTRY
-  # (e.g. "peg.tol0p5mm", "fabrica.beam_2x.part_2", "fmb.board_1.peg_1").
-  # When set, overrides objectName / holeUrdf / insertPoseRelHole /
-  # insertionDirection / preInsertOffset below.
-  problem: null
+  # Required: name of a problem in peg_in_hole_dynamic.PROBLEM_REGISTRY.
+  # The Problem fully defines the insertion asset, the receptive (hole)
+  # asset, and the insert pose; the env never reads any of those keys
+  # directly — they're populated from the Problem at __init__ time.
+  problem: "peg.tol0p5mm"
 
-  objectName: "peg"
   useFixedGoalStates: True
   useFixedInitObjectPose: True
   asset:
     table: "urdf/table_narrow.urdf"
 
-  # Hole asset (loaded as a separate actor, repositioned per episode)
-  holeUrdf: "urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf"
-
-  # Hole position sampling range (relative to table center XY)
+  # Hole position sampling range (relative to table center XY).
+  # The receptive object's position is randomized within this range each
+  # reset; this is task-level placement, independent of the problem.
   holeXRange: [-0.1875, 0.1875]
   holeYRange: [-0.1, 0.2]
   # Z offset for hole placement above table surface. Use this when the hole
   # mesh origin is at its bbox center (e.g. centered FMB boards need half-height
   # offset). 0.0 = origin sits on table surface (correct for box-primitive holes).
   holeZOffset: 0.0
-
-  # Goal computation
-  # Peg pose when fully inserted, relative to hole origin (on table surface).
-  # [x, y, z, qx, qy, qz, qw] — xyzw quaternion.
-  # Default: peg handle center 0.136m above hole base, body +X pointing down.
-  insertPoseRelHole: [0.0, 0.0, 0.136, 0.0, -0.70710678, 0.0, 0.70710678]
-  # Approach direction (unit vector). Pre-insert pose backs off along -direction.
-  insertionDirection: [0.0, 0.0, -1.0]  # top-down insertion
-  preInsertOffset: 0.05  # meters to back off along -insertionDirection
 
   # Goal mode: "preInsertAndFinal" (2 subgoals) or "finalGoalOnly" (1 subgoal).
   # "dense" is NOT supported.
