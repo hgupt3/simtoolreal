@@ -18,6 +18,13 @@ class Problem:
     insertion_object_name: str                         # key into NAME_TO_OBJECT
     receptive_urdf: str                                # path relative to assets/urdf/
     insert_pose_rel_receptive: Tuple[float, float, float, float, float, float, float]
+    # World-frame Z offset for placing the receptive URDF root above the table
+    # top. Typically half the receiver's canonical Z extent (so the receiver's
+    # bottom face sits on the table top). The receptive URDF root is the
+    # receiver's canonical-mesh origin (centered at its centroid by canonical-
+    # mesh convention), so loading at z = table_top_z + hole_z_offset puts the
+    # bottom face flush with the table.
+    hole_z_offset: float = 0.0
     insertion_direction: Tuple[float, float, float] = (0.0, 0.0, -1.0)
     pre_insert_offset: float = 0.05
 

@@ -12,7 +12,7 @@ import numpy as np
 import trimesh
 import viser
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = REPO_ROOT / "assets" / "urdf" / "fabrica"
 
 # Distinct colors for target parts
