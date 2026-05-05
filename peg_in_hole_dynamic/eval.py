@@ -102,58 +102,82 @@ def quat_xyzw_to_wxyz(q):
 
 
 def _load_mesh_for_viz(asset_path: Path) -> trimesh.Trimesh:
-    """Load a mesh for viser visualization. Handles URDF (box + mesh geometry)
-    and plain mesh files (OBJ, STL)."""
+    """Load a mesh for viser visualization. Handles URDFs by composing
+    each link's parent-joint origin with each collision/visual ``<origin>``,
+    so multi-link fixture URDFs (joint-origin-driven layouts like our
+    fabrica/fmb insertion_fixtures) render at the correct assembled pose."""
     if asset_path.suffix in (".obj", ".stl", ".ply"):
         return trimesh.load(str(asset_path), force="mesh")
 
-    # Parse URDF: extract boxes and mesh references from collision geometry
     import xml.etree.ElementTree as ET
+    from scipy.spatial.transform import Rotation
     tree = ET.parse(str(asset_path))
-    meshes = []
-    for col in tree.iter("collision"):
-        origin = col.find("origin")
-        xyz = [0.0, 0.0, 0.0]
-        rpy = [0.0, 0.0, 0.0]
-        if origin is not None:
-            if origin.get("xyz"):
-                xyz = [float(v) for v in origin.get("xyz").split()]
-            if origin.get("rpy"):
-                rpy = [float(v) for v in origin.get("rpy").split()]
-        geom = col.find("geometry")
-        if geom is None:
-            continue
-        box = geom.find("box")
-        mesh_elem = geom.find("mesh")
-        if box is not None:
-            size = [float(v) for v in box.get("size").split()]
-            m = trimesh.creation.box(extents=size)
-        elif mesh_elem is not None:
-            mesh_file = asset_path.parent / mesh_elem.get("filename")
-            if not mesh_file.exists():
-                continue
-            m = trimesh.load(str(mesh_file), force="mesh")
-        else:
-            continue
-        # Apply origin transform
+    root = tree.getroot()
+
+    def _origin_T(elem):
         T = np.eye(4)
+        if elem is None:
+            return T
+        xyz = [float(v) for v in elem.get("xyz", "0 0 0").split()]
+        rpy = [float(v) for v in elem.get("rpy", "0 0 0").split()]
         T[:3, 3] = xyz
         if any(v != 0 for v in rpy):
-            from scipy.spatial.transform import Rotation
             T[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
-        m.apply_transform(T)
-        meshes.append(m)
-    if not meshes:
-        # Fallback: try loading the URDF's visual meshes
-        for vis in tree.iter("visual"):
-            geom = vis.find("geometry")
+        return T
+
+    # Build child_link -> (parent_T, parent_link). Most of our fixture
+    # URDFs are flat (parent = "root"), so a single chain is sufficient.
+    parent_T_of: dict = {}
+    parent_link_of: dict = {}
+    for joint in root.findall("joint"):
+        child = joint.find("child")
+        parent = joint.find("parent")
+        if child is None or parent is None:
+            continue
+        parent_T_of[child.get("link")] = _origin_T(joint.find("origin"))
+        parent_link_of[child.get("link")] = parent.get("link")
+
+    def _link_world_T(link_name):
+        T = np.eye(4)
+        cur = link_name
+        guard = 0
+        while cur in parent_T_of and guard < 32:
+            T = parent_T_of[cur] @ T
+            cur = parent_link_of.get(cur, "")
+            guard += 1
+        return T
+
+    def _collect_geom(link_elem, prefer_tag):
+        out = []
+        link_T = _link_world_T(link_elem.get("name", ""))
+        for elem in link_elem.findall(prefer_tag):
+            geom = elem.find("geometry")
             if geom is None:
                 continue
+            local_T = _origin_T(elem.find("origin"))
+            box = geom.find("box")
             mesh_elem = geom.find("mesh")
-            if mesh_elem is not None:
+            if box is not None:
+                m = trimesh.creation.box(
+                    extents=[float(v) for v in box.get("size").split()]
+                )
+            elif mesh_elem is not None:
                 mesh_file = asset_path.parent / mesh_elem.get("filename")
-                if mesh_file.exists():
-                    meshes.append(trimesh.load(str(mesh_file), force="mesh"))
+                if not mesh_file.exists():
+                    continue
+                m = trimesh.load(str(mesh_file), force="mesh")
+            else:
+                continue
+            m.apply_transform(link_T @ local_T)
+            out.append(m)
+        return out
+
+    meshes = []
+    for link in root.findall("link"):
+        meshes.extend(_collect_geom(link, "collision"))
+    if not meshes:
+        for link in root.findall("link"):
+            meshes.extend(_collect_geom(link, "visual"))
     if not meshes:
         return trimesh.creation.box(extents=(0.08, 0.08, 0.01))
     return trimesh.util.concatenate(meshes)
@@ -174,6 +198,7 @@ def _create_env(config_path, headless, device, overrides):
     cfg.task.name = "PegInHoleDynamicEnv"
     cfg.task_name = "PegInHoleDynamicEnv"
     pih_defaults = {
+        "problem": "peg.tol0p5mm",
         "objectName": "peg",
         "useFixedGoalStates": True,
         "useFixedInitObjectPose": True,
@@ -817,9 +842,15 @@ if __name__ == "__main__":
     parser.add_argument("--goal-mode", choices=GOAL_MODES, default="preInsertAndFinal")
     parser.add_argument("--random-goal-fraction", type=float, default=0.0)
     parser.add_argument("--object-urdf", type=str, default=None,
-                        help="Object URDF path relative to assets/ (default: urdf/peg_in_hole/peg/peg.urdf)")
+                        help="Object URDF path relative to assets/ (default: urdf/peg_in_hole/peg/peg.urdf, or derived from --problem)")
     parser.add_argument("--hole-urdf", type=str, default=None,
-                        help="Hole URDF path relative to assets/ (default: urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf)")
+                        help="Hole URDF path relative to assets/ (default: urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf, or derived from --problem)")
+    parser.add_argument("--problem", type=str, default=None,
+                        help="Problem name from PROBLEM_REGISTRY. When set, derives "
+                             "object_urdf + hole_urdf from the registry, sets "
+                             "task.env.problem, and overrides task.env.holeXRange / "
+                             "holeYRange / holeZOffset / insertPoseRelHole / "
+                             "insertionDirection / preInsertOffset accordingly.")
     parser.add_argument("--override", nargs=2, action="append", default=[],
                         metavar=("KEY", "VALUE"),
                         help="Extra task-env overrides (repeated).")
@@ -835,6 +866,33 @@ if __name__ == "__main__":
         raise FileNotFoundError(p)
 
     extra_overrides = {}
+    object_urdf_arg = args.object_urdf
+    hole_urdf_arg = args.hole_urdf
+    if args.problem is not None:
+        from peg_in_hole_dynamic import PROBLEM_REGISTRY
+        from dextoolbench.objects import NAME_TO_OBJECT
+        if args.problem not in PROBLEM_REGISTRY:
+            raise KeyError(
+                f"Unknown problem {args.problem!r}; "
+                f"known: {sorted(PROBLEM_REGISTRY)}"
+            )
+        _p = PROBLEM_REGISTRY[args.problem]
+        _obj = NAME_TO_OBJECT.get(_p.insertion_object_name)
+        if _obj is None:
+            raise KeyError(
+                f"insertion_object_name {_p.insertion_object_name!r} not in NAME_TO_OBJECT"
+            )
+        if hole_urdf_arg is None:
+            hole_urdf_arg = _p.receptive_urdf
+        if object_urdf_arg is None:
+            obj_path = Path(_obj.urdf_path)
+            try:
+                object_urdf_arg = str(obj_path.relative_to(REPO_ROOT / "assets"))
+            except ValueError:
+                object_urdf_arg = str(obj_path)
+        # Push into the IsaacGym subprocess so the env's registry resolver picks it up.
+        extra_overrides["task.env.problem"] = args.problem
+
     for key, val in args.override:
         # Try parsing as JSON first (handles lists like [-0.005,0.1,0.2])
         import json
@@ -886,6 +944,6 @@ if __name__ == "__main__":
         random_goal_fraction=args.random_goal_fraction,
         initial_policy=args.initial_policy,
         extra_overrides=extra_overrides,
-        object_urdf=args.object_urdf,
-        hole_urdf=args.hole_urdf,
+        object_urdf=object_urdf_arg,
+        hole_urdf=hole_urdf_arg,
     ).run()
