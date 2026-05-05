@@ -803,12 +803,10 @@ class PegInHoleDynamicEnv(SimToolReal):
         #   - Reaching envs receive it until mean_rg_prev_ep_successes >= fade
         #     threshold, then it turns off (one-way).
         mean_rg_eps = 0.0
-        if self.lift_bonus_active and self.is_random_goal_env.any():
-            rg_successes = self.prev_episode_successes[self.is_random_goal_env].float()
-            if rg_successes.numel() > 0:
-                mean_rg_eps = rg_successes.mean().item()
-                if mean_rg_eps >= self.lift_bonus_fade_threshold:
-                    self.lift_bonus_active = False
+        if self.is_random_goal_env.any():
+            mean_rg_eps = self.prev_episode_successes[self.is_random_goal_env].float().mean().item()
+        if self.lift_bonus_active and mean_rg_eps >= self.lift_bonus_fade_threshold:
+            self.lift_bonus_active = False
         if self.lift_bonus_active:
             lift_mask = self.is_random_goal_env.float()
         else:
