@@ -573,6 +573,11 @@ class PegInHoleDynamicEnv(SimToolReal):
     # ────────────────────────────────────────────────────────────────
 
     def reset_object_pose(self, env_ids, reset_buf_idxs=None, tensor_reset=True):
+        # Run the parent reset FIRST so table_init_state[:, 2] reflects the
+        # freshly-sampled per-env table z (per tableResetZRange). The hole is
+        # then placed against the actual table top, not the previous episode's.
+        super().reset_object_pose(env_ids, reset_buf_idxs, tensor_reset)
+
         if tensor_reset and len(env_ids) > 0 and reset_buf_idxs is None:
             self.prev_episode_env_max_goals[env_ids] = self.env_max_goals[env_ids]
             self.prev_episode_is_random_goal[env_ids] = self.is_random_goal_env[env_ids]
@@ -625,8 +630,6 @@ class PegInHoleDynamicEnv(SimToolReal):
                     self.cfg["env"]["goalXyObsNoise"],
                     (len(env_ids), 2), device=self.device,
                 )
-
-        super().reset_object_pose(env_ids, reset_buf_idxs, tensor_reset)
 
     def _reset_target(self, env_ids, reset_buf_idxs=None, tensor_reset=True, is_first_goal=True):
         if len(env_ids) > 0 and reset_buf_idxs is None and tensor_reset:
