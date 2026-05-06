@@ -8,6 +8,7 @@ UI controls:
   - Policy      — pick from --policies-dir / --config-path subfolders
   - Problem     — pick a PROBLEM_REGISTRY entry, then click Load / reload env
   - Goal mode   — preInsertAndFinal / finalGoalOnly
+  - Success tolerances — insertion/retract env tolerances applied at load
   - Random goal fraction — slider [0, 1] for co-training mix
 
 Usage:
@@ -56,6 +57,8 @@ HOLE_SCENE_Z = 0.15  # hole base Z in scene-local frame (= table top)
 # Target volume for random-goal sampling (matches PegInHoleDynamicEnv.yaml)
 TARGET_VOLUME_MINS = [-0.35, -0.1, 0.6]
 TARGET_VOLUME_MAXS = [0.35, 0.2, 0.95]
+DEFAULT_INSERTION_SUCCESS_TOLERANCE = 0.01
+DEFAULT_RETRACT_SUCCESS_TOLERANCE = 0.005
 
 BASE_OVERRIDES = {
     "task.env.resetPositionNoiseX": 0.0,
@@ -259,6 +262,7 @@ def _create_env(config_path, headless, device, overrides):
         "retractDistanceThreshold": 0.1,
         "retractSuccessBonus": 1000.0,
         "retractSuccessTolerance": 0.005,
+        "insertionSuccessTolerance": 0.01,
         "goalXyObsNoise": 0.0,
         "tableForceResetThreshold": 100.0,
         "holeUrdf": "urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf",
@@ -282,17 +286,34 @@ def _sim_get_state(env, obs, joint_lower, joint_upper):
     joint_pos = 0.5 * (obs_np[:N_ACT] + 1.0) * (joint_upper - joint_lower) + joint_lower
     hole_pos = env.hole_pos[0].cpu().numpy() if hasattr(env, "hole_pos") else np.zeros(3)
     is_rg = bool(env.is_random_goal_env[0].item()) if hasattr(env, "is_random_goal_env") else False
+    retract_phase = bool(env.retract_phase[0].item())
+    fixed_size_keypoints = bool(env.cfg["env"].get("fixedSizeKeypointReward", False))
+    if retract_phase:
+        keypoint_dist = env.keypoints_max_dist[0]
+        success_tolerance = env.retract_success_tolerance
+    else:
+        keypoint_dist = (
+            env.keypoints_max_dist_fixed_size[0]
+            if fixed_size_keypoints and hasattr(env, "keypoints_max_dist_fixed_size")
+            else env.keypoints_max_dist[0]
+        )
+        success_tolerance = (
+            env.success_tolerance
+            if is_rg
+            else getattr(env, "insertion_success_tolerance", env.success_tolerance)
+        )
+
     return (
         joint_pos,                                           # 0
         env.object_state[0, :7].cpu().numpy(),               # 1
         env.goal_pose[0].cpu().numpy(),                      # 2
         env.obj_keypoint_pos[0].cpu().numpy(),               # 3
         env.goal_keypoint_pos[0].cpu().numpy(),              # 4
-        bool(env.retract_phase[0].item()),                   # 5
+        retract_phase,                                       # 5
         bool(env.retract_succeeded[0].item()),               # 6
         float(env.curr_fingertip_distances[0].mean().item()),# 7
-        float(env.keypoints_max_dist[0].item()),             # 8
-        float(env.success_tolerance * env.keypoint_scale),   # 9
+        float(keypoint_dist.item()),                         # 8
+        float(success_tolerance * env.keypoint_scale),        # 9
         int(env.near_goal_steps[0].item()),                  # 10
         int(env.progress_buf[0].item()),                     # 11
         int(env.max_episode_length),                         # 12
@@ -525,6 +546,14 @@ class PegDynamicDemo:
                 "Random goal frac", min=0.0, max=1.0, step=0.1,
                 initial_value=self.random_goal_fraction,
             )
+            self._sl_insertion_tol = self.server.gui.add_slider(
+                "Insertion tol (m)", min=0.001, max=0.02, step=0.001,
+                initial_value=DEFAULT_INSERTION_SUCCESS_TOLERANCE,
+            )
+            self._sl_retract_tol = self.server.gui.add_slider(
+                "Retract tol (m)", min=0.001, max=0.01, step=0.001,
+                initial_value=DEFAULT_RETRACT_SUCCESS_TOLERANCE,
+            )
             self._btn_load = self.server.gui.add_button("Load / reload env")
             self._btn_load.on_click(lambda _: self._load_env())
             self._md_status = self.server.gui.add_markdown("**Status:** Ready")
@@ -754,6 +783,8 @@ class PegDynamicDemo:
         problem_name = self._dd_problem.value
         goal_mode = self._dd_goal_mode.value
         rgf = self._sl_rgf.value
+        insertion_tol = float(self._sl_insertion_tol.value)
+        retract_tol = float(self._sl_retract_tol.value)
         policy_name = self._dd_policy.value
         config_path, checkpoint_path = self.policies[policy_name]
 
@@ -767,7 +798,10 @@ class PegDynamicDemo:
 
         self._kill_subprocess()
 
-        label = f"{problem_name} | {policy_name} | goals: {goal_mode} | rgf: {rgf:.1f}"
+        label = (
+            f"{problem_name} | {policy_name} | goals: {goal_mode} | rgf: {rgf:.1f} | "
+            f"ins: {insertion_tol * 1000:.1f}mm | ret: {retract_tol * 1000:.1f}mm"
+        )
         self._md_status.content = f"**Status:** Loading *{label}* ..."
         self._md_task.content = f"**Task:** {label}"
         self._md_retract.content = "**Retract:** --"
@@ -785,6 +819,8 @@ class PegDynamicDemo:
         sim_overrides["task.env.holeUrdf"] = self._hole_urdf_rel
         sim_overrides["task.env.targetVolumeMins"] = TARGET_VOLUME_MINS
         sim_overrides["task.env.targetVolumeMaxs"] = TARGET_VOLUME_MAXS
+        sim_overrides["task.env.insertionSuccessTolerance"] = insertion_tol
+        sim_overrides["task.env.retractSuccessTolerance"] = retract_tol
 
         ctx = multiprocessing.get_context("spawn")
         parent_conn, child_conn = ctx.Pipe()
