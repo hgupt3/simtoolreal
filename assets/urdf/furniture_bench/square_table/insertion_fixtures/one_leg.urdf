@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot name="one_leg_receptive">
+  <link name="receptive">
+    <visual name="slab_v"><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../square_table_top/square_table_top_synthetic.obj" scale="1 1 1"/></geometry></visual>
+    <collision name="bulk_0_c"><origin xyz="0.0 0.07405575 0.0" rpy="0 0 0"/><geometry><box size="0.1625 0.0143895 0.03125"/></geometry></collision>
+    <collision name="bulk_1_c"><origin xyz="0.0 -0.017188249999999995 0.0" rpy="0 0 0"/><geometry><box size="0.1625 0.12812450000000003 0.03125"/></geometry></collision>
+    <collision name="bulk_2_c"><origin xyz="-0.07394600000000001 0.05686750000000001 0.0" rpy="0 0 0"/><geometry><box size="0.014607999999999996 0.01998699999999999 0.03125"/></geometry></collision>
+    <collision name="bulk_3_c"><origin xyz="0.017696 0.05686750000000001 0.0" rpy="0 0 0"/><geometry><box size="0.127108 0.01998699999999999 0.03125"/></geometry></collision>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../hole_patches/one_leg_coacd/decomp_0.obj" scale="1 1 1"/></geometry></collision>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../hole_patches/one_leg_coacd/decomp_1.obj" scale="1 1 1"/></geometry></collision>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../hole_patches/one_leg_coacd/decomp_2.obj" scale="1 1 1"/></geometry></collision>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="../hole_patches/one_leg_coacd/decomp_3.obj" scale="1 1 1"/></geometry></collision>
+  </link>
+</robot>

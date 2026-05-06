@@ -94,7 +94,10 @@ class PegInHoleDynamicEnv(SimToolReal):
         hole_y_range = cfg["env"].get("holeYRange", [-0.1, 0.2])
         self.hole_x_min, self.hole_x_max = float(hole_x_range[0]), float(hole_x_range[1])
         self.hole_y_min, self.hole_y_max = float(hole_y_range[0]), float(hole_y_range[1])
-        self.hole_z_offset = float(cfg["env"].get("holeZOffset", 0.0))
+        # Keep placement fully problem-defined. This matters for centered
+        # receptive assets such as FurnitureBench table tops; leaving the
+        # YAML default at 0.0 would bury half the fixture in the table.
+        self.hole_z_offset = float(p.hole_z_offset)
 
         # Parent init placeholders (don't override objectName — respect config/CLI)
         cfg["env"]["useFixedGoalStates"] = True

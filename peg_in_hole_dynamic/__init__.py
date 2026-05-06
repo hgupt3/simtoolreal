@@ -35,6 +35,7 @@ PROBLEM_REGISTRY: Dict[str, Problem] = {}
 # Trigger registration of per-domain problems by importing the subpackages —
 # each one's __init__.py imports its `problems` module for the side effect of
 # populating PROBLEM_REGISTRY.
-from . import peg      # noqa: E402, F401
-from . import fabrica  # noqa: E402, F401
-from . import fmb      # noqa: E402, F401
+from . import peg               # noqa: E402, F401
+from . import fabrica           # noqa: E402, F401
+from . import fmb               # noqa: E402, F401
+from . import furniture_bench   # noqa: E402, F401
