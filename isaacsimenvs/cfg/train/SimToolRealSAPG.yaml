@@ -126,7 +126,7 @@ params:
     expl_type: mixed_expl_learn_param
     expl_reward_type: entropy
     expl_reward_coef_embd_size: 32
-    expl_reward_coef_scale: 0.005
+    expl_reward_coef_scale: 0.002
     expl_coef_block_size: 4096
 
     player:
