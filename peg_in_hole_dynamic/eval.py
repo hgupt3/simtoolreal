@@ -408,6 +408,8 @@ class PegDynamicDemo:
         self._obj_frame = None
         self._goal_frame = None
         self._hole_frame = None
+        self._object_viz = None
+        self._goal_viz = None
         self._obj_keypoints = []
         self._goal_keypoints = []
 
@@ -451,6 +453,12 @@ class PegDynamicDemo:
         with self.server.gui.add_folder("Display", expand_by_default=True):
             self._cb_keypoints = self.server.gui.add_checkbox("Show keypoints", initial_value=True)
             self._cb_keypoints.on_update(lambda _: self._apply_keypoint_visibility())
+            self._cb_goal = self.server.gui.add_checkbox("Show goal", initial_value=True)
+            self._cb_goal.on_update(lambda _: self._apply_goal_visibility())
+            self._sl_goal_opacity = self.server.gui.add_slider(
+                "Goal opacity", min=0.0, max=1.0, step=0.05, initial_value=0.5,
+            )
+            self._sl_goal_opacity.on_update(lambda _: self._apply_goal_visibility())
             self._cb_target_vol = self.server.gui.add_checkbox("Show target volume", initial_value=False)
             self._cb_target_vol.on_update(lambda _: self._toggle_target_volume())
 
@@ -491,32 +499,52 @@ class PegDynamicDemo:
         )
 
     def _clear_dynamic(self):
-        for h in self._dyn:
+        for h in reversed(self._dyn):
             try:
                 h.remove()
             except Exception:
                 pass
         self._dyn.clear()
         self._obj_frame = self._goal_frame = self._hole_frame = None
+        self._object_viz = self._goal_viz = None
         self._obj_keypoints.clear()
         self._goal_keypoints.clear()
 
     def _add_object_viz(self, node_name: str, color, opacity=1.0):
-        """Add object mesh to scene. Uses ViserUrdf for URDFs, mesh_simple for OBJ/STL."""
-        if self._object_urdf_abs.suffix == ".urdf":
-            try:
-                ViserUrdf(self.server, self._object_urdf_abs,
-                          root_node_name=node_name, mesh_color_override=color)
-                return
-            except Exception:
-                pass
+        """Add object mesh to scene from the preloaded trimesh.
+
+        Reconstructing ViserUrdf objects inside the GUI load callback can block
+        reloads for detailed URDFs. A single composed mesh is enough for this
+        eval overlay and lets the goal ghost opacity update live.
+        """
+        rgb = color[:3] if len(color) >= 3 else color
         verts = np.array(self._object_mesh.vertices, dtype=np.float32)
         faces = np.array(self._object_mesh.faces, dtype=np.uint32)
-        rgb = color[:3] if len(color) >= 3 else color
-        self._dyn.append(self.server.scene.add_mesh_simple(
+        return self.server.scene.add_mesh_simple(
             f"{node_name}/mesh", vertices=verts, faces=faces,
             color=rgb, opacity=opacity,
-        ))
+        )
+
+    def _set_viz_visible(self, viz, visible):
+        if viz is None:
+            return
+        if hasattr(viz, "show_visual"):
+            viz.show_visual(visible)
+            return
+        try:
+            viz.visible = visible
+        except AttributeError:
+            pass
+
+    def _set_viz_opacity(self, viz, opacity):
+        if viz is None:
+            return
+        handles = getattr(viz, "_meshes", [viz])
+        for handle in handles:
+            try:
+                handle.opacity = opacity
+            except AttributeError:
+                pass
 
     def _setup_scene_objects(self):
         self._clear_dynamic()
@@ -525,13 +553,17 @@ class PegDynamicDemo:
             "/object", show_axes=True, axes_length=0.05, axes_radius=0.001,
         )
         self._dyn.append(self._obj_frame)
-        self._add_object_viz("/object", (204, 40, 40))
+        self._object_viz = self._add_object_viz("/object", (204, 40, 40))
+        self._dyn.append(self._object_viz)
 
         self._goal_frame = self.server.scene.add_frame(
             "/goal", show_axes=True, axes_length=0.05, axes_radius=0.001,
         )
         self._dyn.append(self._goal_frame)
-        self._add_object_viz("/goal", (0, 255, 0), opacity=0.5)
+        self._goal_viz = self._add_object_viz(
+            "/goal", (0, 255, 0), opacity=self._sl_goal_opacity.value,
+        )
+        self._dyn.append(self._goal_viz)
 
         self._hole_frame = self.server.scene.add_frame(
             "/hole", position=(0, 0, TABLE_Z + HOLE_SCENE_Z),
@@ -544,6 +576,7 @@ class PegDynamicDemo:
             faces=np.array(self._hole_mesh.faces, dtype=np.uint32),
             color=(120, 120, 120),
         ))
+        self._apply_goal_visibility()
 
     def _update_hole_viz(self, hole_pos):
         if self._hole_frame is not None:
@@ -574,8 +607,23 @@ class PegDynamicDemo:
 
     def _apply_keypoint_visibility(self):
         visible = self._cb_keypoints.value
-        for kp in self._obj_keypoints + self._goal_keypoints:
+        for kp in self._obj_keypoints:
             kp.visible = visible
+        self._apply_goal_visibility()
+
+    def _apply_goal_visibility(self):
+        goal_visible = self._cb_goal.value and self._sl_goal_opacity.value > 0.0
+        opacity = float(self._sl_goal_opacity.value)
+        if self._goal_frame is not None:
+            self._goal_frame.visible = goal_visible
+        self._set_viz_visible(self._goal_viz, goal_visible)
+        self._set_viz_opacity(self._goal_viz, opacity)
+        for kp in self._goal_keypoints:
+            kp.visible = goal_visible and self._cb_keypoints.value
+            try:
+                kp.opacity = opacity
+            except AttributeError:
+                pass
 
     def _toggle_target_volume(self):
         show = self._cb_target_vol.value
