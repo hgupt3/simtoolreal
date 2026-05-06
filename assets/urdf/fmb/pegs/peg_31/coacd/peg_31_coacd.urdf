@@ -249,4 +249,31 @@
     <child link="hull_8"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
+  <material name="color_9">
+    <color rgba="0.3 0.9 0.5 1.0"/>
+  </material>
+  <link name="hull_9">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_9.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="color_9"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_9.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hull_joint_9" type="fixed">
+    <parent link="base_link"/>
+    <child link="hull_9"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
 </robot>

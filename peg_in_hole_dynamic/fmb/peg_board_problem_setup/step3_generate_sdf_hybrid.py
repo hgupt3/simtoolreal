@@ -71,12 +71,20 @@ BODY_COACD_KW  = dict(threshold=0.03, max_convex_hull=-1, seed=0)
 # Pose helpers (must match fmb/problems.py:_register_peg_board_problems)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _peg_assembled_quat(yaw_saved_deg: float, rotated_z90: bool) -> R:
-    """The receiver-A-frame rotation applied to the peg's canonical mesh."""
+def _peg_assembled_quat(yaw_saved_deg: float, R_storage_to_canonical) -> R:
+    """The receiver-A-frame rotation applied to the peg's canonical mesh.
+
+    Mirrors the composition in fmb/problems.py — saved yaw was authored
+    against the storage mesh, so we compose
+    ``R_x180 ∘ R_yaw ∘ (P^T)`` to make the world-frame pose
+    independent of the canonical permutation P.
+    """
+    import numpy as np
+    P = np.asarray(R_storage_to_canonical, dtype=float)
     R_x180 = R.from_euler("x", 180, degrees=True)
     R_yaw  = R.from_euler("z", float(yaw_saved_deg), degrees=True)
-    R_can_inv = R.from_euler("z", -90, degrees=True) if rotated_z90 else R.identity()
-    return R_x180 * R_yaw * R_can_inv
+    R_canonical_to_storage = R.from_matrix(P.T)
+    return R_x180 * R_yaw * R_canonical_to_storage
 
 
 def _long_axis_index(mesh: trimesh.Trimesh) -> int:
@@ -209,9 +217,13 @@ def _process_pair(hole_id: str, info: dict, board_A: trimesh.Trimesh) -> None:
         return
 
     canonical = trimesh.load_mesh(str(canonical_obj), process=False)
-    rotated_z90 = bool(json.loads(meta_path.read_text())["canonical_rotated_z90"])
+    meta = json.loads(meta_path.read_text())
+    if "R_storage_to_canonical" not in meta:
+        print(f"  WARN: {peg_name} canonical_meta.json predates strict-X>Y>Z "
+              f"convention; re-run step2_generate_assets. Skip.")
+        return
 
-    rotation = _peg_assembled_quat(info["yaw_deg"], rotated_z90)
+    rotation = _peg_assembled_quat(info["yaw_deg"], meta["R_storage_to_canonical"])
     axis     = _long_axis_index(canonical)
     side     = _tip_side_for_long_axis(canonical, axis, rotation)
     print(f"  peg long axis = {'XYZ'[axis]} ({side}-end is tip)")

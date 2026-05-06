@@ -361,18 +361,36 @@ def generate_board_assets(data: dict) -> Path:
     return receptive_paths
 
 
-def generate_peg_assets(peg_name: str) -> bool:
+def _proper_perm_to_strict_xyz(extents: np.ndarray) -> np.ndarray:
+    """3x3 rotation matrix `P` such that `P @ v_storage` lives in a frame
+    with strict extents X > Y > Z. Always a proper rotation (det = +1):
+    if the permutation alone gives det = -1, flip the sign of the new Z
+    row (the smallest extent — least visible flip).
+    """
+    axes_desc = np.argsort(-extents)        # e.g. [2, 0, 1] for x>y, [2, 1, 0] for y>x
+    P = np.zeros((3, 3))
+    for i, a in enumerate(axes_desc):
+        P[i, a] = 1.0
+    if np.linalg.det(P) < 0:
+        P[2, axes_desc[2]] = -1.0           # flip the Z row to make det = +1
+    return P
+
+
+def generate_peg_assets(peg_name: str) -> dict:
     """Build canonical mesh, CoACD, and URDFs for one long peg.
 
-    Canonical pose convention:
-      * XYZ-centered at bbox centroid.
-      * Longest XY direction aligned with X. If the storage .obj has its
-        longer side along Y, we apply a 90° Z rotation to the canonical
-        mesh so the convention holds.
+    Canonical pose convention (unified with fabrica beam_2x): the canonical
+    mesh is XYZ-centered at the bbox centroid and oriented so that
+    extents satisfy **strict X > Y > Z** — long axis along X, longer
+    cross-section axis along Y, shorter cross-section axis along Z.
 
-    Returns True if a Z-rotation was applied (consumers downstream may
-    need to compose `R_z(-90°)` into the assembled-pose quaternion to
-    cancel it out).
+    The rotation that takes a vertex from storage frame to this canonical
+    frame is recorded as ``R_storage_to_canonical`` (a 3x3 list) in
+    ``canonical_meta.json``. Consumers compose its inverse into the
+    assembled-pose quaternion so the world-frame inserted pose is
+    independent of any per-peg permutation step2 had to apply.
+
+    Returns the meta dict written to canonical_meta.json.
     """
     print(f"\n=== Inserter: {peg_name} ===")
     peg_dir       = PEG_DIR / peg_name
@@ -380,22 +398,21 @@ def generate_peg_assets(peg_name: str) -> bool:
     canonical_obj = peg_dir / f"{peg_name}_canonical.obj"
 
     raw = trimesh.load_mesh(str(obj_path), process=False)
-    canonical = raw.copy()
-    # XY-Z center
-    canonical.vertices = canonical.vertices - (raw.bounds[0] + raw.bounds[1]) / 2
 
-    # Enforce: canonical X-extent >= Y-extent. Rotate 90° about Z if not.
-    ext = canonical.bounds[1] - canonical.bounds[0]
-    rotated_z90 = bool(ext[1] > ext[0])
-    if rotated_z90:
-        # 90° about +Z: (x, y, z) → (-y, x, z)
-        v = canonical.vertices.copy()
-        canonical.vertices = np.column_stack([-v[:, 1], v[:, 0], v[:, 2]])
+    # Center at bbox centroid in storage frame.
+    centered = raw.copy()
+    centered.vertices = centered.vertices - (raw.bounds[0] + raw.bounds[1]) / 2
+
+    # Permute axes so canonical extents satisfy strict X > Y > Z.
+    P = _proper_perm_to_strict_xyz(centered.bounds[1] - centered.bounds[0])
+    canonical = centered.copy()
+    canonical.vertices = (P @ centered.vertices.T).T
 
     canonical.export(str(canonical_obj))
     e = canonical.bounds[1] - canonical.bounds[0]
     print(f"  canonical extent: ({e[0]*1000:.1f}, {e[1]*1000:.1f}, {e[2]*1000:.1f}) mm  "
-          f"(rotated_z90={rotated_z90})")
+          f"(strict X>Y>Z: {e[0] > e[1] > e[2]})")
+    print(f"  R_storage_to_canonical = {P.tolist()}")
 
     # CoACD on the canonical (centered + oriented) mesh
     coacd_dir = peg_dir / "coacd"
@@ -403,10 +420,13 @@ def generate_peg_assets(peg_name: str) -> bool:
 
     hull_filenames = [hp.name for hp in sorted(coacd_dir.glob("decomp_*.obj"))]
 
-    # Persist the canonical-rotation flag alongside the mesh so the Problem
-    # registration code knows whether to apply the inverse Z90 to the saved
-    # yaw values (which were authored against the storage-frame mesh).
-    meta = {"canonical_rotated_z90": rotated_z90}
+    # Persist the storage→canonical rotation so problems.py can compose its
+    # inverse into the assembled-pose quaternion (the saved yaw_deg was
+    # authored against the storage-frame mesh).
+    meta = {
+        "convention": "X > Y > Z strict; long axis on X",
+        "R_storage_to_canonical": P.tolist(),
+    }
     (peg_dir / "canonical_meta.json").write_text(json.dumps(meta, indent=2))
 
     # Write URDFs
@@ -416,7 +436,7 @@ def generate_peg_assets(peg_name: str) -> bool:
     _write_peg_coacd_urdf(coacd_urdf, f"{peg_name}_coacd", hull_filenames)
     print(f"  visual URDF  → {visual_urdf.relative_to(REPO_ROOT)}")
     print(f"  CoACD  URDF  → {coacd_urdf.relative_to(REPO_ROOT)}  ({len(hull_filenames)} hulls)")
-    return rotated_z90
+    return meta
 
 
 def main() -> None:

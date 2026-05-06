@@ -1,3 +1,20 @@
 {
-  "canonical_rotated_z90": true
+  "convention": "X > Y > Z strict; long axis on X",
+  "R_storage_to_canonical": [
+    [
+      0.0,
+      0.0,
+      1.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      -1.0,
+      0.0,
+      0.0
+    ]
+  ]
 }

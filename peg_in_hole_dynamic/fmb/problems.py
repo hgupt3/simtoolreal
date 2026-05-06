@@ -179,13 +179,23 @@ def _register_peg_board_problems(board_name: str) -> None:
                          board_name, hole_id, peg_name)
             continue
 
-        rotated_z90 = bool(json.loads(meta_path.read_text()).get(
-            "canonical_rotated_z90", False))
+        meta = json.loads(meta_path.read_text())
+        if "R_storage_to_canonical" not in meta:
+            _LOG.warning(
+                "fmb.%s.%s: canonical_meta.json missing R_storage_to_canonical "
+                "— re-run step2_generate_assets. Skipping.",
+                board_name, hole_id,
+            )
+            continue
+        import numpy as np
+        P = np.asarray(meta["R_storage_to_canonical"], dtype=float)
 
-        # Peg height in A-frame = canonical mesh's Z extent (≈ 0.15 for long pegs)
+        # Peg height = longest canonical extent (X under the strict
+        # X>Y>Z convention). Fall back to argmax for older meshes.
         import trimesh
         canonical = trimesh.load_mesh(str(canonical_obj), process=False)
-        peg_h = float(canonical.bounds[1, 2] - canonical.bounds[0, 2])
+        ext = canonical.bounds[1] - canonical.bounds[0]
+        peg_h = float(ext.max())
 
         cx, cy   = info["hole_xy_A"]
         ndx, ndy = info["nudge_mm"]
@@ -195,10 +205,15 @@ def _register_peg_board_problems(board_name: str) -> None:
             peg_h / 2.0,
         )
 
+        # The yaw_deg in the JSON was authored against the storage mesh
+        # (step1's GUI flipped the storage mesh by R_x(180°) and yawed it).
+        # Compose:  q = R_x(180°) * R_z(yaw_storage) * P^T,
+        # so that  q * canonical = R_x(180°) * R_z(yaw_storage) * storage,
+        # i.e. the world-frame inserted pose is independent of P.
         R_x180 = R.from_euler("x", 180, degrees=True)
         R_yaw  = R.from_euler("z", float(info["yaw_deg"]), degrees=True)
-        R_can_inv = (R.from_euler("z", -90, degrees=True) if rotated_z90 else R.identity())
-        q = R_x180 * R_yaw * R_can_inv
+        R_canonical_to_storage = R.from_matrix(P.T)
+        q = R_x180 * R_yaw * R_canonical_to_storage
         qx, qy, qz, qw = (float(v) for v in q.as_quat())
 
         name = f"fmb.{board_name}.{peg_name}"
