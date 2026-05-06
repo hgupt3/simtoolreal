@@ -125,23 +125,24 @@ def _compute_kp_offsets(insertion_object_name: str) -> np.ndarray:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _problem_world_poses(problem) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return (receptive_pos, receptive_quat, inserter_pre_pose7, inserter_final_pose7)
+    """Return (receptive_pos, receptive_quat, first_subgoal_pose7, final_pose7)
     in world frame with the receptive at origin XY on the table."""
     recv_pos = np.array([0.0, 0.0, TABLE_TOP_Z + problem.hole_z_offset])
     recv_quat = np.array([0.0, 0.0, 0.0, 1.0])
 
-    insert_pos_rel = np.array(problem.insert_pose_rel_receptive[:3])
-    insert_quat    = np.array(problem.insert_pose_rel_receptive[3:7])
-    insertion_dir  = np.array(problem.insertion_direction, dtype=np.float64)
-    insertion_dir /= max(np.linalg.norm(insertion_dir), 1e-9)
-    pre_offset     = float(problem.pre_insert_offset)
+    first_pose = problem.insert_pose_rel_receptive[0]
+    final_pose = problem.final_insert_pose_rel_receptive
+    first_pos_rel = np.array(first_pose[:3])
+    first_quat = np.array(first_pose[3:7])
+    final_pos_rel = np.array(final_pose[:3])
+    final_quat = np.array(final_pose[3:7])
 
-    final_world_pos = recv_pos + insert_pos_rel
-    pre_world_pos   = final_world_pos - insertion_dir * pre_offset
+    first_world_pos = recv_pos + first_pos_rel
+    final_world_pos = recv_pos + final_pos_rel
 
-    pre_pose7   = np.concatenate([pre_world_pos,   insert_quat])
-    final_pose7 = np.concatenate([final_world_pos, insert_quat])
-    return recv_pos, recv_quat, pre_pose7, final_pose7
+    first_pose7 = np.concatenate([first_world_pos, first_quat])
+    final_pose7 = np.concatenate([final_world_pos, final_quat])
+    return recv_pos, recv_quat, first_pose7, final_pose7
 
 
 def _camera_for_pose(world_pos):
@@ -180,13 +181,14 @@ def validate(problem_name: str, *, steps_pre_to_final: int = 200,
     print(f"Problem:        {problem_name}")
     print(f"  receptive:    {problem.receptive_urdf}")
     print(f"  inserter:     {inserter_abs.relative_to(ASSETS_DIR)}")
-    print(f"  insert pose:  {tuple(round(v, 4) for v in problem.insert_pose_rel_receptive)}")
+    print(f"  insert subgoals: {len(problem.insert_pose_rel_receptive)}")
+    print(f"  final pose:   {tuple(round(v, 4) for v in problem.final_insert_pose_rel_receptive)}")
     print(f"  pre_insert_offset = {problem.pre_insert_offset}")
     print(f"  insertion_direction = {tuple(problem.insertion_direction)}")
     print(f"  hole_z_offset = {problem.hole_z_offset}")
 
     recv_pos, recv_quat, pre_pose7, final_pose7 = _problem_world_poses(problem)
-    print(f"  pre-insert world pose:  ({pre_pose7[0]:+.4f}, {pre_pose7[1]:+.4f}, {pre_pose7[2]:+.4f})")
+    print(f"  first-subgoal world pose: ({pre_pose7[0]:+.4f}, {pre_pose7[1]:+.4f}, {pre_pose7[2]:+.4f})")
     print(f"  final-insert world pose: ({final_pose7[0]:+.4f}, {final_pose7[1]:+.4f}, {final_pose7[2]:+.4f})")
 
     kp_offsets = _compute_kp_offsets(problem.insertion_object_name)

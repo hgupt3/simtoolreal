@@ -8,7 +8,7 @@ receptive (hole) URDF differs.
 
 from pathlib import Path
 
-from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem
+from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem, make_pre_insert_sequence
 
 
 # Canonical pose: peg handle center 13.6 cm above hole base, body +X
@@ -38,7 +38,7 @@ def _register_all() -> None:
             name=name,
             insertion_object_name="peg",
             receptive_urdf=urdf_rel,
-            insert_pose_rel_receptive=_PEG_INSERT_POSE,
+            insert_pose_rel_receptive=make_pre_insert_sequence(_PEG_INSERT_POSE),
         )
 
 

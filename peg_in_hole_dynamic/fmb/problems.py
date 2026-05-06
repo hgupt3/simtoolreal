@@ -18,8 +18,9 @@ For each ``(insertion_part, receiver)`` pair in
     inlines its CoACD hulls (canonical) under one ``<link>`` whose joint
     origin = ``(original_centroid_p, inverse(q_a→c_p))`` — i.e. each
     part's assembled pose.
-  * ``insert_pose_rel_receptive`` = the inserter's A-frame pose:
-    ``(original_centroid_ins, inverse(q_a→c_ins))``.
+  * ``insert_pose_rel_receptive`` = the ordered insertion-subgoal sequence.
+    Plain insertion tasks use pre-insert, then the inserter's A-frame
+    assembled pose, ``(original_centroid_ins, inverse(q_a→c_ins))``.
   * ``hole_z_offset = 0``: the URDF root sits on the table top by
     construction (the lowest fixture point in A-frame is z=0).
 
@@ -30,7 +31,7 @@ import json
 import logging
 from pathlib import Path
 
-from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem
+from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem, make_pre_insert_sequence
 from peg_in_hole_dynamic.fabrica._pose_utils import write_fixture_urdf
 from peg_in_hole_dynamic.fabrica.problems import _assembled_pose
 
@@ -122,7 +123,9 @@ def _register_assembly_problems(assembly: str) -> None:
             name=name,
             insertion_object_name=f"{assembly}_{inserter_id}_coacd",
             receptive_urdf=receptive_rel,
-            insert_pose_rel_receptive=pose_ins,
+            insert_pose_rel_receptive=make_pre_insert_sequence(
+                pose_ins, pre_insert_offset=0.04
+            ),
             hole_z_offset=0.0,
             pre_insert_offset=0.04,
         )
@@ -217,11 +220,14 @@ def _register_peg_board_problems(board_name: str) -> None:
         qx, qy, qz, qw = (float(v) for v in q.as_quat())
 
         name = f"fmb.{board_name}.{peg_name}"
+        pose_ins = (*pos, qx, qy, qz, qw)
         PROBLEM_REGISTRY[name] = Problem(
             name=name,
             insertion_object_name=f"fmb_{peg_name}_coacd",
             receptive_urdf=receptive_rel,
-            insert_pose_rel_receptive=(*pos, qx, qy, qz, qw),
+            insert_pose_rel_receptive=make_pre_insert_sequence(
+                pose_ins, pre_insert_offset=0.05
+            ),
             hole_z_offset=0.0,
             pre_insert_offset=0.05,    # = peg_board_1 thickness
         )
@@ -241,7 +247,9 @@ def _register_peg_board_problems(board_name: str) -> None:
                 name=hybrid_name,
                 insertion_object_name=hybrid_obj_key,
                 receptive_urdf=hybrid_recv_rel,
-                insert_pose_rel_receptive=(*pos, qx, qy, qz, qw),
+                insert_pose_rel_receptive=make_pre_insert_sequence(
+                    pose_ins, pre_insert_offset=0.05
+                ),
                 hole_z_offset=0.0,
                 pre_insert_offset=0.05,    # = peg_board_1 thickness
             )

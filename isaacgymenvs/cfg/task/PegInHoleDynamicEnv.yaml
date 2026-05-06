@@ -25,8 +25,9 @@ env:
   # legacy cfg key is intentionally ignored by PegInHoleDynamicEnv.
   holeZOffset: 0.0
 
-  # Goal mode: "preInsertAndFinal" (2 subgoals) or "finalGoalOnly" (1 subgoal).
-  # "dense" is NOT supported.
+  # Goal mode: "preInsertAndFinal" uses every problem-defined insertion
+  # subgoal; "finalGoalOnly" uses only the final assembled subgoal.
+  # "dense" is NOT supported as a separate mode.
   goalMode: "preInsertAndFinal"
 
   # Co-training: random goal fraction

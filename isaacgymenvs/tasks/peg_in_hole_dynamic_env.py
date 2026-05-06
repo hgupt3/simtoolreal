@@ -2,7 +2,7 @@
 
 Loads a bare table (``table_narrow.urdf``) and a separate hole fixture as
 independent actors. The hole position is randomized on the table each
-episode and goal poses (pre-insert + final) are computed dynamically from
+episode and ordered insertion-subgoal poses are computed dynamically from
 the hole position — no pre-baked ``scenes.npz`` dependency.
 
 Supports co-training: with ``randomGoalFraction > 0``, a fraction of envs
@@ -40,9 +40,9 @@ class PegInHoleDynamicEnv(SimToolReal):
                  headless, virtual_screen_capture, force_render):
         # ── Resolve `task.env.problem` ──
         # The problem name is required and is the single source of truth for
-        # (insertion_object, receptive_object, insert_pose). The env never
-        # reads holeUrdf / insertPoseRelHole / insertionDirection /
-        # preInsertOffset / objectName from cfg directly — they come from
+        # (insertion_object, receptive_object, insert poses). The env never
+        # reads holeUrdf / insertPoseRelHole / objectName from cfg directly;
+        # those values come from
         # PROBLEM_REGISTRY here, then are written into cfg so the parent
         # SimToolReal class can pick up `objectName`.
         from peg_in_hole_dynamic import PROBLEM_REGISTRY
@@ -75,18 +75,21 @@ class PegInHoleDynamicEnv(SimToolReal):
         assert self.goal_mode in VALID_GOAL_MODES, (
             f"goalMode must be one of {VALID_GOAL_MODES}, got {self.goal_mode!r}"
         )
-        self._num_insertion_goals = 2 if self.goal_mode == "preInsertAndFinal" else 1
 
-        # Insertion pose relative to hole origin [x, y, z, qx, qy, qz, qw]
-        # comes from the resolved Problem.
-        insert_pose_rel = list(p.insert_pose_rel_receptive)
-        self._insert_pos_rel = torch.tensor(insert_pose_rel[:3], dtype=torch.float32)
-        self._insert_quat_xyzw = torch.tensor(insert_pose_rel[3:7], dtype=torch.float32)
-
-        # Approach direction + pre-insert back-off distance from Problem
-        self._insertion_dir = torch.tensor(list(p.insertion_direction), dtype=torch.float32)
-        self._insertion_dir = self._insertion_dir / self._insertion_dir.norm()
-        self.pre_insert_offset = float(p.pre_insert_offset)
+        # Ordered insertion subgoals relative to the receptive origin. Plain
+        # insertion problems use pre-insert then final; screwing problems can
+        # provide denser waypoints. finalGoalOnly always uses only the last
+        # assembled pose.
+        insert_pose_sequence = p.insert_pose_rel_receptive
+        if self.goal_mode == "finalGoalOnly":
+            insert_pose_sequence = (p.final_insert_pose_rel_receptive,)
+        self._num_insertion_goals = len(insert_pose_sequence)
+        self._insert_pos_rel = torch.tensor(
+            [pose[:3] for pose in insert_pose_sequence], dtype=torch.float32
+        )
+        self._insert_quat_xyzw = torch.tensor(
+            [pose[3:7] for pose in insert_pose_sequence], dtype=torch.float32
+        )
 
         self._hole_urdf = p.receptive_urdf
 
@@ -105,25 +108,11 @@ class PegInHoleDynamicEnv(SimToolReal):
 
         table_z = cfg["env"]["tableResetZ"]
         table_top_z = table_z + TABLE_HALF_HEIGHT
-        # Placeholder goal at table center for parent init
-        insert_world_z = table_top_z + float(self._insert_pos_rel[2])
-        insert_quat = insert_pose_rel[3:7]
-        pre_insert_pos = [
-            float(self._insert_pos_rel[i]) - float(self._insertion_dir[i]) * self.pre_insert_offset
-            for i in range(3)
-        ]
-        pre_insert_world_z = table_top_z + pre_insert_pos[2]
-
         cfg["env"]["objectStartPose"] = [0.0, 0.0, table_top_z + 0.1, 0, 0, 0, 1]
-        if self.goal_mode == "preInsertAndFinal":
-            cfg["env"]["fixedGoalStates"] = [
-                [0.0, 0.0, pre_insert_world_z] + list(insert_quat),
-                [0.0, 0.0, insert_world_z] + list(insert_quat),
-            ]
-        else:
-            cfg["env"]["fixedGoalStates"] = [
-                [0.0, 0.0, insert_world_z] + list(insert_quat),
-            ]
+        cfg["env"]["fixedGoalStates"] = [
+            [0.0, 0.0, table_top_z + float(pose[2]), *pose[3:7]]
+            for pose in insert_pose_sequence
+        ]
 
         super().__init__(cfg, rl_device, sim_device, graphics_device_id,
                          headless, virtual_screen_capture, force_render)
@@ -179,7 +168,6 @@ class PegInHoleDynamicEnv(SimToolReal):
         # Move insertion geometry tensors to device
         self._insert_pos_rel = self._insert_pos_rel.to(self.device)
         self._insert_quat_xyzw = self._insert_quat_xyzw.to(self.device)
-        self._insertion_dir = self._insertion_dir.to(self.device)
 
         # Compute obs_buf slice for keypoints_rel_goal
         n_dof = self.num_hand_arm_dofs
@@ -643,21 +631,11 @@ class PegInHoleDynamicEnv(SimToolReal):
             # ── Insertion envs: goal from hole position ──
             if len(ins_ids) > 0:
                 subgoal_idx = (self.successes[ins_ids] % self.env_max_goals[ins_ids]).long()
-                table_top_z = self.table_init_state[ins_ids, 2] + TABLE_HALF_HEIGHT
 
-                # Final insertion pose = hole_pos + insertPoseRelHole
-                final_pos = self.hole_pos[ins_ids] + self._insert_pos_rel
-
-                # Pre-insert pose = final_pos backed off along -insertionDirection
-                pre_insert_pos = final_pos - self._insertion_dir * self.pre_insert_offset
-
-                if self.goal_mode == "finalGoalOnly":
-                    self.goal_states[ins_ids, 0:3] = final_pos
-                else:
-                    is_pre = (subgoal_idx == 0).unsqueeze(-1).expand_as(final_pos)
-                    self.goal_states[ins_ids, 0:3] = torch.where(is_pre, pre_insert_pos, final_pos)
-
-                self.goal_states[ins_ids, 3:7] = self._insert_quat_xyzw
+                self.goal_states[ins_ids, 0:3] = (
+                    self.hole_pos[ins_ids] + self._insert_pos_rel[subgoal_idx]
+                )
+                self.goal_states[ins_ids, 3:7] = self._insert_quat_xyzw[subgoal_idx]
 
             # ── Random-goal envs ──
             if len(rg_ids) > 0:

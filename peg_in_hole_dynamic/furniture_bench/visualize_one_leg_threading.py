@@ -29,7 +29,7 @@ from peg_in_hole_dynamic import PROBLEM_REGISTRY
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_FB = REPO_ROOT / "assets" / "urdf" / "furniture_bench"
-PROBLEM_NAME = "furniture_bench.one_leg_sdf_hybrid"
+PROBLEM_NAME = "furniture_bench.one_leg_sdf_hybrid_dense"
 
 THREAD_PITCH_M = 0.00937368684342171
 YAW_DEG_PER_MM = 360.0 / (THREAD_PITCH_M * 1000.0)
@@ -77,8 +77,9 @@ class ThreadingDebugViewer:
         self.server = server
         self.problem = PROBLEM_REGISTRY[PROBLEM_NAME]
         self.assets_dir = ASSETS_FB / "square_table"
-        self.final_pos = np.asarray(self.problem.insert_pose_rel_receptive[:3], dtype=float)
-        self.final_rot = R.from_quat(self.problem.insert_pose_rel_receptive[3:7])
+        final_pose = self.problem.final_insert_pose_rel_receptive
+        self.final_pos = np.asarray(final_pose[:3], dtype=float)
+        self.final_rot = R.from_quat(final_pose[3:7])
         self.hole_xy = self.final_pos[:2].copy()
         self.top_z = float(self.problem.hole_z_offset)
 

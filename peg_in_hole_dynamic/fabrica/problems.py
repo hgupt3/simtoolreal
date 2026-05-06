@@ -9,10 +9,9 @@ For each (insertion_part, receiver) pair in an assembly's
     already at A-frame coordinates, so no extra transform is needed.
     The URDF root therefore coincides with the assembly's A-frame origin
     (where scene-generation pinned the lowest fixture point to z=0).
-  * ``insert_pose_rel_receptive`` = the inserter's pose in the A frame:
-    ``(original_centroid_ins, inverse(q_a→c_ins))``. The inserter actor
-    in the env is loaded from the canonical mesh; the inverse rotation
-    rotates it into its assembled orientation.
+  * ``insert_pose_rel_receptive`` = the ordered insertion-subgoal sequence.
+    Plain insertion tasks use pre-insert, then the inserter's assembled pose
+    in the A frame, ``(original_centroid_ins, inverse(q_a→c_ins))``.
   * ``hole_z_offset = 0``: the URDF root sits on the table top by
     construction.
 
@@ -27,7 +26,7 @@ from typing import Tuple
 from scipy.spatial.transform import Rotation as R
 
 from dextoolbench.objects import NAME_TO_OBJECT
-from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem
+from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem, make_pre_insert_sequence
 from peg_in_hole_dynamic.fabrica._pose_utils import write_fixture_urdf
 
 _LOG = logging.getLogger(__name__)
@@ -139,7 +138,9 @@ def _register_assembly_problems(assembly: str) -> None:
             name=name,
             insertion_object_name=f"{assembly}_{inserter_id}_coacd",
             receptive_urdf=receptive_rel,
-            insert_pose_rel_receptive=pose_ins,
+            insert_pose_rel_receptive=make_pre_insert_sequence(
+                pose_ins, pre_insert_offset=0.025
+            ),
             hole_z_offset=0.0,
             pre_insert_offset=0.025,
         )
@@ -156,7 +157,9 @@ def _register_assembly_problems(assembly: str) -> None:
                 name=hybrid_name,
                 insertion_object_name=hybrid_obj_key,
                 receptive_urdf=hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix(),
-                insert_pose_rel_receptive=pose_ins,
+                insert_pose_rel_receptive=make_pre_insert_sequence(
+                    pose_ins, pre_insert_offset=0.025
+                ),
                 hole_z_offset=0.0,
                 pre_insert_offset=0.025,
             )

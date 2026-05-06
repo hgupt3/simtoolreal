@@ -2,7 +2,7 @@
 """Standalone viser viewer for `peg_in_hole_dynamic.PROBLEM_REGISTRY`.
 
 Loads the receptive URDF at the origin and the insertion URDF at either
-the final insert pose or the pre-insert pose (selectable via dropdown),
+the final insert pose or the first insertion subgoal (selectable via dropdown),
 with optional keypoint markers for the insertion object's bounding-box
 corners. No Isaac Gym, no policy.
 
@@ -193,8 +193,6 @@ class ProblemVisualizer:
     up viser-side state, the next render's nodes never collide with the
     previous render's."""
 
-    POSES = ("final", "pre_insert")
-
     def __init__(self, server: viser.ViserServer):
         self.server = server
         self._handles: List = []
@@ -269,18 +267,27 @@ class ProblemVisualizer:
                 pass
 
     # ---- pose helpers ----
-    @staticmethod
-    def _pre_insert_position(p: Problem) -> Tuple[float, float, float]:
-        x, y, z = p.insert_pose_rel_receptive[:3]
-        idir = np.array(p.insertion_direction, dtype=np.float64)
-        idir = idir / (np.linalg.norm(idir) + 1e-12)
-        return tuple(np.array((x, y, z)) - idir * p.pre_insert_offset)
-
     def _selected_position_quat(self, p: Problem) -> Tuple[Tuple[float, float, float], Tuple[float, float, float, float]]:
-        x, y, z, qx, qy, qz, qw = p.insert_pose_rel_receptive
-        if self._current_pose == "pre_insert":
-            x, y, z = self._pre_insert_position(p)
+        pose = self._pose_from_selection(p, self._current_pose)
+        x, y, z, qx, qy, qz, qw = pose
         return (x, y, z), (qx, qy, qz, qw)
+
+    @staticmethod
+    def _pose_from_selection(p: Problem, selection: str):
+        if selection.startswith("subgoal_"):
+            try:
+                idx = int(selection[len("subgoal_"):])
+            except ValueError:
+                idx = len(p.insert_pose_rel_receptive) - 1
+            idx = int(np.clip(idx, 0, len(p.insert_pose_rel_receptive) - 1))
+            return p.insert_pose_rel_receptive[idx]
+        if selection == "first_subgoal":
+            return p.insert_pose_rel_receptive[0]
+        return p.final_insert_pose_rel_receptive
+
+    @staticmethod
+    def pose_options_for(p: Problem) -> List[str]:
+        return [f"subgoal_{i}" for i in range(len(p.insert_pose_rel_receptive))]
 
     # ---- main render ----
     def render(self) -> None:
@@ -355,21 +362,6 @@ class ProblemVisualizer:
         except Exception as e:
             print(f"[visualize] failed to load insertion: {e}")
 
-        # --- "other" pose marker (small frame at the non-selected pose) ---
-        if self._current_pose == "final":
-            other_pos = self._pre_insert_position(p)
-            other_label = "pre_insert"
-        else:
-            other_pos = p.insert_pose_rel_receptive[:3]
-            other_label = "final"
-        other_world = (other_pos[0], other_pos[1], other_pos[2] + recv_world_z)
-        self._track(self.server.scene.add_frame(
-            f"{ns}/other_{other_label}",
-            position=other_world,
-            wxyz=_xyzw_to_wxyz((qx, qy, qz, qw)),
-            show_axes=True, axes_length=0.04, axes_radius=0.0015,
-        ))
-
         # --- optional keypoint spheres ---
         half_ext = _keypoint_half_extents(p.insertion_object_name)
 
@@ -391,7 +383,7 @@ class ProblemVisualizer:
             # Keypoints at the FINAL insert pose — this is where the policy
             # is trying to land each insertion-object corner.
             from scipy.spatial.transform import Rotation as _R
-            x_f, y_f, z_f, qx_f, qy_f, qz_f, qw_f = p.insert_pose_rel_receptive
+            x_f, y_f, z_f, qx_f, qy_f, qz_f, qw_f = p.final_insert_pose_rel_receptive
             R_ins = _R.from_quat([qx_f, qy_f, qz_f, qw_f]).as_matrix()
             for k, c in enumerate(_keypoint_corners(half_ext)):
                 rec_local = R_ins @ np.asarray(c) + np.array([x_f, y_f, z_f])
@@ -405,15 +397,20 @@ class ProblemVisualizer:
 
         # --- info panel ---
         if self._info_md is not None:
-            x_f, y_f, z_f, qx_f, qy_f, qz_f, qw_f = p.insert_pose_rel_receptive
-            pre = self._pre_insert_position(p)
+            current_pose = self._pose_from_selection(p, self._current_pose)
+            x_f, y_f, z_f, qx_f, qy_f, qz_f, qw_f = p.final_insert_pose_rel_receptive
+            x_0, y_0, z_0, qx_0, qy_0, qz_0, qw_0 = p.insert_pose_rel_receptive[0]
+            current_pose_str = ", ".join(f"{v:+.6f}" for v in current_pose)
             self._info_md.content = (
                 f"### {self._current_problem}  ({self._current_pose})\n"
                 f"- **insertion**: `{p.insertion_object_name}`\n"
                 f"- **receptive**: `{p.receptive_urdf}`\n"
+                f"- **subgoals**: `{len(p.insert_pose_rel_receptive)}`\n"
+                f"- **current pose (xyz xyzw)** `({current_pose_str})`\n"
+                f"- **first** xyz `({x_0:+.4f}, {y_0:+.4f}, {z_0:+.4f})`\n"
                 f"- **final** xyz `({x_f:+.4f}, {y_f:+.4f}, {z_f:+.4f})`\n"
-                f"- **pre_insert** xyz `({pre[0]:+.4f}, {pre[1]:+.4f}, {pre[2]:+.4f})`\n"
-                f"- **quat (xyzw)** `({qx_f:+.4f}, {qy_f:+.4f}, {qz_f:+.4f}, {qw_f:+.4f})`\n"
+                f"- **first quat (xyzw)** `({qx_0:+.4f}, {qy_0:+.4f}, {qz_0:+.4f}, {qw_0:+.4f})`\n"
+                f"- **final quat (xyzw)** `({qx_f:+.4f}, {qy_f:+.4f}, {qz_f:+.4f}, {qw_f:+.4f})`\n"
                 f"- **insertion_direction**: `{tuple(p.insertion_direction)}`\n"
                 f"- **pre_insert_offset**: `{p.pre_insert_offset}`\n"
             )
@@ -424,10 +421,18 @@ class ProblemVisualizer:
 
     def set_problem(self, name: str) -> None:
         self._current_problem = name
+        if name in PROBLEM_REGISTRY:
+            options = self.pose_options_for(PROBLEM_REGISTRY[name])
+            if options and self._current_pose not in options:
+                self._current_pose = options[-1]
         self.render()
 
     def set_pose(self, pose: str) -> None:
-        if pose not in self.POSES:
+        if self._current_problem in PROBLEM_REGISTRY:
+            valid = set(self.pose_options_for(PROBLEM_REGISTRY[self._current_problem]))
+        else:
+            valid = {"final"}
+        if pose not in valid:
             return
         self._current_pose = pose
         self.render()
@@ -502,8 +507,9 @@ def main():
         problem_dropdown = server.gui.add_dropdown(
             "Select", options=problems, initial_value=initial,
         )
+        initial_pose_options = ProblemVisualizer.pose_options_for(PROBLEM_REGISTRY[initial])
         pose_dropdown = server.gui.add_dropdown(
-            "Pose", options=list(ProblemVisualizer.POSES), initial_value="final",
+            "Pose", options=initial_pose_options, initial_value=initial_pose_options[-1],
         )
         kp_ins_checkbox = server.gui.add_checkbox(
             "Show insertion keypoints", initial_value=False,
@@ -522,7 +528,12 @@ def main():
 
     @problem_dropdown.on_update
     def _on_problem(_) -> None:
+        p = PROBLEM_REGISTRY[problem_dropdown.value]
+        pose_dropdown.options = ProblemVisualizer.pose_options_for(p)
+        if pose_dropdown.value not in pose_dropdown.options:
+            pose_dropdown.value = pose_dropdown.options[-1]
         viz.set_problem(problem_dropdown.value)
+        viz.set_pose(pose_dropdown.value)
 
     @pose_dropdown.on_update
     def _on_pose(_) -> None:

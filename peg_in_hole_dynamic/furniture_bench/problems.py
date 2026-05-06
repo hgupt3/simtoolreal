@@ -1,8 +1,8 @@
 """Register FurnitureBench Problem entries.
 
-Currently registers ``furniture_bench.one_leg`` (insert square_table_leg4
-into one corner of the square_table_top). The receptive URDF + per-task
-setup metadata are produced by
+Currently registers sparse and dense ``furniture_bench.one_leg`` variants
+(insert square_table_leg4 into one corner of the square_table_top). The
+receptive URDF + per-task setup metadata are produced by
 ``one_leg_problem_setup/step2_generate_assets.py``.
 
 Pose composition (see step2 for the canonical conventions):
@@ -32,6 +32,57 @@ _ASSETS_FB = _REPO_ROOT / "assets" / "urdf" / "furniture_bench"
 
 R_X90 = R.from_euler("x", 90, degrees=True)
 ONE_LEG_PRE_INSERT_OFFSET_M = 0.025
+ONE_LEG_THREAD_PITCH_M = 0.00937368684342171
+
+
+def _one_leg_dense_insert_waypoints(final_pose):
+    """Return lead-in + two-turn screw waypoints + final assembled pose."""
+    final_pose = tuple(float(v) for v in final_pose)
+    final_pos = np.asarray(final_pose[:3], dtype=float)
+    final_quat = np.asarray(final_pose[3:7], dtype=float)
+    final_rot = R.from_quat(final_quat)
+    insertion_dir = np.asarray((0.0, 0.0, -1.0), dtype=float)
+
+    waypoints = []
+
+    # Lead-in: 25 mm above final with the same orientation. This preserves the
+    # existing one-leg pre-insert heuristic while keeping it explicit in the
+    # problem's subgoal list.
+    lead_pos = final_pos - insertion_dir * ONE_LEG_PRE_INSERT_OFFSET_M
+    waypoints.append((*lead_pos.tolist(), *final_quat.tolist()))
+
+    # Two turns of screw guidance. Full-turn waypoints are intentionally the
+    # same SO(3) orientation as final; their ordering/z offset carries phase.
+    for turns in (2.0, 1.5, 1.0, 0.5):
+        backoff = turns * ONE_LEG_THREAD_PITCH_M
+        pos = final_pos - insertion_dir * backoff
+        quat = (R.from_euler("z", 360.0 * turns, degrees=True) * final_rot).as_quat()
+        if float(np.dot(quat, final_quat)) < 0.0:
+            quat = -quat
+        waypoints.append((*pos.tolist(), *quat.tolist()))
+
+    waypoints.append(final_pose)
+    return tuple(waypoints)
+
+
+def _register_problem_variant(
+    *,
+    name: str,
+    insertion_object_name: str,
+    receptive_urdf: str,
+    insert_poses,
+    hole_z_offset: float,
+) -> None:
+    PROBLEM_REGISTRY[name] = Problem(
+        name=name,
+        insertion_object_name=insertion_object_name,
+        receptive_urdf=receptive_urdf,
+        insert_pose_rel_receptive=insert_poses,
+        hole_z_offset=hole_z_offset,
+        # One 25 mm thread/tenon length: with insertion_direction=(0,0,-1),
+        # the pre-insert pose starts with the threaded tip at the hole entrance.
+        pre_insert_offset=ONE_LEG_PRE_INSERT_OFFSET_M,
+    )
 
 
 def _register_one_leg() -> None:
@@ -92,20 +143,26 @@ def _register_one_leg() -> None:
     )
     hole_z_offset = float((top_canonical.bounds[1, 2] - top_canonical.bounds[0, 2]) / 2)
 
-    name = "furniture_bench.one_leg"
-    PROBLEM_REGISTRY[name] = Problem(
-        name=name,
-        insertion_object_name=inserter_key,
-        receptive_urdf=recv_rel,
-        insert_pose_rel_receptive=(
-            float(pos_canonical[0]), float(pos_canonical[1]), float(pos_canonical[2]),
-            qx, qy, qz, qw,
-        ),
-        hole_z_offset=hole_z_offset,
-        # One 25 mm thread/tenon length: with insertion_direction=(0,0,-1),
-        # the pre-insert pose starts with the threaded tip at the hole entrance.
-        pre_insert_offset=ONE_LEG_PRE_INSERT_OFFSET_M,
+    final_pose = (
+        float(pos_canonical[0]), float(pos_canonical[1]), float(pos_canonical[2]),
+        qx, qy, qz, qw,
     )
+    dense_waypoints = _one_leg_dense_insert_waypoints(final_pose)
+    sparse_waypoints = (dense_waypoints[0], dense_waypoints[-1])
+
+    base_name = "furniture_bench.one_leg"
+    for variant_name, insert_poses in (
+        (base_name, dense_waypoints),
+        (f"{base_name}_dense", dense_waypoints),
+        (f"{base_name}_sparse", sparse_waypoints),
+    ):
+        _register_problem_variant(
+            name=variant_name,
+            insertion_object_name=inserter_key,
+            receptive_urdf=recv_rel,
+            insert_poses=insert_poses,
+            hole_z_offset=hole_z_offset,
+        )
 
     hybrid_recv = (
         _ASSETS_FB / "square_table" / "insertion_fixtures"
@@ -113,18 +170,20 @@ def _register_one_leg() -> None:
     )
     hybrid_key = f"furniture_bench_{child_part}_sdf_hybrid"
     if hybrid_recv.is_file() and hybrid_key in NAME_TO_OBJECT:
-        hybrid_name = f"{name}_sdf_hybrid"
-        PROBLEM_REGISTRY[hybrid_name] = Problem(
-            name=hybrid_name,
-            insertion_object_name=hybrid_key,
-            receptive_urdf=hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix(),
-            insert_pose_rel_receptive=(
-                float(pos_canonical[0]), float(pos_canonical[1]), float(pos_canonical[2]),
-                qx, qy, qz, qw,
-            ),
-            hole_z_offset=hole_z_offset,
-            pre_insert_offset=ONE_LEG_PRE_INSERT_OFFSET_M,
-        )
+        hybrid_base_name = f"{base_name}_sdf_hybrid"
+        hybrid_recv_rel = hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix()
+        for variant_name, insert_poses in (
+            (hybrid_base_name, dense_waypoints),
+            (f"{hybrid_base_name}_dense", dense_waypoints),
+            (f"{hybrid_base_name}_sparse", sparse_waypoints),
+        ):
+            _register_problem_variant(
+                name=variant_name,
+                insertion_object_name=hybrid_key,
+                receptive_urdf=hybrid_recv_rel,
+                insert_poses=insert_poses,
+                hole_z_offset=hole_z_offset,
+            )
 
 
 _register_one_leg()

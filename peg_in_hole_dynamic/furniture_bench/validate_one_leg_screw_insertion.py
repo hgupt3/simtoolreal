@@ -2,7 +2,7 @@
 """Validate the FurnitureBench one-leg task along a screw trajectory.
 
 This is a render/debug validator, not a training env. It loads the current
-``furniture_bench.one_leg_sdf_hybrid`` problem, teleports the leg along a
+``furniture_bench.one_leg_sdf_hybrid_dense`` problem, teleports the leg along a
 threaded path from a screw-preinsert pose to the assembled pose, lets it
 settle, and writes an MP4 plus a small JSON report.
 
@@ -40,7 +40,7 @@ from peg_in_hole_dynamic import PROBLEM_REGISTRY
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = REPO_ROOT / "assets"
 ASSETS_FB = ASSETS_DIR / "urdf" / "furniture_bench" / "square_table"
-PROBLEM_NAME = "furniture_bench.one_leg_sdf_hybrid"
+PROBLEM_NAME = "furniture_bench.one_leg_sdf_hybrid_dense"
 
 TABLE_RESET_Z = 0.38
 TABLE_HALF_HEIGHT = 0.15
@@ -149,8 +149,9 @@ def _slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
 
 def _problem_world_pose(problem) -> Tuple[np.ndarray, R]:
     recv_pos = np.array([0.0, 0.0, TABLE_TOP_Z + problem.hole_z_offset], dtype=np.float64)
-    final_pos = recv_pos + np.asarray(problem.insert_pose_rel_receptive[:3], dtype=np.float64)
-    final_rot = R.from_quat(problem.insert_pose_rel_receptive[3:7])
+    final_pose = problem.final_insert_pose_rel_receptive
+    final_pos = recv_pos + np.asarray(final_pose[:3], dtype=np.float64)
+    final_rot = R.from_quat(final_pose[3:7])
     return final_pos, final_rot
 
 
