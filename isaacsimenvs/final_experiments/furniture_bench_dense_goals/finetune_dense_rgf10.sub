@@ -21,10 +21,11 @@ PROBLEM="furniture_bench.one_leg_sdf_hybrid_dense"
 GOAL_MODE="preInsertAndFinal"
 CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
 
-NUM_ENVS=8192
-MINIBATCH_SIZE=65536
+NUM_ENVS=12288
+MINIBATCH_SIZE=98304
 MAX_ITERATIONS=1000000
 SEED=0
+EXPL_COEF_BLOCK_SIZE=2048
 
 RANDOM_GOAL_FRACTION=0.1
 RANDOM_GOAL_MAX_SUCCESSES=5
@@ -178,6 +179,7 @@ python -u isaacsimenvs/train.py \
     agent.params.config.max_epochs=$MAX_ITERATIONS \
     agent.params.config.minibatch_size=$MINIBATCH_SIZE \
     agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.expl_coef_block_size=$EXPL_COEF_BLOCK_SIZE \
     agent.params.config.name="0_${EXPERIMENT_NAME}" \
     agent.params.seed=$SEED \
     hydra.run.dir="$HYDRA_RUN_DIR"
