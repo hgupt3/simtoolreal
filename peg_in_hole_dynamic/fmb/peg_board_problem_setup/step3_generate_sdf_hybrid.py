@@ -62,7 +62,7 @@ BOARD_NAME     = "peg_board_1"
 BOARD_OBJ      = ASSETS_DIR / "boards" / BOARD_NAME / f"{BOARD_NAME}.obj"
 PEG_DIR        = ASSETS_DIR / "pegs"
 
-TIP_HEIGHT_M   = 0.025
+TIP_HEIGHT_M   = 0.05    # = peg_board_1 thickness — tip covers the full hole depth
 SDF_RES        = 256
 BODY_COACD_KW  = dict(threshold=0.03, max_convex_hull=-1, seed=0)
 

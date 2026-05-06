@@ -63,32 +63,6 @@
     <visual>
       <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <mesh filename="coacd/decomp_10.obj" scale="1 1 1"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_10.obj" scale="1 1 1"/>
-      </geometry>
-    </collision>
-    <visual>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_11.obj" scale="1 1 1"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_11.obj" scale="1 1 1"/>
-      </geometry>
-    </collision>
-    <visual>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
         <mesh filename="coacd/decomp_2.obj" scale="1 1 1"/>
       </geometry>
       <material name="body"/>
@@ -136,58 +110,6 @@
       <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
         <mesh filename="coacd/decomp_5.obj" scale="1 1 1"/>
-      </geometry>
-    </collision>
-    <visual>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_6.obj" scale="1 1 1"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_6.obj" scale="1 1 1"/>
-      </geometry>
-    </collision>
-    <visual>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_7.obj" scale="1 1 1"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_7.obj" scale="1 1 1"/>
-      </geometry>
-    </collision>
-    <visual>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_8.obj" scale="1 1 1"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_8.obj" scale="1 1 1"/>
-      </geometry>
-    </collision>
-    <visual>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_9.obj" scale="1 1 1"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <mesh filename="coacd/decomp_9.obj" scale="1 1 1"/>
       </geometry>
     </collision>
   </link>

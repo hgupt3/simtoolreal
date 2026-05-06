@@ -86,6 +86,19 @@
         <mesh filename="coacd/decomp_3.obj" scale="1 1 1"/>
       </geometry>
     </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="coacd/decomp_4.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="body"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="coacd/decomp_4.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
   </link>
   <joint name="base_to_body" type="fixed">
     <parent link="base_link"/>

@@ -219,6 +219,15 @@ def validate(problem_name: str, *, steps_pre_to_final: int = 200,
     plane_params.normal = gymapi.Vec3(0, 0, 1)
     gym.add_ground(sim, plane_params)
 
+    # Table — matches the env's runtime convention (`urdf/table_narrow.urdf`,
+    # 0.475 × 0.4 × 0.3 box at world (0, 0, TABLE_RESET_Z) so its top is at
+    # world z = TABLE_TOP_Z = 0.53). Without this, an inserter that passes
+    # through the receptive's hole drops to the ground plane and the
+    # settle_kp metric blows up to ~ TABLE_TOP_Z.
+    table_options = gymapi.AssetOptions()
+    table_options.fix_base_link = True
+    table_asset = gym.create_box(sim, 0.475, 0.4, 0.3, table_options)
+
     # Receptive (fixed base, multi-link/box+mesh URDFs)
     recv_options = gymapi.AssetOptions()
     recv_options.fix_base_link = True
@@ -244,6 +253,11 @@ def validate(problem_name: str, *, steps_pre_to_final: int = 200,
         sim, gymapi.Vec3(-spacing, -spacing, 0),
         gymapi.Vec3(spacing, spacing, spacing), 1,
     )
+
+    table_pose = gymapi.Transform()
+    table_pose.p = gymapi.Vec3(0.0, 0.0, TABLE_RESET_Z)
+    table_pose.r = gymapi.Quat(0, 0, 0, 1)
+    gym.create_actor(env, table_asset, table_pose, "table", 0, 0)
 
     recv_pose = gymapi.Transform()
     recv_pose.p = gymapi.Vec3(*recv_pos)

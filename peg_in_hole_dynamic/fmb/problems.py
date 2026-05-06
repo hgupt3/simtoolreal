@@ -208,7 +208,7 @@ def _register_peg_board_problems(board_name: str) -> None:
             receptive_urdf=receptive_rel,
             insert_pose_rel_receptive=(*pos, qx, qy, qz, qw),
             hole_z_offset=0.0,
-            pre_insert_offset=0.04,
+            pre_insert_offset=0.05,    # = peg_board_1 thickness
         )
 
         # Optional sibling hybrid Problem — registered when both the
@@ -228,7 +228,7 @@ def _register_peg_board_problems(board_name: str) -> None:
                 receptive_urdf=hybrid_recv_rel,
                 insert_pose_rel_receptive=(*pos, qx, qy, qz, qw),
                 hole_z_offset=0.0,
-                pre_insert_offset=0.04,
+                pre_insert_offset=0.05,    # = peg_board_1 thickness
             )
 
 

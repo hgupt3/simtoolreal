@@ -1,0 +1,160 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=12
+#SBATCH --get-user-env
+#SBATCH --mem=100000
+#SBATCH -t 12-00:00:00
+#SBATCH --partition=portal
+#SBATCH --exclude=portal-compute-01
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  FINETUNE, rgf=0.10 (10% random goal cotrain, table z jitter 1cm).        ║
+# ║  Problem: fmb.peg_board_1.peg_46_sdf_hybrid + SDF-tuned PhysX. ║
+# ║  PegInHoleDynamicEnv, preInsertAndFinal, lifting ON, DR ON. ║
+# ║  Warm-started from peg pretrained checkpoint.               ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+PROBLEM="fmb.peg_board_1.peg_46_sdf_hybrid"
+GOAL_MODE="preInsertAndFinal"
+CHECKPOINT="/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth"
+NUM_ENVS=24576
+MINIBATCH_SIZE=98304
+SEED=0
+
+RANDOM_GOAL_FRACTION=0.1
+RANDOM_GOAL_MAX_SUCCESSES=5
+
+FINAL_GOAL_TOLERANCE_CURRICULUM=False
+FINAL_GOAL_TOLERANCE_INITIAL=0.01
+FINAL_GOAL_TOLERANCE_TARGET=0.01
+FINAL_GOAL_TOLERANCE_DECREMENT=0.001
+
+FORCE_SCALE=0
+TORQUE_SCALE=0
+USE_OBS_DELAY=True
+USE_ACTION_DELAY=True
+USE_OBJECT_STATE_DELAY_NOISE=True
+OBJECT_STATE_XYZ_NOISE_STD=0.01
+OBJECT_STATE_ROTATION_NOISE_DEG=5.0
+OBJECT_SCALE_NOISE="[0.9,1.1]"
+
+LIFTING_REW_SCALE=20.0
+LIFTING_BONUS=300.0
+
+ENABLE_RETRACT=True
+RETRACT_REWARD_SCALE=1.0
+RETRACT_DISTANCE_THRESHOLD=0.1
+# retractSuccessBonus is derived in code as
+# random_goal_max_successes * reach_goal_bonus.
+RETRACT_SUCCESS_TOLERANCE=0.005
+
+WANDB_PROJECT="PEG_IN_HOLE_DYNAMIC"
+WANDB_GROUP="fmb_peg_board_1_peg_46_sdf_hybrid_better_physics"
+EXPERIMENT_TAG="finetune_rgf10"
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║         END CONFIG — generally don't edit below here        ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+set -euo pipefail
+
+REPO_ROOT="/share/portal/kk837/depthbasedRL"
+
+VISER_PORT=$((8082 + (SLURM_JOB_ID % 900)))
+
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+EXPERIMENT_NAME="${EXPERIMENT_TAG}_${DATETIME}"
+scontrol update JobId="$SLURM_JOB_ID" JobName="$EXPERIMENT_NAME"
+HYDRA_RUN_DIR="${REPO_ROOT}/train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_NAME}"
+mkdir -p "$HYDRA_RUN_DIR"
+exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
+
+CHECKPOINT_ARG=""
+if [ -n "$CHECKPOINT" ]; then
+    CHECKPOINT_ARG="checkpoint=$CHECKPOINT"
+fi
+
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo ""
+
+GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 30
+    done
+) &
+GPU_MONITOR_PID=$!
+trap "kill $GPU_MONITOR_PID 2>/dev/null" EXIT
+
+cd "$REPO_ROOT"
+source .venv/bin/activate
+
+python -u -m isaacgymenvs.train \
+    task=PegInHoleDynamicEnvLSTMAsymmetric \
+    task.env.problem="$PROBLEM" \
+    ++task.env.useSparseReward=False \
+    headless=True \
+    task.env.numEnvs=$NUM_ENVS \
+    train.params.config.minibatch_size=$MINIBATCH_SIZE \
+    multi_gpu=False \
+    train.params.config.good_reset_boundary=0 \
+    task.env.goodResetBoundary=0 \
+    train.params.config.use_others_experience=lf \
+    train.params.config.off_policy_ratio=1.0 \
+    train.params.config.expl_type=mixed_expl_learn_param \
+    train.params.config.expl_reward_type=entropy \
+    train.params.config.expl_coef_block_size=4096 \
+    train.params.config.expl_reward_coef_scale=0.005 \
+    train.params.network.space.continuous.fixed_sigma=coef_cond \
+    task.env.forceScale=$FORCE_SCALE \
+    task.env.torqueScale=$TORQUE_SCALE \
+    task.env.objectAngVelPenaltyScale=0.0 \
+    "task.env.objectScaleNoiseMultiplierRange=$OBJECT_SCALE_NOISE" \
+    task.env.forceConsecutiveNearGoalSteps=True \
+    task.env.goalMode="$GOAL_MODE" \
+    task.env.tableResetZ=0.38 \
+    task.env.tableResetZRange=0.01 \
+    task.env.useObsDelay=$USE_OBS_DELAY \
+    task.env.useActionDelay=$USE_ACTION_DELAY \
+    task.env.useObjectStateDelayNoise=$USE_OBJECT_STATE_DELAY_NOISE \
+    task.env.objectStateXyzNoiseStd=$OBJECT_STATE_XYZ_NOISE_STD \
+    task.env.objectStateRotationNoiseDegrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
+    task.env.liftingRewScale=$LIFTING_REW_SCALE \
+    task.env.liftingBonus=$LIFTING_BONUS \
+    task.env.viserVizPort=$VISER_PORT \
+    task.env.finalGoalToleranceCurriculumEnabled=$FINAL_GOAL_TOLERANCE_CURRICULUM \
+    task.env.finalGoalToleranceInitial=$FINAL_GOAL_TOLERANCE_INITIAL \
+    task.env.finalGoalToleranceTarget=$FINAL_GOAL_TOLERANCE_TARGET \
+    task.env.finalGoalToleranceCurriculumDecrement=$FINAL_GOAL_TOLERANCE_DECREMENT \
+    task.env.enableRetract=$ENABLE_RETRACT \
+    task.env.retractRewardScale=$RETRACT_REWARD_SCALE \
+    task.env.retractDistanceThreshold=$RETRACT_DISTANCE_THRESHOLD \
+    task.env.retractSuccessTolerance=$RETRACT_SUCCESS_TOLERANCE \
+    task.env.randomGoalFraction=$RANDOM_GOAL_FRACTION \
+    task.env.randomGoalMaxSuccesses=$RANDOM_GOAL_MAX_SUCCESSES \
+    wandb_project="$WANDB_PROJECT" \
+    wandb_entity=kk837 \
+    wandb_activate=True \
+    wandb_group="$WANDB_GROUP" \
+    wandb_tags=[] \
+    ++wandb_notes='' \
+    seed=$SEED \
+    experiment="00_$EXPERIMENT_NAME" \
+    hydra.run.dir="$HYDRA_RUN_DIR" \
+    task.sim.physx.max_gpu_contact_pairs=16777216 \
+    task.sim.physx.num_position_iterations=32 \
+    task.sim.physx.num_velocity_iterations=1 \
+    task.sim.physx.bounce_threshold_velocity=0.05 \
+    task.sim.physx.max_depenetration_velocity=10.0 \
+    task.sim.physx.friction_offset_threshold=0.01 \
+    task.sim.physx.friction_correlation_distance=0.0005 \
+    train.params.config.max_frames=100_000_000_000_000 \
+    $CHECKPOINT_ARG
