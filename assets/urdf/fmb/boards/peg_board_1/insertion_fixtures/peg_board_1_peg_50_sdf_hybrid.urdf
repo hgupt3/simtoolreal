@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="fixture_peg_board_1_peg_50_sdf_hybrid">
+  <link name="plate">
+    <visual>
+      <origin xyz="0.000000 0.072908 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.084184 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.072908 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.084184 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 -0.068708 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.092584 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 -0.068708 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.092584 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="-0.074698 0.004200 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.080604 0.053231 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="-0.074698 0.004200 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.080604 0.053231 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.066906 0.004200 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.096188 0.053231 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="0.066906 0.004200 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.096188 0.053231 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_3.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_3.obj" scale="1 1 1"/>
+      </geometry>
+      <sdf resolution="256"/>
+    </collision>
+  </link>
+  <material name="bulk">
+    <color rgba="0.78 0.55 0.30 1.0"/>
+  </material>
+  <material name="hole">
+    <color rgba="0.30 0.65 0.85 1.0"/>
+  </material>
+</robot>
