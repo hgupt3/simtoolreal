@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<robot name="desk_top">
+    <link name="desk_top">
+        <visual>
+            <geometry>
+                <mesh filename="desk_top.obj" scale="1 1 1"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="desk_top.obj" scale="1 1 1"/>
+            </geometry>
+        </collision>
+    </link>
+</robot>

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<robot name="drawer_container_top">
+    <link name="drawer_container_top">
+        <visual>
+            <geometry>
+                <mesh filename="drawer_container_top.obj" scale="1 1 1"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="drawer_container_top.obj" scale="1 1 1"/>
+            </geometry>
+        </collision>
+    </link>
+</robot>
