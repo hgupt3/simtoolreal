@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="fixture_peg_board_1_peg_42">
+  <link name="plate">
+    <visual>
+      <origin xyz="0.000000 0.067432 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.095136 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.067432 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.095136 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 -0.064261 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.101478 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 -0.064261 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.230000 0.101478 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="-0.041609 0.003171 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.146783 0.033385 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="-0.041609 0.003171 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.146783 0.033385 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.106392 0.003171 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.017215 0.033385 0.050000"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="0.106392 0.003171 0.025000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.017215 0.033385 0.050000"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_0.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_0.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_1.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_1.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_10.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_10.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_11.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_11.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_12.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_12.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_13.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_13.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_14.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_14.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_15.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_15.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_16.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_16.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_2.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_2.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_3.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_3.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_4.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_4.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_5.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_5.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_6.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_6.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_7.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_7.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_8.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_8.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_9.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="hole_7"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <mesh filename="../hole_patches/hole_7_coacd/decomp_9.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <material name="bulk">
+    <color rgba="0.7800 0.5500 0.3000 1.0000"/>
+  </material>
+  <material name="hole_7">
+    <color rgba="0.8500 0.3000 0.3000 1.0000"/>
+  </material>
+</robot>

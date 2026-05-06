@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="peg_36_coacd">
+  <link name="base_link">
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+  <material name="color_0">
+    <color rgba="0.9 0.2 0.2 1.0"/>
+  </material>
+  <link name="hull_0">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_0.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="color_0"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_0.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hull_joint_0" type="fixed">
+    <parent link="base_link"/>
+    <child link="hull_0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <material name="color_1">
+    <color rgba="0.2 0.7 0.2 1.0"/>
+  </material>
+  <link name="hull_1">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_1.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="color_1"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_1.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hull_joint_1" type="fixed">
+    <parent link="base_link"/>
+    <child link="hull_1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <material name="color_2">
+    <color rgba="0.2 0.3 0.9 1.0"/>
+  </material>
+  <link name="hull_2">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_2.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="color_2"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_2.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hull_joint_2" type="fixed">
+    <parent link="base_link"/>
+    <child link="hull_2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <material name="color_3">
+    <color rgba="0.9 0.7 0.1 1.0"/>
+  </material>
+  <link name="hull_3">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_3.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="color_3"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_3.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hull_joint_3" type="fixed">
+    <parent link="base_link"/>
+    <child link="hull_3"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <material name="color_4">
+    <color rgba="0.8 0.3 0.8 1.0"/>
+  </material>
+  <link name="hull_4">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_4.obj" scale="1 1 1"/>
+      </geometry>
+      <material name="color_4"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="decomp_4.obj" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="hull_joint_4" type="fixed">
+    <parent link="base_link"/>
+    <child link="hull_4"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>

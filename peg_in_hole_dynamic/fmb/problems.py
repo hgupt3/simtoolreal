@@ -129,3 +129,87 @@ def _register_assembly_problems(assembly: str) -> None:
 
 
 _register_assembly_problems("fmb_board_1")
+_register_assembly_problems("fmb_board_2")
+_register_assembly_problems("fmb_board_3")
+
+
+def _register_peg_board_problems(board_name: str) -> None:
+    """Register one Problem per (long peg ↔ hole) pair in the
+    `<setup>/<board_name>_assemblies.json` table.
+
+    Convention for the inserter's pose:
+      * The peg's URDF references its `<peg>_canonical.obj`, which is
+        XYZ-centred at the bbox centroid with the longest XY extent along
+        X (a 90° Z rotation may have been baked in by step 2 to enforce
+        this; canonical_meta.json records it).
+      * `pos.z = peg_height / 2` so applying a 180°X flip in the URDF pose
+        lands the peg's tip at A-frame z=0 (board bottom).
+      * Quaternion = R_x180 ∘ R_yaw_saved ∘ R_canonical_inverse. The
+        saved yaw was authored against the *storage*-frame .obj in step 1;
+        right-multiplying by R_canonical_inverse cancels the canonical
+        rotation so the visual result matches what the user dialled in.
+    """
+    from scipy.spatial.transform import Rotation as R
+
+    setup_dir = Path(__file__).resolve().parent / "peg_board_problem_setup"
+    json_path = setup_dir / f"{board_name}_assemblies.json"
+    if not json_path.is_file():
+        _LOG.info("fmb.%s: no %s — skipping", board_name, json_path.name)
+        return
+
+    data = json.loads(json_path.read_text())
+    pegs_dir = _FMB_DIR / "pegs"
+
+    for hole_id, info in sorted(data.items()):
+        peg_name      = info["peg"]
+        meta_path     = pegs_dir / peg_name / "canonical_meta.json"
+        canonical_obj = pegs_dir / peg_name / f"{peg_name}_canonical.obj"
+
+        # Per-problem receptive URDF: only the active hole's CoACD + a
+        # coarse 4-box frame around it (other holes ignored).
+        receptive_rel = (
+            f"urdf/fmb/boards/{board_name}/insertion_fixtures/{board_name}_{peg_name}.urdf"
+        )
+        if not (_REPO_ROOT / "assets" / receptive_rel).is_file():
+            _LOG.warning("fmb.%s.%s: missing receptive URDF %s — skipping",
+                         board_name, hole_id, receptive_rel)
+            continue
+        if not meta_path.is_file() or not canonical_obj.is_file():
+            _LOG.warning("fmb.%s.%s: missing canonical assets for %s — skipping",
+                         board_name, hole_id, peg_name)
+            continue
+
+        rotated_z90 = bool(json.loads(meta_path.read_text()).get(
+            "canonical_rotated_z90", False))
+
+        # Peg height in A-frame = canonical mesh's Z extent (≈ 0.15 for long pegs)
+        import trimesh
+        canonical = trimesh.load_mesh(str(canonical_obj), process=False)
+        peg_h = float(canonical.bounds[1, 2] - canonical.bounds[0, 2])
+
+        cx, cy   = info["hole_xy_A"]
+        ndx, ndy = info["nudge_mm"]
+        pos = (
+            float(cx + ndx * 1e-3),
+            float(cy + ndy * 1e-3),
+            peg_h / 2.0,
+        )
+
+        R_x180 = R.from_euler("x", 180, degrees=True)
+        R_yaw  = R.from_euler("z", float(info["yaw_deg"]), degrees=True)
+        R_can_inv = (R.from_euler("z", -90, degrees=True) if rotated_z90 else R.identity())
+        q = R_x180 * R_yaw * R_can_inv
+        qx, qy, qz, qw = (float(v) for v in q.as_quat())
+
+        name = f"fmb.{board_name}.{peg_name}"
+        PROBLEM_REGISTRY[name] = Problem(
+            name=name,
+            insertion_object_name=f"fmb_{peg_name}_coacd",
+            receptive_urdf=receptive_rel,
+            insert_pose_rel_receptive=(*pos, qx, qy, qz, qw),
+            hole_z_offset=0.0,
+            pre_insert_offset=0.04,
+        )
+
+
+_register_peg_board_problems("peg_board_1")

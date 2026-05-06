@@ -71,13 +71,22 @@ def _keypoint_corners(half_extents: Tuple[float, float, float]) -> List[Tuple[fl
     return out
 
 
-def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, float], Tuple[float, float, float, float], List[Tuple[Path, Tuple[int, int, int]]]]]:
+def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, float], Tuple[float, float, float, float], List[Tuple["trimesh.Trimesh", Tuple[int, int, int]]]]]:
     """Parse one of our generated fixture URDFs.
 
-    Returns a list of ``(part_label, joint_xyz, joint_wxyz, [(mesh_abs, rgb), ...])``
-    entries — one per non-root link. Each visual mesh gets its own color from
-    a palette (each CoACD hull rendered distinctly), with hue rotated per
-    link so different parts use different segments of the palette.
+    Returns a list of ``(part_label, joint_xyz, joint_wxyz, [(mesh, rgb), ...])``
+    entries — one per link that has any visual geometry. Each visual mesh
+    gets its own color from a palette (each CoACD hull rendered distinctly).
+
+    Handles:
+      * single-link URDFs whose root link contains all visuals (peg_in_hole
+        receptive style).
+      * multi-link URDFs with fixed joints carrying the per-link transform
+        (fabrica/fmb fixture style).
+      * `<box>` primitives in addition to `<mesh>`.
+      * per-visual `<origin xyz=... rpy=...>` baked into the returned mesh
+        vertices so the caller doesn't need to know the URDF's local frame
+        structure.
     """
     tree = ET.parse(str(urdf_path))
     robot = tree.getroot()
@@ -93,9 +102,6 @@ def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, 
         rpy = tuple(float(x) for x in origin.get("rpy", "0 0 0").split())
         joints[child] = (xyz, rpy)
 
-    # 16-color palette — distinct enough that adjacent CoACD hulls don't
-    # blend visually. Each link starts at a different palette offset so two
-    # parts in the same fixture don't reuse the same opening colors.
     palette = [
         (217,  76,  76), ( 76, 165, 217), (102, 191,  89), (229, 178,  51),
         (179, 102, 204), ( 76, 204, 191), (217, 127,  51), (140, 140, 140),
@@ -103,31 +109,60 @@ def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, 
         (191,  89, 165), (140, 217, 217), (217, 191,  89), (114, 114, 178),
     ]
 
+    def _origin_xyz_rpy(origin_elem):
+        if origin_elem is None:
+            return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        xyz = tuple(float(x) for x in origin_elem.get("xyz", "0 0 0").split())
+        rpy = tuple(float(x) for x in origin_elem.get("rpy", "0 0 0").split())
+        return xyz, rpy
+
+    def _load_visual_geom(visual_elem) -> Optional["trimesh.Trimesh"]:
+        geom = visual_elem.find("geometry")
+        if geom is None:
+            return None
+        mesh_tag = geom.find("mesh")
+        if mesh_tag is not None:
+            mesh_abs = (urdf_dir / mesh_tag.get("filename")).resolve()
+            try:
+                return trimesh.load_mesh(str(mesh_abs), process=False)
+            except Exception as e:
+                print(f"[visualize] failed to load mesh {mesh_abs}: {e}")
+                return None
+        box_tag = geom.find("box")
+        if box_tag is not None:
+            size = [float(x) for x in box_tag.get("size", "0 0 0").split()]
+            return trimesh.creation.box(extents=size)
+        return None
+
     parts = []
     palette_offset = 0
     for link in robot.findall("link"):
         link_name = link.get("name")
-        if link_name == "root":
+        visuals = link.findall("visual")
+        # Fabrica/fmb-style empty root link: skip it (kept for the URDF tree
+        # but carries no geometry of its own).
+        if link_name == "root" and not visuals:
             continue
 
         jxyz, jrpy = joints.get(link_name, ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
         rxyzw = R.from_euler("xyz", jrpy).as_quat()
         wxyz = (float(rxyzw[3]), float(rxyzw[0]), float(rxyzw[1]), float(rxyzw[2]))
 
-        meshes: List[Tuple[Path, Tuple[int, int, int]]] = []
-        for vi, visual in enumerate(link.findall("visual")):
-            mesh_tag = visual.find("geometry/mesh")
-            if mesh_tag is None:
+        meshes: List[Tuple["trimesh.Trimesh", Tuple[int, int, int]]] = []
+        for vi, visual in enumerate(visuals):
+            geom = _load_visual_geom(visual)
+            if geom is None:
                 continue
-            mesh_abs = (urdf_dir / mesh_tag.get("filename")).resolve()
+            v_xyz, v_rpy = _origin_xyz_rpy(visual.find("origin"))
+            R_loc = R.from_euler("xyz", v_rpy).as_matrix()
+            geom = geom.copy()
+            geom.vertices = geom.vertices @ R_loc.T + np.asarray(v_xyz)
             color = palette[(palette_offset + vi) % len(palette)]
-            meshes.append((mesh_abs, color))
+            meshes.append((geom, color))
 
         if not meshes:
             continue
         parts.append((link_name, tuple(map(float, jxyz)), wxyz, meshes))
-        # Shift the palette so the next part's hulls don't reuse the same
-        # leading colors as this part's hulls.
         palette_offset += max(len(meshes), 1) + 3
     return parts
 
@@ -255,12 +290,7 @@ class ProblemVisualizer:
                 self._track(self.server.scene.add_frame(
                     part_node, position=jxyz, wxyz=jwxyz, show_axes=False,
                 ))
-                for mi, (mp, rgb) in enumerate(mesh_entries):
-                    try:
-                        mesh = trimesh.load_mesh(str(mp), process=False)
-                    except Exception as e:
-                        print(f"[visualize] failed to load mesh {mp}: {e}")
-                        continue
+                for mi, (mesh, rgb) in enumerate(mesh_entries):
                     h = self.server.scene.add_mesh_simple(
                         f"{part_node}/m{mi}",
                         vertices=np.asarray(mesh.vertices, dtype=np.float32),
@@ -292,12 +322,7 @@ class ProblemVisualizer:
                 self._track(self.server.scene.add_frame(
                     ins_part_node, position=jxyz, wxyz=jwxyz, show_axes=False,
                 ))
-                for mi, (mp, rgb) in enumerate(mesh_entries):
-                    try:
-                        mesh = trimesh.load_mesh(str(mp), process=False)
-                    except Exception as e:
-                        print(f"[visualize] failed to load mesh {mp}: {e}")
-                        continue
+                for mi, (mesh, rgb) in enumerate(mesh_entries):
                     h = self.server.scene.add_mesh_simple(
                         f"{ins_part_node}/m{mi}",
                         vertices=np.asarray(mesh.vertices, dtype=np.float32),
