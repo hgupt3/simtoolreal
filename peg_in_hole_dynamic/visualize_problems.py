@@ -134,6 +134,8 @@ def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, 
             return trimesh.creation.box(extents=size)
         return None
 
+    SDF_BLACK = (15, 15, 15)   # near-black so SDF regions are visually obvious
+
     parts = []
     palette_offset = 0
     for link in robot.findall("link"):
@@ -143,6 +145,18 @@ def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, 
         # but carries no geometry of its own).
         if link_name == "root" and not visuals:
             continue
+
+        # Collect mesh-filenames flagged as SDF on the collision side. Any
+        # <visual> referencing one of these meshes is an "SDF region" and
+        # gets coloured black so the user can immediately tell where the
+        # SDF physics applies vs the CoACD / box hulls.
+        sdf_mesh_filenames = set()
+        for col in link.findall("collision"):
+            if col.find("sdf") is None:
+                continue
+            mtag = col.find("geometry/mesh")
+            if mtag is not None:
+                sdf_mesh_filenames.add(mtag.get("filename"))
 
         jxyz, jrpy = joints.get(link_name, ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
         rxyzw = R.from_euler("xyz", jrpy).as_quat()
@@ -157,7 +171,13 @@ def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, 
             R_loc = R.from_euler("xyz", v_rpy).as_matrix()
             geom = geom.copy()
             geom.vertices = geom.vertices @ R_loc.T + np.asarray(v_xyz)
-            color = palette[(palette_offset + vi) % len(palette)]
+
+            mesh_tag = visual.find("geometry/mesh")
+            mesh_filename = mesh_tag.get("filename") if mesh_tag is not None else None
+            if mesh_filename is not None and mesh_filename in sdf_mesh_filenames:
+                color = SDF_BLACK
+            else:
+                color = palette[(palette_offset + vi) % len(palette)]
             meshes.append((geom, color))
 
         if not meshes:
