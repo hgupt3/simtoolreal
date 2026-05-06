@@ -6,6 +6,7 @@ no scenes.npz, hole position randomized each episode.
 
 UI controls:
   - Policy      — pick from --policies-dir / --config-path subfolders
+  - Problem     — pick a PROBLEM_REGISTRY entry, then click Load / reload env
   - Goal mode   — preInsertAndFinal / finalGoalOnly
   - Random goal fraction — slider [0, 1] for co-training mix
 
@@ -48,6 +49,7 @@ DEFAULT_DOF_POS = np.zeros(N_ACT)
 DEFAULT_DOF_POS[:7] = _ARM_DEFAULT
 
 GOAL_MODES = ["preInsertAndFinal", "finalGoalOnly"]
+DEFAULT_PROBLEM = "peg.tol0p5mm"
 
 HOLE_SCENE_Z = 0.15  # hole base Z in scene-local frame (= table top)
 
@@ -94,6 +96,16 @@ BASE_OVERRIDES = {
     "task.env.withTableForceSensor": True,
     "task.env.tableForceResetThreshold": 1.0e6,
     "task.env.retractDistanceThreshold": 0.5,
+}
+
+SDF_PHYSX_OVERRIDES = {
+    "task.sim.physx.max_gpu_contact_pairs": 16777216,
+    "task.sim.physx.num_position_iterations": 32,
+    "task.sim.physx.num_velocity_iterations": 1,
+    "task.sim.physx.bounce_threshold_velocity": 0.05,
+    "task.sim.physx.max_depenetration_velocity": 10.0,
+    "task.sim.physx.friction_offset_threshold": 0.01,
+    "task.sim.physx.friction_correlation_distance": 0.0005,
 }
 
 
@@ -181,6 +193,46 @@ def _load_mesh_for_viz(asset_path: Path) -> trimesh.Trimesh:
     if not meshes:
         return trimesh.creation.box(extents=(0.08, 0.08, 0.01))
     return trimesh.util.concatenate(meshes)
+
+
+def _asset_abs(path_like: str) -> Path:
+    path = Path(path_like)
+    if path.is_absolute():
+        return path
+    return REPO_ROOT / "assets" / path
+
+
+def _asset_rel(path_like) -> str:
+    path = Path(path_like)
+    if path.is_absolute():
+        try:
+            return path.relative_to(REPO_ROOT / "assets").as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()
+
+
+def _registered_problem_names():
+    from peg_in_hole_dynamic import PROBLEM_REGISTRY
+
+    return sorted(PROBLEM_REGISTRY)
+
+
+def _resolve_problem_assets(problem_name: str) -> Tuple[str, str]:
+    from dextoolbench.objects import NAME_TO_OBJECT
+    from peg_in_hole_dynamic import PROBLEM_REGISTRY
+
+    if problem_name not in PROBLEM_REGISTRY:
+        raise KeyError(
+            f"Unknown problem {problem_name!r}; known: {sorted(PROBLEM_REGISTRY)}"
+        )
+    problem = PROBLEM_REGISTRY[problem_name]
+    obj = NAME_TO_OBJECT.get(problem.insertion_object_name)
+    if obj is None:
+        raise KeyError(
+            f"insertion_object_name {problem.insertion_object_name!r} not in NAME_TO_OBJECT"
+        )
+    return _asset_rel(obj.urdf_path), _asset_rel(problem.receptive_urdf)
 
 
 # ===================================================================
@@ -373,14 +425,24 @@ class PegDynamicDemo:
                  random_goal_fraction: float = 0.0,
                  initial_policy: Optional[str] = None,
                  extra_overrides: Optional[dict] = None,
+                 initial_problem: Optional[str] = None,
                  object_urdf: Optional[str] = None,
                  hole_urdf: Optional[str] = None):
         if goal_mode not in GOAL_MODES:
             raise ValueError(f"goal_mode must be one of {GOAL_MODES}")
         if not policies:
             raise ValueError("policies dict must be non-empty")
+        self.problem_names = _registered_problem_names()
+        if not self.problem_names:
+            raise ValueError("PROBLEM_REGISTRY is empty")
         self.policies = policies
         self.initial_policy = initial_policy if initial_policy in policies else next(iter(policies))
+        if initial_problem in self.problem_names:
+            self.problem_name = initial_problem
+        elif DEFAULT_PROBLEM in self.problem_names:
+            self.problem_name = DEFAULT_PROBLEM
+        else:
+            self.problem_name = self.problem_names[0]
         self.port = port
         self.headless = headless
         self.goal_mode = goal_mode
@@ -388,11 +450,18 @@ class PegDynamicDemo:
         self.extra_overrides = extra_overrides or {}
         self.server = viser.ViserServer(host="0.0.0.0", port=port)
 
-        # Overridable asset paths (relative to assets/ root)
-        self._object_urdf_rel = object_urdf or "urdf/peg_in_hole/peg/peg.urdf"
-        self._hole_urdf_rel = hole_urdf or "urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf"
-        self._object_urdf_abs = REPO_ROOT / "assets" / self._object_urdf_rel
-        self._hole_urdf_abs = REPO_ROOT / "assets" / self._hole_urdf_rel
+        # Asset paths are relative to assets/ root unless absolute. CLI asset
+        # overrides only affect the initial render; choosing a problem from the
+        # dropdown re-derives both meshes from PROBLEM_REGISTRY.
+        self._object_urdf_rel = ""
+        self._hole_urdf_rel = ""
+        self._object_urdf_abs = REPO_ROOT / "assets"
+        self._hole_urdf_abs = REPO_ROOT / "assets"
+        if object_urdf is not None or hole_urdf is not None:
+            problem_object, problem_hole = _resolve_problem_assets(self.problem_name)
+            self._set_asset_paths(object_urdf or problem_object, hole_urdf or problem_hole)
+        else:
+            self._set_problem_assets(self.problem_name)
 
         self._proc = None
         self._conn = None
@@ -420,6 +489,21 @@ class PegDynamicDemo:
         self._build_gui()
         self._setup_static_scene()
 
+    def _set_asset_paths(self, object_urdf: str, hole_urdf: str) -> None:
+        self._object_urdf_rel = _asset_rel(object_urdf)
+        self._hole_urdf_rel = _asset_rel(hole_urdf)
+        self._object_urdf_abs = _asset_abs(self._object_urdf_rel)
+        self._hole_urdf_abs = _asset_abs(self._hole_urdf_rel)
+
+    def _set_problem_assets(self, problem_name: str) -> None:
+        object_urdf, hole_urdf = _resolve_problem_assets(problem_name)
+        self.problem_name = problem_name
+        self._set_asset_paths(object_urdf, hole_urdf)
+
+    def _reload_problem_meshes(self) -> None:
+        self._hole_mesh = _load_mesh_for_viz(self._hole_urdf_abs)
+        self._object_mesh = _load_mesh_for_viz(self._object_urdf_abs)
+
     def _build_gui(self):
         self.server.gui.add_markdown(
             "# Peg-in-Hole Dynamic Eval\n"
@@ -427,6 +511,9 @@ class PegDynamicDemo:
         )
 
         with self.server.gui.add_folder("Task Selection", expand_by_default=True):
+            self._dd_problem = self.server.gui.add_dropdown(
+                "Problem", options=self.problem_names, initial_value=self.problem_name,
+            )
             self._dd_policy = self.server.gui.add_dropdown(
                 "Policy", options=list(self.policies.keys()),
                 initial_value=self.initial_policy,
@@ -664,14 +751,23 @@ class PegDynamicDemo:
         self._is_paused = False
 
     def _load_env(self):
-        self._kill_subprocess()
-
+        problem_name = self._dd_problem.value
         goal_mode = self._dd_goal_mode.value
         rgf = self._sl_rgf.value
         policy_name = self._dd_policy.value
         config_path, checkpoint_path = self.policies[policy_name]
 
-        label = f"{policy_name} | goals: {goal_mode} | rgf: {rgf:.1f}"
+        try:
+            self._set_problem_assets(problem_name)
+            self._reload_problem_meshes()
+        except Exception as exc:
+            self._md_status.content = f"**Status:** Problem load error -- {str(exc)[:200]}"
+            print(f"[launcher] Problem load error for {problem_name!r}:\n{traceback.format_exc()}")
+            return
+
+        self._kill_subprocess()
+
+        label = f"{problem_name} | {policy_name} | goals: {goal_mode} | rgf: {rgf:.1f}"
         self._md_status.content = f"**Status:** Loading *{label}* ..."
         self._md_task.content = f"**Task:** {label}"
         self._md_retract.content = "**Retract:** --"
@@ -685,6 +781,7 @@ class PegDynamicDemo:
 
         # Merge asset overrides into extra_overrides for the subprocess
         sim_overrides = dict(self.extra_overrides)
+        sim_overrides["task.env.problem"] = problem_name
         sim_overrides["task.env.holeUrdf"] = self._hole_urdf_rel
         sim_overrides["task.env.targetVolumeMins"] = TARGET_VOLUME_MINS
         sim_overrides["task.env.targetVolumeMaxs"] = TARGET_VOLUME_MAXS
@@ -700,8 +797,8 @@ class PegDynamicDemo:
         )
         self._proc.start()
         child_conn.close()
-        print(f"[launcher] Spawned pid={self._proc.pid} goal_mode={goal_mode} rgf={rgf} "
-              f"hole={self._hole_urdf_rel}")
+        print(f"[launcher] Spawned pid={self._proc.pid} problem={problem_name} "
+              f"goal_mode={goal_mode} rgf={rgf} hole={self._hole_urdf_rel}")
 
     def _send(self, msg):
         if self._conn is not None:
@@ -895,10 +992,10 @@ if __name__ == "__main__":
                         help="Hole URDF path relative to assets/ (default: urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf, or derived from --problem)")
     parser.add_argument("--problem", type=str, default=None,
                         help="Problem name from PROBLEM_REGISTRY. When set, derives "
-                             "object_urdf + hole_urdf from the registry, sets "
-                             "task.env.problem, and overrides task.env.holeXRange / "
-                             "holeYRange / holeZOffset / insertPoseRelHole / "
-                             "insertionDirection / preInsertOffset accordingly.")
+                             "the initial object_urdf + hole_urdf from the registry "
+                             "and selects the initial GUI Problem dropdown value.")
+    parser.add_argument("--sdf", action="store_true",
+                        help="Apply the SDF-hybrid PhysX preset used by the better-physics runs.")
     parser.add_argument("--override", nargs=2, action="append", default=[],
                         metavar=("KEY", "VALUE"),
                         help="Extra task-env overrides (repeated).")
@@ -913,7 +1010,7 @@ if __name__ == "__main__":
             return str(path)
         raise FileNotFoundError(p)
 
-    extra_overrides = {}
+    extra_overrides = dict(SDF_PHYSX_OVERRIDES) if args.sdf else {}
     object_urdf_arg = args.object_urdf
     hole_urdf_arg = args.hole_urdf
     if args.problem is not None:
@@ -992,6 +1089,7 @@ if __name__ == "__main__":
         random_goal_fraction=args.random_goal_fraction,
         initial_policy=args.initial_policy,
         extra_overrides=extra_overrides,
+        initial_problem=args.problem,
         object_urdf=object_urdf_arg,
         hole_urdf=hole_urdf_arg,
     ).run()
