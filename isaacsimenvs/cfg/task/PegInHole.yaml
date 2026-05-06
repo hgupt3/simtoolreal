@@ -8,14 +8,18 @@ sim:
   gravity: [0.0, 0.0, -9.81]
   physx:
     solver_type: 1
-    min_position_iteration_count: 8
-    max_position_iteration_count: 8
+    min_position_iteration_count: 1
+    max_position_iteration_count: 192
     min_velocity_iteration_count: 0
-    max_velocity_iteration_count: 0
-    bounce_threshold_velocity: 0.2
-    friction_offset_threshold: 0.04
-    friction_correlation_distance: 0.025
+    max_velocity_iteration_count: 1
+    bounce_threshold_velocity: 0.02
+    friction_offset_threshold: 0.01
+    friction_correlation_distance: 0.0005
+    gpu_found_lost_aggregate_pairs_capacity: 4194304
+    gpu_total_aggregate_pairs_capacity: 8388608
+    gpu_max_rigid_contact_count: 8388608
     gpu_max_rigid_patch_count: 8388608
+    gpu_collision_stack_size: 2147483648
 
 scene:
   num_envs: 8192
@@ -25,10 +29,11 @@ scene:
 
 assets:
   robot_urdf: "assets/urdf/kuka_sharpa_description/iiwa14_left_sharpa_adjusted_restricted.urdf"
-  table_urdf: "assets/urdf/peg_in_hole/scenes/scene_0000/scene_tol00.urdf"
+  table_urdf: "assets/urdf/table_narrow.urdf"
   object_name: "peg"
-  peg_urdf: "assets/urdf/peg_in_hole/peg/peg.urdf"
-  peg_scale: [6.25, 0.75, 0.5]
+  object_urdf: "assets/urdf/peg_in_hole/peg/peg.urdf"
+  receptive_urdf: "assets/urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf"
+  object_scale: [6.25, 0.75, 0.5]
   modify_asset_frictions: true
   robot_friction: 0.5
   finger_tip_friction: 1.5
@@ -36,18 +41,21 @@ assets:
   table_friction: 0.5
 
 peg_in_hole:
-  scenes_path: "assets/urdf/peg_in_hole/scenes/scenes.npz"
-  goal_mode: "dense"
+  problem: "peg.tol0p5mm"
+  goal_mode: "preInsertAndFinal"
+  hole_x_range: [-0.1875, 0.1875]
+  hole_y_range: [-0.1, 0.2]
   goal_xy_obs_noise: 0.002
+  random_goal_fraction: 0.0
+  random_goal_max_successes: 5
+  random_goal_curriculum_success_threshold: 2.0
+  lift_bonus_fade_threshold: 2.0
+  insertion_success_tolerance: 0.01
   enable_retract: true
   retract_reward_scale: 1.0
   retract_distance_threshold: 0.1
   retract_success_bonus: 1000.0
   retract_success_tolerance: 0.005
-  force_scene_tol_combo: null
-  force_tightest_tol_per_scene: false
-  tightest_n_tol_slots_per_scene: -1
-  force_peg_idx: null
 
 obs:
   state_list: [joint_pos, joint_vel, prev_action_targets, palm_pos, palm_rot, palm_vel,
@@ -103,7 +111,7 @@ termination:
   target_success_tolerance: 0.01
   eval_success_tolerance: null
   success_steps: 10
-  max_consecutive_successes: 13
+  max_consecutive_successes: 2
   force_consecutive_near_goal_steps: false
   tolerance_curriculum_increment: 0.9
   tolerance_curriculum_interval: 3000

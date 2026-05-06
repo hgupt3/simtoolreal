@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=2)
     parser.add_argument("--image_width", type=int, default=160)
     parser.add_argument("--image_height", type=int, default=90)
+    parser.add_argument("--problem", type=str, default="peg.tol0p5mm")
     parser.add_argument("--crop_top_left", type=int, nargs=2, default=(90, 0), metavar=("X", "Y"))
     parser.add_argument("--crop_bottom_right", type=int, nargs=2, default=(160, 70), metavar=("X", "Y"))
     parser.add_argument("--camera_delay_max", type=int, default=3)
@@ -51,8 +52,8 @@ def main() -> None:
         cfg.from_dict(yaml.safe_load(f) or {})
 
     cfg.scene.num_envs = args.num_envs
-    cfg.peg_in_hole.force_scene_tol_combo = (0, 0)
-    cfg.peg_in_hole.force_peg_idx = 0
+    cfg.peg_in_hole.problem = args.problem
+    cfg.peg_in_hole.goal_mode = "preInsertAndFinal"
 
     cfg.student_obs.image_width = args.image_width
     cfg.student_obs.image_height = args.image_height

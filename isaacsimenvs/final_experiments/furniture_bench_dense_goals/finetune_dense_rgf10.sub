@@ -11,40 +11,33 @@
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
 
-# IsaacSim PegInHole finetune:
-# SAPG + dynamic peg-in-hole problem registry + preInsertAndFinal goals +
-# actor goal XY noise.
-# Warm-starts from an IsaacGym rl_games checkpoint. Override CHECKPOINT at submit
-# time if you want a different peg policy:
-#   CHECKPOINT=/path/to/model.pth sbatch isaacsimenvs/test_experiments/peg_in_hole/peg_in_hole_preinsfinal_sapg_finetune.sub
+# IsaacSim PegInHole SAPG finetune, rgf=0.10.
+# Problem: furniture_bench.one_leg_sdf_hybrid_dense.
+# URDF <sdf> collision tags and UWLab-style PhysX settings are task defaults.
 
-# ── Task / algorithm ─────────────────────────────────────────
 TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
 AGENT_KEY="rl_games_sapg_cfg_entry_point"
+PROBLEM="furniture_bench.one_leg_sdf_hybrid_dense"
+GOAL_MODE="preInsertAndFinal"
 CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
 
-NUM_ENVS=24576
-MINIBATCH_SIZE=98304
+NUM_ENVS=8192
+MINIBATCH_SIZE=65536
 MAX_ITERATIONS=1000000
-SEED=42
-GPU_MAX_RIGID_CONTACT_COUNT=16777216
-GPU_MAX_RIGID_PATCH_COUNT=8388608
+SEED=0
 
-# ── Peg-in-hole settings ─────────────────────────────────────
-PROBLEM="peg.tol0p5mm"
-GOAL_MODE="preInsertAndFinal"
-GOAL_XY_OBS_NOISE=0.002
-RANDOM_GOAL_FRACTION=0.0
+RANDOM_GOAL_FRACTION=0.1
 RANDOM_GOAL_MAX_SUCCESSES=5
+GOAL_XY_OBS_NOISE=0.002
 INSERTION_SUCCESS_TOLERANCE=0.01
 SUCCESS_TOLERANCE=0.075
 TARGET_SUCCESS_TOLERANCE=0.01
+
 ENABLE_RETRACT=True
 RETRACT_REWARD_SCALE=1.0
 RETRACT_DISTANCE_THRESHOLD=0.1
 RETRACT_SUCCESS_TOLERANCE=0.005
 
-# ── Domain randomization ─────────────────────────────────────
 USE_OBS_DELAY=True
 USE_ACTION_DELAY=True
 USE_OBJECT_STATE_DELAY_NOISE=True
@@ -53,25 +46,25 @@ OBJECT_STATE_ROTATION_NOISE_DEG=5.0
 JOINT_VELOCITY_OBS_NOISE_STD=0.1
 OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
 
-# Explicitly disabled for insertion finetuning.
 FORCE_SCALE=0.0
 TORQUE_SCALE=0.0
 
-# ── Reset / reward knobs ─────────────────────────────────────
+RESET_POSITION_NOISE_X=0.1
+RESET_POSITION_NOISE_Y=0.1
+RESET_POSITION_NOISE_Z=0.02
 RESET_DOF_POS_NOISE_ARM=0.1
 RESET_DOF_POS_NOISE_FINGERS=0.1
 RESET_DOF_VEL_NOISE=0.5
-TABLE_RESET_Z_RANGE=0.0
-LIFTING_REW_SCALE=0.0
-LIFTING_BONUS=0.0
+TABLE_RESET_Z_RANGE=0.01
+
+LIFTING_REW_SCALE=20.0
+LIFTING_BONUS=300.0
 FORCE_CONSECUTIVE_NEAR_GOAL=True
 
-# ── Weights & Biases ─────────────────────────────────────────
 WANDB_PROJECT="isaacsimenvs"
-WANDB_GROUP="peg_in_hole"
-EXPERIMENT_TAG="peg_in_hole_preinsfinal_sapg_finetune"
+WANDB_GROUP="furniture_bench_dense_goals"
+EXPERIMENT_TAG="dense_finetune_rgf10"
 
-# ── Pose-only interactive viewer, no Isaac cameras ───────────
 CAPTURE_VIEWER_LEN=600
 CAPTURE_VIEWER_INTERVAL=6000
 CAPTURE_VIEWER_ENV_ID=0
@@ -151,8 +144,6 @@ python -u isaacsimenvs/train.py \
     --wandb_entity kk837 \
     --wandb_name "$EXPERIMENT_NAME" \
     env.scene.num_envs=$NUM_ENVS \
-    env.sim.physx.gpu_max_rigid_contact_count=$GPU_MAX_RIGID_CONTACT_COUNT \
-    env.sim.physx.gpu_max_rigid_patch_count=$GPU_MAX_RIGID_PATCH_COUNT \
     env.peg_in_hole.problem="$PROBLEM" \
     env.peg_in_hole.goal_mode="$GOAL_MODE" \
     env.peg_in_hole.goal_xy_obs_noise=$GOAL_XY_OBS_NOISE \
@@ -174,6 +165,9 @@ python -u isaacsimenvs/train.py \
     env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
     env.domain_randomization.joint_velocity_obs_noise_std=$JOINT_VELOCITY_OBS_NOISE_STD \
     "env.domain_randomization.object_scale_noise_multiplier_range=$OBJECT_SCALE_NOISE_RANGE" \
+    env.reset.reset_position_noise_x=$RESET_POSITION_NOISE_X \
+    env.reset.reset_position_noise_y=$RESET_POSITION_NOISE_Y \
+    env.reset.reset_position_noise_z=$RESET_POSITION_NOISE_Z \
     env.reset.reset_dof_pos_random_interval_arm=$RESET_DOF_POS_NOISE_ARM \
     env.reset.reset_dof_pos_random_interval_fingers=$RESET_DOF_POS_NOISE_FINGERS \
     env.reset.reset_dof_vel_random_interval=$RESET_DOF_VEL_NOISE \

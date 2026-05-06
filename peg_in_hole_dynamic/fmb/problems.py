@@ -107,13 +107,13 @@ def _register_assembly_problems(assembly: str) -> None:
         # Strip the redundant assembly prefix from short labels (board_1_1
         # rather than fmb_board_1_board_1_1) so the problem name reads cleanly.
         short = inserter_id
-        fixture_urdf = write_fixture_urdf(
-            output_path=(
-                _FMB_DIR / assembly / "insertion_fixtures" / f"{short}.urdf"
-            ),
-            parts=fixture_entries,
-            robot_name=f"fixture_{assembly}_{short}",
-        )
+        fixture_urdf = _FMB_DIR / assembly / "insertion_fixtures" / f"{short}.urdf"
+        if not fixture_urdf.is_file():
+            fixture_urdf = write_fixture_urdf(
+                output_path=fixture_urdf,
+                parts=fixture_entries,
+                robot_name=f"fixture_{assembly}_{short}",
+            )
         receptive_rel = fixture_urdf.relative_to(_REPO_ROOT / "assets").as_posix()
 
         pose_ins = _assembled_pose(transforms, inserter_id)

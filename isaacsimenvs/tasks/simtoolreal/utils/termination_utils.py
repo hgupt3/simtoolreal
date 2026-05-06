@@ -12,10 +12,20 @@ def update_tolerance_curriculum(env) -> None:
     env._frame_counter += 1
     term = env.cfg.termination
     if env._frame_counter - env._last_curriculum_update >= term.tolerance_curriculum_interval:
-        if (
-            env._prev_episode_successes.float().mean().item()
-            >= term.tolerance_curriculum_success_threshold
-        ):
+        successes = env._prev_episode_successes.float()
+        eligible_mask = None
+        if hasattr(env, "_curriculum_eligible_mask"):
+            eligible_mask = env._curriculum_eligible_mask()
+        if eligible_mask is not None:
+            successes = successes[eligible_mask]
+
+        threshold = term.tolerance_curriculum_success_threshold
+        if hasattr(env, "_curriculum_success_threshold"):
+            custom_threshold = env._curriculum_success_threshold()
+            if custom_threshold is not None:
+                threshold = float(custom_threshold)
+
+        if successes.numel() > 0 and successes.mean().item() >= threshold:
             new_tol = env._current_success_tolerance * term.tolerance_curriculum_increment
             new_tol = max(min(new_tol, term.success_tolerance), term.target_success_tolerance)
             env._current_success_tolerance = new_tol

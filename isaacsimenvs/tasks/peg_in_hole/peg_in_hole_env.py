@@ -1,13 +1,17 @@
-"""Peg-in-hole task built as a thin SimToolRealEnv variant."""
+"""Dynamic peg-in-hole task built as a SimToolRealEnv variant."""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from isaacsimenvs.tasks.simtoolreal.simtoolreal_env import SimToolRealEnv
+from isaacsimenvs.tasks.simtoolreal.utils.goal_sampling import (
+    sample_absolute_goal_pose,
+    sample_delta_goal_pose,
+)
 from isaacsimenvs.tasks.simtoolreal.utils.logging_utils import log_step_metrics
 from isaacsimenvs.tasks.simtoolreal.utils.obs_utils import (
     OBS_FIELD_SIZES,
@@ -21,6 +25,9 @@ from isaacsimenvs.tasks.simtoolreal.utils.termination_utils import (
 
 from .peg_in_hole_env_cfg import PegInHoleEnvCfg, VALID_GOAL_MODES
 from .scene_utils import REPO_ROOT, setup_scene
+
+
+TABLE_HALF_HEIGHT = 0.15
 
 
 def _xyzw_to_wxyz(quat: torch.Tensor) -> torch.Tensor:
@@ -37,42 +44,73 @@ def _obs_field_slice(fields: tuple[str, ...], field: str) -> slice | None:
     return None
 
 
+def _resolve_asset_path(path: str | Path) -> Path:
+    asset_path = Path(path)
+    if asset_path.is_absolute():
+        return asset_path
+
+    candidates = (REPO_ROOT / asset_path, REPO_ROOT / "assets" / asset_path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    checked = ", ".join(str(candidate) for candidate in candidates)
+    raise FileNotFoundError(f"Could not resolve asset path {path!r}; checked {checked}")
+
+
 class PegInHoleEnv(SimToolRealEnv):
     cfg: PegInHoleEnvCfg
 
     def __init__(
         self, cfg: PegInHoleEnvCfg, render_mode: str | None = None, **kwargs
     ) -> None:
-        self._load_scene_data(cfg)
-        cfg.assets.object_name = "peg"
-        cfg.assets.table_urdf = self._pih_scene_urdfs[0]
-        cfg.termination.max_consecutive_successes = self._pih_max_traj_len
+        self._configure_problem(cfg)
 
         super().__init__(cfg, render_mode, **kwargs)
 
-        self._pih_start_poses_t = torch.as_tensor(
-            self._pih_start_poses, dtype=torch.float32, device=self.device
+        insert_poses = torch.as_tensor(
+            self._pih_insert_pose_sequence, dtype=torch.float32, device=self.device
         )
-        self._pih_goals_t = torch.as_tensor(
-            self._pih_goals, dtype=torch.float32, device=self.device
-        )
-        self._pih_traj_lengths_t = torch.as_tensor(
-            self._pih_traj_lengths, dtype=torch.long, device=self.device
-        )
-        self._pih_env_scene_idx_t = torch.as_tensor(
-            self._pih_env_scene_idx, dtype=torch.long, device=self.device
-        )
-        self._pih_env_tol_slot_t = torch.as_tensor(
-            self._pih_env_tol_slot_idx, dtype=torch.long, device=self.device
-        )
+        self._insert_pos_rel = insert_poses[:, 0:3].contiguous()
+        self._insert_quat_wxyz = _xyzw_to_wxyz(insert_poses[:, 3:7]).contiguous()
 
-        self.env_peg_idx = torch.zeros(
-            self.num_envs, dtype=torch.long, device=self.device
+        self.hole_pos = torch.zeros(
+            self.num_envs, 3, dtype=torch.float32, device=self.device
         )
-        self.env_max_goals = self._pih_traj_lengths_t[
-            self._pih_env_scene_idx_t, self.env_peg_idx
-        ].clone()
+        self.is_random_goal_env = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        self.prev_episode_is_random_goal = torch.zeros_like(self.is_random_goal_env)
+
+        self.env_max_goals = torch.full(
+            (self.num_envs,),
+            self._num_insertion_goals,
+            dtype=torch.long,
+            device=self.device,
+        )
+        pih_cfg = self.cfg.peg_in_hole
+        random_goal_fraction = float(pih_cfg.random_goal_fraction)
+        if random_goal_fraction > 0.0:
+            self.is_random_goal_env[:] = (
+                torch.rand(self.num_envs, device=self.device) < random_goal_fraction
+            )
+            random_goal_max = torch.full_like(
+                self.env_max_goals, int(pih_cfg.random_goal_max_successes)
+            )
+            insertion_max = torch.full_like(
+                self.env_max_goals, self._num_insertion_goals
+            )
+            self.env_max_goals[:] = torch.where(
+                self.is_random_goal_env, random_goal_max, insertion_max
+            )
+
         self.prev_episode_env_max_goals = self.env_max_goals.clone()
+        self.prev_episode_is_random_goal[:] = self.is_random_goal_env
+
+        self.insertion_success_tolerance = float(pih_cfg.insertion_success_tolerance)
+        self.retract_success_bonus = float(
+            int(pih_cfg.random_goal_max_successes) * self.cfg.reward.reach_goal_bonus
+        )
+        self.lift_bonus_active = True
 
         self.retract_phase = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -88,108 +126,81 @@ class PegInHoleEnv(SimToolRealEnv):
             tuple(cfg.obs.obs_list), "keypoints_rel_goal"
         )
 
-    def _load_scene_data(self, cfg: PegInHoleEnvCfg) -> None:
+        print(
+            f"[PegInHoleEnv] problem={self._pih_problem_name} "
+            f"object={cfg.assets.object_name} "
+            f"goals={self._num_insertion_goals} "
+            f"goal_mode={pih_cfg.goal_mode} "
+            f"random_goal_fraction={random_goal_fraction}",
+            flush=True,
+        )
+
+    def _configure_problem(self, cfg: PegInHoleEnvCfg) -> None:
         pih_cfg = cfg.peg_in_hole
         if pih_cfg.goal_mode not in VALID_GOAL_MODES:
             raise ValueError(
                 f"goal_mode must be one of {VALID_GOAL_MODES}, got {pih_cfg.goal_mode!r}"
             )
 
-        scenes_path = Path(pih_cfg.scenes_path)
-        if not scenes_path.is_absolute():
-            scenes_path = REPO_ROOT / scenes_path
-        if not scenes_path.exists():
-            raise FileNotFoundError(f"Peg-in-hole scenes file not found: {scenes_path}")
-
-        data = np.load(scenes_path)
-        start_poses = data["start_poses"].astype(np.float32)
-        goals = data["goals"].astype(np.float32)
-        traj_lengths = data["traj_lengths"].astype(np.int64)
-        tol_pool_m = data["tolerance_pool_m"].astype(np.float32)
-        scene_tol_indices = data["scene_tolerance_indices"].astype(np.int64)
-
-        num_scenes, num_pegs, _ = start_poses.shape
-        _, _, max_traj_len, _ = goals.shape
-        num_tol_slots = scene_tol_indices.shape[1]
-        if traj_lengths.shape != (num_scenes, num_pegs):
+        random_goal_fraction = float(pih_cfg.random_goal_fraction)
+        if not 0.0 <= random_goal_fraction <= 1.0:
             raise ValueError(
-                f"traj_lengths shape {traj_lengths.shape} does not match "
-                f"({num_scenes}, {num_pegs})"
+                "peg_in_hole.random_goal_fraction must be in [0, 1], "
+                f"got {random_goal_fraction}"
             )
 
+        repo_root_str = str(REPO_ROOT)
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+
+        from dextoolbench.objects import NAME_TO_OBJECT
+        from peg_in_hole_dynamic import PROBLEM_REGISTRY
+
+        problem_name = str(pih_cfg.problem)
+        if problem_name not in PROBLEM_REGISTRY:
+            raise KeyError(
+                f"Unknown peg-in-hole problem {problem_name!r}; "
+                f"known problems: {sorted(PROBLEM_REGISTRY)}"
+            )
+        problem = PROBLEM_REGISTRY[problem_name]
+
+        if problem.insertion_object_name not in NAME_TO_OBJECT:
+            raise KeyError(
+                f"Problem {problem_name!r} references object "
+                f"{problem.insertion_object_name!r}, but it is not in NAME_TO_OBJECT."
+            )
+        object_spec = NAME_TO_OBJECT[problem.insertion_object_name]
+        object_urdf = _resolve_asset_path(object_spec.urdf_path)
+        receptive_urdf = _resolve_asset_path(problem.receptive_urdf)
+
+        insert_pose_sequence = problem.insert_pose_rel_receptive
         if pih_cfg.goal_mode == "finalGoalOnly":
-            scene_idx = np.arange(num_scenes)[:, None].repeat(num_pegs, axis=1)
-            peg_idx = np.arange(num_pegs)[None, :].repeat(num_scenes, axis=0)
-            final_idx = traj_lengths - 1
-            goals = goals[scene_idx, peg_idx, final_idx][:, :, None, :]
-            traj_lengths = np.ones_like(traj_lengths)
-            max_traj_len = 1
-        elif pih_cfg.goal_mode == "preInsertAndFinal":
-            scene_idx = np.arange(num_scenes)[:, None].repeat(num_pegs, axis=1)
-            peg_idx = np.arange(num_pegs)[None, :].repeat(num_scenes, axis=0)
-            final_idx = traj_lengths - 1
-            pre_idx = np.clip(traj_lengths - 2, a_min=0, a_max=None)
-            goals = np.stack(
-                [goals[scene_idx, peg_idx, pre_idx], goals[scene_idx, peg_idx, final_idx]],
-                axis=2,
-            )
-            traj_lengths = np.clip(traj_lengths, a_min=None, a_max=2)
-            max_traj_len = 2
+            insert_pose_sequence = (problem.final_insert_pose_rel_receptive,)
+        if len(insert_pose_sequence) == 0:
+            raise ValueError(f"Problem {problem_name!r} has no insertion subgoals.")
 
-        num_envs = int(cfg.scene.num_envs)
-        combo_count = num_scenes * num_tol_slots
-        force_combo = pih_cfg.force_scene_tol_combo
-        if force_combo is not None:
-            scene_id, tol_slot = int(force_combo[0]), int(force_combo[1])
-            if not (0 <= scene_id < num_scenes and 0 <= tol_slot < num_tol_slots):
-                raise ValueError(
-                    f"force_scene_tol_combo=({scene_id}, {tol_slot}) out of range "
-                    f"(num_scenes={num_scenes}, num_tol_slots={num_tol_slots})"
-                )
-            env_scene_idx = np.full(num_envs, scene_id, dtype=np.int64)
-            env_tol_slot_idx = np.full(num_envs, tol_slot, dtype=np.int64)
+        self._pih_problem_name = problem_name
+        self._pih_problem = problem
+        self._pih_object_urdf_abs = str(object_urdf)
+        self._pih_receptive_urdf_abs = str(receptive_urdf)
+        self._pih_object_scale = tuple(float(v) for v in object_spec.scale)
+        self._pih_hole_z_offset = float(problem.hole_z_offset)
+        self._pih_insert_pose_sequence = tuple(insert_pose_sequence)
+        self._num_insertion_goals = len(self._pih_insert_pose_sequence)
+
+        cfg.assets.object_name = problem.insertion_object_name
+        cfg.assets.object_urdf = self._pih_object_urdf_abs
+        cfg.assets.receptive_urdf = self._pih_receptive_urdf_abs
+        cfg.assets.object_scale = self._pih_object_scale
+        cfg.assets.table_urdf = "assets/urdf/table_narrow.urdf"
+
+        random_max = int(pih_cfg.random_goal_max_successes)
+        if random_goal_fraction > 0.0:
+            cfg.termination.max_consecutive_successes = max(
+                self._num_insertion_goals, random_max
+            )
         else:
-            combo_ids = np.arange(num_envs) % combo_count
-            env_scene_idx = (combo_ids // num_tol_slots).astype(np.int64)
-            env_tol_slot_idx = (combo_ids % num_tol_slots).astype(np.int64)
-
-        if pih_cfg.force_tightest_tol_per_scene:
-            tightest_slot = np.argmin(tol_pool_m[scene_tol_indices], axis=1).astype(np.int64)
-            env_tol_slot_idx = tightest_slot[env_scene_idx]
-
-        tightest_n = int(pih_cfg.tightest_n_tol_slots_per_scene)
-        if (
-            tightest_n > 0
-            and tightest_n < num_tol_slots
-            and not pih_cfg.force_tightest_tol_per_scene
-        ):
-            slots = np.argsort(tol_pool_m[scene_tol_indices], axis=1)[:, :tightest_n]
-            env_tol_slot_idx = slots[env_scene_idx, np.arange(num_envs) % tightest_n]
-
-        self._pih_start_poses = start_poses
-        self._pih_goals = goals
-        self._pih_traj_lengths = traj_lengths
-        self._pih_num_scenes = num_scenes
-        self._pih_num_pegs = num_pegs
-        self._pih_num_tol_slots = num_tol_slots
-        self._pih_max_traj_len = max_traj_len
-        self._pih_env_scene_idx = env_scene_idx
-        self._pih_env_tol_slot_idx = env_tol_slot_idx
-
-        table_pattern_len = 1 if force_combo is not None else min(num_envs, combo_count)
-        self._pih_scene_urdfs = [
-            f"assets/urdf/peg_in_hole/scenes/scene_{scene_id:04d}/scene_tol{tol_slot:02d}.urdf"
-            for scene_id, tol_slot in zip(
-                env_scene_idx[:table_pattern_len], env_tol_slot_idx[:table_pattern_len]
-            )
-        ]
-
-        print(
-            f"[PegInHoleEnv] loaded {num_scenes} scenes x {num_pegs} pegs x "
-            f"{num_tol_slots} tol slots "
-            f"(goal_mode={pih_cfg.goal_mode}, max_traj_len={max_traj_len})",
-            flush=True,
-        )
+            cfg.termination.max_consecutive_successes = self._num_insertion_goals
 
     def _setup_scene(self) -> None:
         setup_scene(self)
@@ -200,67 +211,147 @@ class PegInHoleEnv(SimToolRealEnv):
         env_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         if hasattr(self, "prev_episode_env_max_goals"):
             self.prev_episode_env_max_goals[env_ids] = self.env_max_goals[env_ids]
+            self.prev_episode_is_random_goal[env_ids] = self.is_random_goal_env[env_ids]
         super()._reset_idx(env_ids)
         self._reset_peg_episode(env_ids)
 
     def _reset_peg_episode(self, env_ids: torch.Tensor) -> None:
         n = env_ids.numel()
         pih_cfg = self.cfg.peg_in_hole
-        if pih_cfg.force_peg_idx is None:
-            peg_idx = torch.randint(
-                0, self._pih_num_pegs, (n,), dtype=torch.long, device=self.device
-            )
-        else:
-            peg_idx = torch.full(
-                (n,), int(pih_cfg.force_peg_idx), dtype=torch.long, device=self.device
-            )
-            if not (0 <= int(pih_cfg.force_peg_idx) < self._pih_num_pegs):
-                raise ValueError(
-                    f"force_peg_idx={pih_cfg.force_peg_idx} out of range "
-                    f"[0, {self._pih_num_pegs})"
-                )
+        env_origins = self.scene.env_origins[env_ids]
+        is_random_goal = self.is_random_goal_env[env_ids]
 
-        scene_idx = self._pih_env_scene_idx_t[env_ids]
-        self.env_peg_idx[env_ids] = peg_idx
-        self.env_max_goals[env_ids] = self._pih_traj_lengths_t[scene_idx, peg_idx]
-
-        start = self._pih_start_poses_t[scene_idx, peg_idx]
-        pos_local = start[:, 0:3].clone()
-        pos_local[:, 2] = (
-            self._table_z_per_env[env_ids] + self.cfg.reset.table_object_z_offset
+        insertion_max = torch.full(
+            (n,), self._num_insertion_goals, dtype=torch.long, device=self.device
         )
-        quat = _xyzw_to_wxyz(start[:, 3:7])
-        pose = torch.cat([pos_local + self.scene.env_origins[env_ids], quat], dim=-1)
-        self.object.write_root_pose_to_sim(pose, env_ids=env_ids)
+        random_max = torch.full(
+            (n,),
+            int(pih_cfg.random_goal_max_successes),
+            dtype=torch.long,
+            device=self.device,
+        )
+        self.env_max_goals[env_ids] = torch.where(
+            is_random_goal, random_max, insertion_max
+        )
+
+        table_top_z = self._table_z_per_env[env_ids] + TABLE_HALF_HEIGHT
+
+        obj_pos_local = torch.zeros(n, 3, dtype=torch.float32, device=self.device)
+        obj_pos_local[:, 2] = table_top_z + 0.1
+        obj_quat = torch.tensor(
+            [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32
+        ).unsqueeze(0).expand(n, -1)
+        obj_pose = torch.cat([obj_pos_local + env_origins, obj_quat], dim=-1)
+        self.object.write_root_pose_to_sim(obj_pose, env_ids=env_ids)
         self.object.write_root_velocity_to_sim(
             torch.zeros(n, 6, device=self.device), env_ids=env_ids
         )
-        self._object_init_z[env_ids] = pos_local[:, 2]
+        self._object_init_z[env_ids] = obj_pos_local[:, 2]
 
-        noise = pih_cfg.goal_xy_obs_noise
+        hole_x_min, hole_x_max = (float(v) for v in pih_cfg.hole_x_range)
+        hole_y_min, hole_y_max = (float(v) for v in pih_cfg.hole_y_range)
+        self.hole_pos[env_ids, 0] = torch.empty(n, device=self.device).uniform_(
+            hole_x_min, hole_x_max
+        )
+        self.hole_pos[env_ids, 1] = torch.empty(n, device=self.device).uniform_(
+            hole_y_min, hole_y_max
+        )
+        self.hole_pos[env_ids, 2] = table_top_z + self._pih_hole_z_offset
+        if is_random_goal.any():
+            rg_ids = env_ids[is_random_goal]
+            self.hole_pos[rg_ids, 0:2] = 0.0
+            self.hole_pos[rg_ids, 2] = -1.0
+
+        hole_pose = torch.cat([self.hole_pos[env_ids] + env_origins, obj_quat], dim=-1)
+        self.hole.write_root_pose_to_sim(hole_pose, env_ids=env_ids)
+        self.hole.write_root_velocity_to_sim(
+            torch.zeros(n, 6, device=self.device), env_ids=env_ids
+        )
+
         self.goal_pos_obs_noise[env_ids] = 0.0
-        if noise > 0:
-            self.goal_pos_obs_noise[env_ids, 0:2] = torch.empty(
-                n, 2, device=self.device
+        noise = float(pih_cfg.goal_xy_obs_noise)
+        insertion_mask = ~is_random_goal
+        if noise > 0.0 and insertion_mask.any():
+            ins_ids = env_ids[insertion_mask]
+            self.goal_pos_obs_noise[ins_ids, 0:2] = torch.empty(
+                ins_ids.numel(), 2, device=self.device
             ).uniform_(-noise, noise)
 
         self.retract_phase[env_ids] = False
         self.retract_succeeded[env_ids] = False
+        self._just_entered_retract[env_ids] = False
+        self._just_retracted[env_ids] = False
         self._clear_goal_trackers(env_ids)
-        self._write_goal_pose(env_ids)
+        self._write_goal_pose(env_ids, is_first_goal=True)
 
-    def _write_goal_pose(self, env_ids: torch.Tensor) -> None:
+    def _write_goal_pose(self, env_ids: torch.Tensor, is_first_goal: bool = False) -> None:
         n = env_ids.numel()
-        scene_idx = self._pih_env_scene_idx_t[env_ids]
-        peg_idx = self.env_peg_idx[env_ids]
-        subgoal_idx = (self._successes[env_ids] % self.env_max_goals[env_ids]).long()
+        env_origins = self.scene.env_origins[env_ids]
+        is_random_goal = self.is_random_goal_env[env_ids]
 
-        goal = self._pih_goals_t[scene_idx, peg_idx, subgoal_idx]
-        pos_local = goal[:, 0:3].clone()
-        pos_local[:, 2] += self._table_z_per_env[env_ids] - self.cfg.reset.table_reset_z
-        quat = _xyzw_to_wxyz(goal[:, 3:7])
-        pose = torch.cat([pos_local + self.scene.env_origins[env_ids], quat], dim=-1)
+        pos_local = torch.zeros(n, 3, dtype=torch.float32, device=self.device)
+        quat = torch.tensor(
+            [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32
+        ).unsqueeze(0).expand(n, -1).clone()
 
+        insertion_mask = ~is_random_goal
+        if insertion_mask.any():
+            ins_ids = env_ids[insertion_mask]
+            subgoal_idx = (
+                self._successes[ins_ids] % self.env_max_goals[ins_ids]
+            ).long()
+            pos_local[insertion_mask] = (
+                self.hole_pos[ins_ids] + self._insert_pos_rel[subgoal_idx]
+            )
+            quat[insertion_mask] = self._insert_quat_wxyz[subgoal_idx]
+
+        if is_random_goal.any():
+            rg_ids = env_ids[is_random_goal]
+            reset_cfg = self.cfg.reset
+            if reset_cfg.fixed_goal_pose is not None:
+                fixed = torch.as_tensor(
+                    reset_cfg.fixed_goal_pose,
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+                pos_local[is_random_goal] = fixed[:3].unsqueeze(0).expand(
+                    rg_ids.numel(), -1
+                )
+                quat[is_random_goal] = fixed[3:].unsqueeze(0).expand(
+                    rg_ids.numel(), -1
+                )
+            elif is_first_goal or reset_cfg.goal_sampling_type == "absolute":
+                rg_pos, rg_quat = sample_absolute_goal_pose(
+                    mins=reset_cfg.target_volume_mins,
+                    maxs=reset_cfg.target_volume_maxs,
+                    scale=reset_cfg.target_volume_region_scale,
+                    n_envs=rg_ids.numel(),
+                    device=self.device,
+                )
+                pos_local[is_random_goal] = rg_pos
+                quat[is_random_goal] = rg_quat
+            elif reset_cfg.goal_sampling_type == "delta":
+                rg_origins = self.scene.env_origins[rg_ids]
+                prev_pos = self.goal_viz.data.root_pos_w[rg_ids] - rg_origins
+                prev_quat = self.goal_viz.data.root_quat_w[rg_ids]
+                rg_pos, rg_quat = sample_delta_goal_pose(
+                    prev_pos=prev_pos,
+                    prev_quat_wxyz=prev_quat,
+                    delta_distance=reset_cfg.delta_goal_distance,
+                    delta_rotation_degrees=reset_cfg.delta_rotation_degrees,
+                    mins=reset_cfg.target_volume_mins,
+                    maxs=reset_cfg.target_volume_maxs,
+                    scale=reset_cfg.target_volume_region_scale,
+                )
+                pos_local[is_random_goal] = rg_pos
+                quat[is_random_goal] = rg_quat
+            else:
+                raise ValueError(
+                    "cfg.reset.goal_sampling_type must be 'delta' or 'absolute' "
+                    f"for PegInHole random-goal envs, got {reset_cfg.goal_sampling_type!r}."
+                )
+
+        pose = torch.cat([pos_local + env_origins, quat], dim=-1)
         self.goal_viz.write_root_pose_to_sim(pose, env_ids=env_ids)
         self.goal_viz.write_root_velocity_to_sim(
             torch.zeros(n, 6, device=self.device), env_ids=env_ids
@@ -270,6 +361,38 @@ class PegInHoleEnv(SimToolRealEnv):
         self._closest_keypoint_max_dist[env_ids] = -1.0
         self._closest_fingertip_dist[env_ids] = -1.0
         self._near_goal_steps[env_ids] = 0
+
+    def _keypoint_success_tolerance_m(self) -> torch.Tensor:
+        fixed_insertion_tol = (
+            self.cfg.peg_in_hole.insertion_success_tolerance
+            * self.cfg.reward.keypoint_scale
+        )
+        tol = torch.full(
+            (self.num_envs,),
+            float(fixed_insertion_tol),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        if float(self.cfg.peg_in_hole.random_goal_fraction) > 0.0:
+            curriculum_tol = (
+                self._current_success_tolerance * self.cfg.reward.keypoint_scale
+            )
+            tol = torch.where(
+                self.is_random_goal_env,
+                torch.full_like(tol, float(curriculum_tol)),
+                tol,
+            )
+        return tol
+
+    def _curriculum_eligible_mask(self) -> torch.Tensor | None:
+        if float(self.cfg.peg_in_hole.random_goal_fraction) <= 0.0:
+            return None
+        return self.is_random_goal_env
+
+    def _curriculum_success_threshold(self) -> float | None:
+        if float(self.cfg.peg_in_hole.random_goal_fraction) <= 0.0:
+            return None
+        return float(self.cfg.peg_in_hole.random_goal_curriculum_success_threshold)
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         update_tolerance_curriculum(self)
@@ -282,7 +405,7 @@ class PegInHoleEnv(SimToolRealEnv):
         self._is_success = is_success
 
         self._successes += is_success.long()
-        self._successes.clamp_(max=self._pih_max_traj_len)
+        self._successes.copy_(torch.minimum(self._successes, self.env_max_goals))
         success_ids = is_success.nonzero(as_tuple=False).squeeze(-1)
         if success_ids.numel() > 0:
             self.episode_length_buf[success_ids] = 0
@@ -290,38 +413,46 @@ class PegInHoleEnv(SimToolRealEnv):
         self._just_entered_retract[:] = False
         self._just_retracted[:] = False
         if pih_cfg.enable_retract:
-            self._just_entered_retract = (
-                (self._successes >= self.env_max_goals) & ~self.retract_phase
+            just_entered = (
+                (self._successes >= self.env_max_goals)
+                & ~self.retract_phase
+                & ~self.is_random_goal_env
             )
-            self.retract_phase |= self._just_entered_retract
+            self._just_entered_retract.copy_(just_entered)
+            self.retract_phase |= just_entered
 
             object_at_goal = (
                 self._keypoints_max_dist
                 <= pih_cfg.retract_success_tolerance * self.cfg.reward.keypoint_scale
             )
             mean_fingertip_dist = self._curr_fingertip_distances.mean(dim=-1)
-            self._just_retracted = (
+            just_retracted = (
                 (mean_fingertip_dist > pih_cfg.retract_distance_threshold)
                 & self.retract_phase
                 & ~self.retract_succeeded
                 & object_at_goal
             )
-            self.retract_succeeded |= self._just_retracted
+            self._just_retracted.copy_(just_retracted)
+            self.retract_succeeded |= just_retracted
 
         if success_ids.numel() > 0:
-            if pih_cfg.enable_retract:
-                next_goal = is_success & ~self.retract_phase
-            else:
-                next_goal = is_success & (self._successes < self.env_max_goals)
+            next_goal = (
+                is_success
+                & (self._successes < self.env_max_goals)
+                & ~self.retract_phase
+            )
             next_goal_ids = next_goal.nonzero(as_tuple=False).squeeze(-1)
             if next_goal_ids.numel() > 0:
                 self._clear_goal_trackers(next_goal_ids)
-                self._write_goal_pose(next_goal_ids)
+                self._write_goal_pose(next_goal_ids, is_first_goal=False)
 
         object_z_local = self.object.data.root_pos_w[:, 2] - self.scene.env_origins[:, 2]
         fall = object_z_local < 0.1
         if pih_cfg.enable_retract:
-            max_successes = self.retract_succeeded
+            random_goals_done = (
+                (self._successes >= self.env_max_goals) & self.is_random_goal_env
+            )
+            max_successes = self.retract_succeeded | random_goals_done
             hand_far = (
                 self._curr_fingertip_distances.max(dim=-1).values > 1.5
             ) & ~self.retract_phase
@@ -341,9 +472,39 @@ class PegInHoleEnv(SimToolRealEnv):
 
     def _get_rewards(self) -> torch.Tensor:
         reward = compute_rewards(self)
+        pih_cfg = self.cfg.peg_in_hole
 
-        if self.cfg.peg_in_hole.enable_retract:
-            pih_cfg = self.cfg.peg_in_hole
+        mean_rg_eps = 0.0
+        if self.is_random_goal_env.any():
+            mean_rg_eps = (
+                self._prev_episode_successes[self.is_random_goal_env]
+                .float()
+                .mean()
+                .item()
+            )
+        if (
+            self.lift_bonus_active
+            and mean_rg_eps >= float(pih_cfg.lift_bonus_fade_threshold)
+        ):
+            self.lift_bonus_active = False
+
+        if self.lift_bonus_active:
+            lift_mask = self.is_random_goal_env.float()
+        else:
+            lift_mask = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+
+        lift_rew = self._reward_terms["lifting_rew"]
+        lift_bonus_rew = self._reward_terms["lift_bonus_rew"]
+        masked_lift_rew = lift_rew * lift_mask
+        masked_lift_bonus_rew = lift_bonus_rew * lift_mask
+        reward = reward - lift_rew - lift_bonus_rew + masked_lift_rew + masked_lift_bonus_rew
+        self._reward_terms["lifting_rew"] = masked_lift_rew
+        self._reward_terms["lift_bonus_rew"] = masked_lift_bonus_rew
+        self._reward_terms["total_reward"] = reward
+        self.extras["lift_bonus_active"] = float(self.lift_bonus_active)
+        self.extras["mean_rg_prev_ep_successes"] = mean_rg_eps
+
+        if pih_cfg.enable_retract:
             object_at_goal = (
                 self._keypoints_max_dist
                 <= pih_cfg.retract_success_tolerance * self.cfg.reward.keypoint_scale
@@ -351,7 +512,7 @@ class PegInHoleEnv(SimToolRealEnv):
             mean_fingertip_dist = self._curr_fingertip_distances.mean(dim=-1)
             retract_rew = (
                 mean_fingertip_dist * pih_cfg.retract_reward_scale * object_at_goal
-                + self._just_retracted.float() * pih_cfg.retract_success_bonus
+                + self._just_retracted.float() * self.retract_success_bonus
             ) * self.retract_phase.float()
 
             already_in_retract = self.retract_phase & ~self._just_entered_retract
@@ -368,6 +529,7 @@ class PegInHoleEnv(SimToolRealEnv):
             self.extras["retract_success_tolerance"] = float(
                 pih_cfg.retract_success_tolerance
             )
+            self.extras["retract_success_bonus"] = self.retract_success_bonus
 
         log_step_metrics(self)
         self._log_peg_metrics()
@@ -391,6 +553,36 @@ class PegInHoleEnv(SimToolRealEnv):
         self.extras["all_goals_hit_ratio"] = (
             self._prev_episode_successes >= self.prev_episode_env_max_goals
         ).float().mean()
+        self.extras["insertion_success_tolerance"] = float(
+            self.cfg.peg_in_hole.insertion_success_tolerance
+        )
+
+        if float(self.cfg.peg_in_hole.random_goal_fraction) > 0.0:
+            prev_s = self._prev_episode_successes
+            prev_mg = self.prev_episode_env_max_goals.clamp_min(1).float()
+            ins_mask = ~self.prev_episode_is_random_goal
+            rg_mask = self.prev_episode_is_random_goal
+            self.extras["random_goal_frac"] = self.is_random_goal_env.float().mean()
+            if ins_mask.any():
+                self.extras["insertion_success_ratio"] = (
+                    prev_s[ins_mask].float() / prev_mg[ins_mask]
+                ).mean()
+                self.extras["insertion_all_goals_hit_ratio"] = (
+                    prev_s[ins_mask] >= self.prev_episode_env_max_goals[ins_mask]
+                ).float().mean()
+            else:
+                self.extras["insertion_success_ratio"] = 0.0
+                self.extras["insertion_all_goals_hit_ratio"] = 0.0
+            if rg_mask.any():
+                self.extras["random_goal_success_ratio"] = (
+                    prev_s[rg_mask].float() / prev_mg[rg_mask]
+                ).mean()
+                self.extras["random_goal_all_goals_hit_ratio"] = (
+                    prev_s[rg_mask] >= self.prev_episode_env_max_goals[rg_mask]
+                ).float().mean()
+            else:
+                self.extras["random_goal_success_ratio"] = 0.0
+                self.extras["random_goal_all_goals_hit_ratio"] = 0.0
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
         obs = build_observations(self)

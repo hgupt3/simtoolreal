@@ -12,7 +12,7 @@ UI controls:
   - Random goal fraction — slider [0, 1] for co-training mix
 
 Usage:
-    python peg_in_hole_dynamic/eval.py \\
+    python peg_in_hole_dynamic/eval_isaacgym.py \\
         --config-path pretrained_policy/config.yaml \\
         --checkpoint-path pretrained_policy/model.pth \\
         --port 8043

@@ -4,12 +4,12 @@ This script is intentionally artifact-oriented, not a strict unit test. It
 creates a tiny depth-student PegInHole env, captures the student depth images,
 saves PNG grids, and prints per-env depth statistics for visual inspection.
 
-Fast fixed-scene check:
+Fast fixed-problem check:
     .venv_isaacsim/bin/python isaacsimenvs/tests/debug_peg_in_hole_depth_student_camera.py
 
-Broader scene/tolerance coverage:
+Different dynamic problem:
     .venv_isaacsim/bin/python isaacsimenvs/tests/debug_peg_in_hole_depth_student_camera.py \\
-      --random_scene_tol --num_envs 16
+      --problem furniture_bench.one_leg_sdf_hybrid_sparse --num_envs 16
 """
 
 from __future__ import annotations
@@ -106,11 +106,12 @@ def main() -> None:
     parser.add_argument("--image_width", type=int, default=160)
     parser.add_argument("--image_height", type=int, default=90)
     parser.add_argument("--output_dir", type=Path, default=OUTPUT_DIR)
-    parser.add_argument("--random_scene_tol", action="store_true")
-    parser.add_argument("--force_scene_id", type=int, default=0)
-    parser.add_argument("--force_tol_slot", type=int, default=0)
-    parser.add_argument("--random_peg", action="store_true")
-    parser.add_argument("--force_peg_idx", type=int, default=0)
+    parser.add_argument("--problem", type=str, default="peg.tol0p5mm")
+    parser.add_argument(
+        "--goal_mode",
+        choices=("preInsertAndFinal", "finalGoalOnly"),
+        default="preInsertAndFinal",
+    )
     parser.add_argument("--depth_min_m", type=float, default=None)
     parser.add_argument("--depth_max_m", type=float, default=None)
     parser.add_argument(
@@ -153,14 +154,8 @@ def main() -> None:
         cfg.from_dict(yaml.safe_load(f) or {})
 
     cfg.scene.num_envs = args.num_envs
-    if args.random_scene_tol:
-        cfg.peg_in_hole.force_scene_tol_combo = None
-    else:
-        cfg.peg_in_hole.force_scene_tol_combo = (
-            args.force_scene_id,
-            args.force_tol_slot,
-        )
-    cfg.peg_in_hole.force_peg_idx = None if args.random_peg else args.force_peg_idx
+    cfg.peg_in_hole.problem = args.problem
+    cfg.peg_in_hole.goal_mode = args.goal_mode
 
     cfg.student_obs.image_modality = "depth"
     cfg.student_obs.image_width = args.image_width
@@ -197,6 +192,8 @@ def main() -> None:
     print(f"[debug] writing depth grids to {out_dir}")
     print(
         "[debug] camera cfg "
+        f"problem={cfg.peg_in_hole.problem} "
+        f"goal_mode={cfg.peg_in_hole.goal_mode} "
         f"pos={cfg.student_obs.camera_pos} quat_wxyz={cfg.student_obs.camera_quat_wxyz} "
         f"window=[{cfg.student_obs.depth_min_m}, {cfg.student_obs.depth_max_m}] "
         f"crop_enabled={cfg.student_obs.crop_enabled} "

@@ -189,7 +189,10 @@ def compute_intermediate_values(env) -> None:
         sentinel_ft, env._curr_fingertip_distances, env._closest_fingertip_dist
     )
 
-    tol = env._current_success_tolerance * rew_cfg.keypoint_scale
+    if hasattr(env, "_keypoint_success_tolerance_m"):
+        tol = env._keypoint_success_tolerance_m()
+    else:
+        tol = env._current_success_tolerance * rew_cfg.keypoint_scale
     env._near_goal = env._keypoints_max_dist <= tol
     env._near_goal_steps = update_near_goal_steps(
         near_goal=env._near_goal,

@@ -2,29 +2,44 @@
 
 from __future__ import annotations
 
+from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 
-from isaacsimenvs.tasks.simtoolreal.simtoolreal_env_cfg import AssetsCfg, SimToolRealEnvCfg
+from isaacsimenvs.tasks.simtoolreal.simtoolreal_env_cfg import (
+    AssetsCfg,
+    SimToolRealEnvCfg,
+    _default_sim_cfg,
+)
 
 
-VALID_GOAL_MODES = ("dense", "preInsertAndFinal", "finalGoalOnly")
+VALID_GOAL_MODES = ("preInsertAndFinal", "finalGoalOnly")
 
 
 @configclass
 class PegInHoleAssetsCfg(AssetsCfg):
     object_name: str = "peg"
-    peg_urdf: str = "assets/urdf/peg_in_hole/peg/peg.urdf"
-    table_urdf: str = "assets/urdf/peg_in_hole/scenes/scene_0000/scene_tol00.urdf"
-    peg_scale: tuple[float, float, float] = (6.25, 0.75, 0.5)
+    object_urdf: str = "assets/urdf/peg_in_hole/peg/peg.urdf"
+    receptive_urdf: str = "assets/urdf/peg_in_hole/holes/hole_tol0p5mm/hole_tol0p5mm.urdf"
+    table_urdf: str = "assets/urdf/table_narrow.urdf"
+    object_scale: tuple[float, float, float] = (6.25, 0.75, 0.5)
     num_assets_per_type: int = 1
 
 
 @configclass
 class PegInHoleCfg:
-    scenes_path: str = "assets/urdf/peg_in_hole/scenes/scenes.npz"
-    goal_mode: str = "dense"
+    problem: str = "peg.tol0p5mm"
+    goal_mode: str = "preInsertAndFinal"
+
+    hole_x_range: tuple[float, float] = (-0.1875, 0.1875)
+    hole_y_range: tuple[float, float] = (-0.1, 0.2)
 
     goal_xy_obs_noise: float = 0.002
+    random_goal_fraction: float = 0.0
+    random_goal_max_successes: int = 5
+    random_goal_curriculum_success_threshold: float = 2.0
+    lift_bonus_fade_threshold: float = 2.0
+
+    insertion_success_tolerance: float = 0.01
 
     enable_retract: bool = True
     retract_reward_scale: float = 1.0
@@ -32,14 +47,34 @@ class PegInHoleCfg:
     retract_success_bonus: float = 1000.0
     retract_success_tolerance: float = 0.005
 
-    force_scene_tol_combo: tuple[int, int] | None = None
-    force_tightest_tol_per_scene: bool = False
-    tightest_n_tol_slots_per_scene: int = -1
-    force_peg_idx: int | None = None
+
+def _default_peg_in_hole_sim_cfg() -> SimulationCfg:
+    """Return a render-overlay-compatible sim cfg for teacher and student tasks."""
+    sim_cfg = _default_sim_cfg()
+    # UWLab partial-assembly defaults for tight insertion/contact-rich problems.
+    # Keep this task's 60 Hz policy control cadence; these are only PhysX
+    # solver/contact/buffer settings.
+    sim_cfg.physx.solver_type = 1
+    sim_cfg.physx.min_position_iteration_count = 1
+    sim_cfg.physx.max_position_iteration_count = 192
+    sim_cfg.physx.min_velocity_iteration_count = 0
+    sim_cfg.physx.max_velocity_iteration_count = 1
+    sim_cfg.physx.bounce_threshold_velocity = 0.02
+    sim_cfg.physx.friction_offset_threshold = 0.01
+    sim_cfg.physx.friction_correlation_distance = 0.0005
+    sim_cfg.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
+    sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**23
+    sim_cfg.physx.gpu_max_rigid_contact_count = 2**23
+    sim_cfg.physx.gpu_max_rigid_patch_count = 2**23
+    sim_cfg.physx.gpu_collision_stack_size = 2**31
+    sim_cfg.render.rendering_mode = "performance"
+    sim_cfg.render.antialiasing_mode = "Off"
+    return sim_cfg
 
 
 @configclass
 class PegInHoleEnvCfg(SimToolRealEnvCfg):
+    sim: SimulationCfg = _default_peg_in_hole_sim_cfg()
     assets: PegInHoleAssetsCfg = PegInHoleAssetsCfg()
     peg_in_hole: PegInHoleCfg = PegInHoleCfg()
 

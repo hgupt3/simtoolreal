@@ -38,6 +38,7 @@ def main() -> None:
     import isaacsimenvs  # noqa: F401  triggers gym.register side effect
     from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
     from isaacsimenvs.tasks.cartpole.cartpole_env import CartpoleEnvCfg
+    from isaacsimenvs.tasks.peg_in_hole.peg_in_hole_env_cfg import PegInHoleEnvCfg
 
     task_id = "Isaacsimenvs-Cartpole-Direct-v0"
 
@@ -89,6 +90,24 @@ def main() -> None:
     env_cfg.from_dict(overlay)
     assert tuple(env_cfg.record_camera_eye) == (-5.0, 1.0, 3.0), env_cfg.record_camera_eye
     print(f"[test] overlay applied: record_camera_eye → {env_cfg.record_camera_eye}")
+
+    # PegInHole teacher/student registrations share the dynamic problem config.
+    for pih_task_id in (
+        "Isaacsimenvs-PegInHole-Direct-v0",
+        "Isaacsimenvs-PegInHoleDepthStudent-Direct-v0",
+    ):
+        pih_spec = gym.spec(pih_task_id)
+        pih_cfg = load_cfg_from_registry(pih_task_id, "env_cfg_entry_point")
+        assert isinstance(pih_cfg, PegInHoleEnvCfg), type(pih_cfg)
+        with Path(pih_spec.kwargs["env_cfg_yaml_entry_point"]).open() as f:
+            pih_overlay = yaml.safe_load(f) or {}
+        pih_cfg.from_dict(pih_overlay)
+        assert pih_cfg.peg_in_hole.problem == "peg.tol0p5mm"
+        assert pih_cfg.peg_in_hole.goal_mode == "preInsertAndFinal"
+        print(
+            f"[test] {pih_task_id}: problem={pih_cfg.peg_in_hole.problem} "
+            f"goal_mode={pih_cfg.peg_in_hole.goal_mode}"
+        )
 
     print("[test] Phase 1 registration smoke test OK")
     import os
