@@ -766,6 +766,9 @@ def _run_viewer(args) -> int:
             self._md_task.content = f"**Task:** Isaac Sim | {label}"
             self._md_retract.content = "**Retract:** --"
             self._md_hole.content = "**Hole pos:** --"
+            self._md_object_pose.content = "**Object pose:** --"
+            self._md_goal_pose.content = "**Goal pose:** --"
+            self._md_pose_delta.content = "**Object-goal z dist:** --"
             self.ep_count = 0
             self._peak_force = 0.0
             self._md_stats.content = "**Stats:** No episodes yet"

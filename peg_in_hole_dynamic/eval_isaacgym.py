@@ -500,6 +500,7 @@ class PegDynamicDemo:
         self._hole_frame = None
         self._object_viz = None
         self._goal_viz = None
+        self._hole_viz = None
         self._obj_keypoints = []
         self._goal_keypoints = []
 
@@ -575,12 +576,23 @@ class PegDynamicDemo:
                 "Goal opacity", min=0.0, max=1.0, step=0.05, initial_value=0.5,
             )
             self._sl_goal_opacity.on_update(lambda _: self._apply_goal_visibility())
+            self._sl_fixture_opacity = self.server.gui.add_slider(
+                "Fixture opacity", min=0.0, max=1.0, step=0.05, initial_value=1.0,
+            )
+            self._sl_fixture_opacity.on_update(lambda _: self._apply_fixture_opacity())
+            self._sl_object_opacity = self.server.gui.add_slider(
+                "Object opacity", min=0.0, max=1.0, step=0.05, initial_value=1.0,
+            )
+            self._sl_object_opacity.on_update(lambda _: self._apply_object_opacity())
             self._cb_target_vol = self.server.gui.add_checkbox("Show target volume", initial_value=False)
             self._cb_target_vol.on_update(lambda _: self._toggle_target_volume())
 
         with self.server.gui.add_folder("Status", expand_by_default=True):
             self._md_task = self.server.gui.add_markdown("**Task:** --")
             self._md_hole = self.server.gui.add_markdown("**Hole pos:** --")
+            self._md_object_pose = self.server.gui.add_markdown("**Object pose:** --")
+            self._md_goal_pose = self.server.gui.add_markdown("**Goal pose:** --")
+            self._md_pose_delta = self.server.gui.add_markdown("**Object-goal z dist:** --")
             self._md_prog = self.server.gui.add_markdown("**Progress:** --")
             self._md_diag = self.server.gui.add_markdown("**Goal dist:** --")
             self._md_retract = self.server.gui.add_markdown("**Retract:** --")
@@ -623,6 +635,7 @@ class PegDynamicDemo:
         self._dyn.clear()
         self._obj_frame = self._goal_frame = self._hole_frame = None
         self._object_viz = self._goal_viz = None
+        self._hole_viz = None
         self._obj_keypoints.clear()
         self._goal_keypoints.clear()
 
@@ -638,7 +651,8 @@ class PegDynamicDemo:
         faces = np.array(self._object_mesh.faces, dtype=np.uint32)
         return self.server.scene.add_mesh_simple(
             f"{node_name}/mesh", vertices=verts, faces=faces,
-            color=rgb, opacity=opacity,
+            color=rgb, opacity=opacity, side="double",
+            cast_shadow=False, receive_shadow=False,
         )
 
     def _set_viz_visible(self, viz, visible):
@@ -669,7 +683,9 @@ class PegDynamicDemo:
             "/object", show_axes=True, axes_length=0.05, axes_radius=0.001,
         )
         self._dyn.append(self._obj_frame)
-        self._object_viz = self._add_object_viz("/object", (204, 40, 40))
+        self._object_viz = self._add_object_viz(
+            "/object", (204, 40, 40), opacity=self._sl_object_opacity.value,
+        )
         self._dyn.append(self._object_viz)
 
         self._goal_frame = self.server.scene.add_frame(
@@ -686,13 +702,17 @@ class PegDynamicDemo:
             wxyz=(1, 0, 0, 0), show_axes=False,
         )
         self._dyn.append(self._hole_frame)
-        self._dyn.append(self.server.scene.add_mesh_simple(
+        self._hole_viz = self.server.scene.add_mesh_simple(
             "/hole/mesh",
             vertices=np.array(self._hole_mesh.vertices, dtype=np.float32),
             faces=np.array(self._hole_mesh.faces, dtype=np.uint32),
             color=(120, 120, 120),
-        ))
+            opacity=float(self._sl_fixture_opacity.value),
+        )
+        self._dyn.append(self._hole_viz)
         self._apply_goal_visibility()
+        self._apply_fixture_opacity()
+        self._apply_object_opacity()
 
     def _update_hole_viz(self, hole_pos):
         if self._hole_frame is not None:
@@ -740,6 +760,28 @@ class PegDynamicDemo:
                 kp.opacity = opacity
             except AttributeError:
                 pass
+
+    def _apply_fixture_opacity(self):
+        if self._hole_viz is not None:
+            self._set_viz_opacity(
+                self._hole_viz, float(self._sl_fixture_opacity.value)
+            )
+
+    def _apply_object_opacity(self):
+        if self._object_viz is not None:
+            try:
+                self._object_viz.remove()
+            except Exception:
+                pass
+            try:
+                self._dyn.remove(self._object_viz)
+            except ValueError:
+                pass
+            self._object_viz = self._add_object_viz(
+                "/object", (204, 40, 40),
+                opacity=float(self._sl_object_opacity.value),
+            )
+            self._dyn.append(self._object_viz)
 
     def _toggle_target_volume(self):
         show = self._cb_target_vol.value
@@ -806,6 +848,9 @@ class PegDynamicDemo:
         self._md_task.content = f"**Task:** {label}"
         self._md_retract.content = "**Retract:** --"
         self._md_hole.content = "**Hole pos:** --"
+        self._md_object_pose.content = "**Object pose:** --"
+        self._md_goal_pose.content = "**Goal pose:** --"
+        self._md_pose_delta.content = "**Object-goal z dist:** --"
         self.ep_count = 0
         self._peak_force = 0.0
         self._md_stats.content = "**Stats:** No episodes yet"
@@ -868,6 +913,13 @@ class PegDynamicDemo:
         if self._episode_running:
             self._send("stop")
 
+    @staticmethod
+    def _pose_status(label, pose):
+        pose = np.asarray(pose, dtype=np.float32)
+        xyz = ", ".join(f"{v:+.4f}" for v in pose[:3])
+        quat = ", ".join(f"{v:+.4f}" for v in pose[3:7])
+        return f"**{label}:** xyz [{xyz}]  \nquat_xyzw [{quat}]"
+
     def _update_viz(self, state_tuple):
         joint_pos, obj_pose, goal_pose = state_tuple[0], state_tuple[1], state_tuple[2]
         self.robot.update_cfg(joint_pos)
@@ -878,6 +930,13 @@ class PegDynamicDemo:
         if self._goal_frame is not None:
             self._goal_frame.position = tuple(goal_pose[:3])
             self._goal_frame.wxyz = quat_xyzw_to_wxyz(goal_pose[3:7])
+        self._md_object_pose.content = self._pose_status("Object pose", obj_pose)
+        self._md_goal_pose.content = self._pose_status("Goal pose", goal_pose)
+        z_delta = float(obj_pose[2] - goal_pose[2])
+        self._md_pose_delta.content = (
+            f"**Object-goal z dist:** {z_delta * 1000:+.2f} mm "
+            f"(abs {abs(z_delta) * 1000:.2f} mm)"
+        )
 
         if len(state_tuple) > 3:
             obj_kps, goal_kps = state_tuple[3], state_tuple[4]

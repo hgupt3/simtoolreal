@@ -13,6 +13,7 @@
 
 # IsaacSim PegInHole SAPG finetune, rgf=0.10.
 # Problem: furniture_bench.one_leg_sdf_hybrid_dense.
+# Stricter insertion/retract success tolerances.
 # URDF <sdf> collision tags and UWLab-style PhysX settings are task defaults.
 
 TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
@@ -30,14 +31,14 @@ EXPL_COEF_BLOCK_SIZE=2048
 RANDOM_GOAL_FRACTION=0.1
 RANDOM_GOAL_MAX_SUCCESSES=5
 GOAL_XY_OBS_NOISE=0.002
-INSERTION_SUCCESS_TOLERANCE=0.01
+INSERTION_SUCCESS_TOLERANCE=0.005
 SUCCESS_TOLERANCE=0.01
 TARGET_SUCCESS_TOLERANCE=0.01
 
 ENABLE_RETRACT=True
 RETRACT_REWARD_SCALE=1.0
 RETRACT_DISTANCE_THRESHOLD=0.1
-RETRACT_SUCCESS_TOLERANCE=0.005
+RETRACT_SUCCESS_TOLERANCE=0.002
 
 USE_OBS_DELAY=True
 USE_ACTION_DELAY=True
@@ -64,7 +65,7 @@ FORCE_CONSECUTIVE_NEAR_GOAL=True
 
 WANDB_PROJECT="isaacsimenvs"
 WANDB_GROUP="furniture_bench_dense_goals"
-EXPERIMENT_TAG="dense_finetune_rgf10"
+EXPERIMENT_TAG="dense_tol005_retract002_finetune_rgf10"
 
 CAPTURE_VIEWER_LEN=600
 CAPTURE_VIEWER_INTERVAL=6000

@@ -271,6 +271,8 @@ def validate(
     steps: int,
     settle_frames: int,
     yaw_sign: float,
+    leg_z_offset_mm: float,
+    contact_offset_mm: float,
     output_dir: Path,
 ) -> dict:
     problem = PROBLEM_REGISTRY[PROBLEM_NAME]
@@ -302,6 +304,8 @@ def validate(
         total_yaw_deg = 0.0
     else:
         raise ValueError(f"unknown mode {mode!r}")
+
+    trajectory[:, 2] += float(leg_z_offset_mm) / 1000.0
     final_pose = trajectory[-1]
 
     print(f"Problem: {PROBLEM_NAME}")
@@ -311,6 +315,8 @@ def validate(
     print(f"  mode: {mode}")
     print(f"  pitch: {pitch_mm:.4f} mm/turn")
     print(f"  pre-offset: {pre_offset_mm:.3f} mm")
+    print(f"  leg z offset: {leg_z_offset_mm:+.3f} mm")
+    print(f"  contact offset: {contact_offset_mm:.3f} mm")
     print(f"  total yaw: {total_yaw_deg:.3f} deg")
     print("  camera: visual geometry, not collision geometry")
 
@@ -324,7 +330,7 @@ def validate(
     sim_params.physx.num_position_iterations = 192
     sim_params.physx.num_velocity_iterations = 1
     sim_params.physx.rest_offset = 0.0
-    sim_params.physx.contact_offset = 0.005
+    sim_params.physx.contact_offset = float(contact_offset_mm) / 1000.0
     sim_params.physx.bounce_threshold_velocity = 0.02
     sim_params.physx.friction_offset_threshold = 0.01
     sim_params.physx.friction_correlation_distance = 0.0005
@@ -481,6 +487,8 @@ def validate(
         "mode": mode,
         "pitch_mm": pitch_mm,
         "pre_offset_mm": pre_offset_mm,
+        "leg_z_offset_mm": float(leg_z_offset_mm),
+        "contact_offset_mm": float(contact_offset_mm),
         "yaw_sign": yaw_sign,
         "total_yaw_deg": total_yaw_deg,
         "steps": int(steps),
@@ -535,6 +543,18 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=320)
     parser.add_argument("--settle-frames", type=int, default=90)
     parser.add_argument("--yaw-sign", type=float, choices=(-1.0, 1.0), default=1.0)
+    parser.add_argument(
+        "--leg-z-offset-mm",
+        type=float,
+        default=0.0,
+        help="Shift every commanded leg pose in world Z; negative moves the leg down.",
+    )
+    parser.add_argument(
+        "--contact-offset-mm",
+        type=float,
+        default=5.0,
+        help="PhysX contact offset in mm.",
+    )
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--timestamp", type=str, default=None)
     args = parser.parse_args()
@@ -559,6 +579,8 @@ def main() -> None:
         steps=args.steps,
         settle_frames=args.settle_frames,
         yaw_sign=args.yaw_sign,
+        leg_z_offset_mm=args.leg_z_offset_mm,
+        contact_offset_mm=args.contact_offset_mm,
         output_dir=output_dir,
     )
 

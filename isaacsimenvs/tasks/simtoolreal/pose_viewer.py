@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import urllib.request
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -129,7 +130,59 @@ def _check_url(url: str, url_check: str) -> None:
         print(message, flush=True)
 
 
-def object_urdf_text_for_env(env, env_id: int) -> str:
+def _raw_url_for_repo_path(path: Path, raw_base: str) -> str | None:
+    try:
+        rel = path.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return None
+    return raw_base + quote(rel.as_posix(), safe="/")
+
+
+def _rewrite_embedded_urdf_mesh_urls(
+    urdf_text: str,
+    *,
+    source_urdf_path: Path,
+    raw_base: str,
+) -> str:
+    """Make relative mesh filenames loadable from a standalone HTML document."""
+
+    try:
+        root = ET.fromstring(urdf_text)
+    except ET.ParseError:
+        return urdf_text
+
+    changed = False
+    for mesh_elem in root.findall(".//mesh"):
+        filename = mesh_elem.get("filename")
+        if not filename:
+            continue
+        if filename.startswith(("http://", "https://", "data:")):
+            continue
+
+        if filename.startswith("package://"):
+            rel_name = filename[len("package://") :]
+            mesh_path = REPO_ROOT / rel_name
+        else:
+            candidate = Path(filename)
+            if candidate.is_absolute():
+                mesh_path = candidate
+            elif filename.startswith("assets/"):
+                mesh_path = REPO_ROOT / filename
+            else:
+                mesh_path = source_urdf_path.parent / filename
+
+        mesh_url = _raw_url_for_repo_path(mesh_path, raw_base)
+        if mesh_url is None:
+            continue
+        mesh_elem.set("filename", mesh_url)
+        changed = True
+
+    if not changed:
+        return urdf_text
+    return ET.tostring(root, encoding="unicode")
+
+
+def object_urdf_for_env(env, env_id: int) -> tuple[str, Path]:
     """Return the procedural object URDF text assigned to one env."""
 
     urdf_paths = getattr(env, "_object_urdf_paths", None)
@@ -142,16 +195,25 @@ def object_urdf_text_for_env(env, env_id: int) -> str:
 
     asset_index = int(asset_indices[env_id].detach().cpu().item())
     urdf_path = Path(urdf_paths[asset_index])
-    return urdf_path.read_text(encoding="utf-8")
+    return urdf_path.read_text(encoding="utf-8"), urdf_path
 
 
-def table_urdf_text_for_env(env, env_id: int) -> str:
+def object_urdf_text_for_env(env, env_id: int) -> str:
+    return object_urdf_for_env(env, env_id)[0]
+
+
+def table_urdf_for_env(env, env_id: int) -> tuple[str, Path]:
     """Return the table URDF text assigned to one env."""
 
     table_paths = getattr(env, "_table_urdf_paths", None)
     if table_paths:
-        return Path(table_paths[env_id % len(table_paths)]).read_text(encoding="utf-8")
-    return TABLE_URDF_PATH.read_text(encoding="utf-8")
+        urdf_path = Path(table_paths[env_id % len(table_paths)])
+        return urdf_path.read_text(encoding="utf-8"), urdf_path
+    return TABLE_URDF_PATH.read_text(encoding="utf-8"), TABLE_URDF_PATH
+
+
+def table_urdf_text_for_env(env, env_id: int) -> str:
+    return table_urdf_for_env(env, env_id)[0]
 
 
 def capture_pose_viewer_frame(env, env_id: int) -> dict[str, Any]:
@@ -190,6 +252,8 @@ def build_pose_viewer_html(
     frames: list[dict[str, Any]],
     object_urdf_text: str,
     table_urdf_text: str,
+    object_urdf_path: Path | None = None,
+    table_urdf_path: Path | None = None,
     github_raw_base: str | None = None,
     url_check: str = "skip",
 ) -> str:
@@ -205,6 +269,18 @@ def build_pose_viewer_html(
     raw_base = _normalize_raw_base(github_raw_base)
     robot_urdf_url = raw_base + ROBOT_URDF_RELATIVE_PATH
     _check_url(robot_urdf_url, url_check)
+    if object_urdf_path is not None:
+        object_urdf_text = _rewrite_embedded_urdf_mesh_urls(
+            object_urdf_text,
+            source_urdf_path=object_urdf_path,
+            raw_base=raw_base,
+        )
+    if table_urdf_path is not None:
+        table_urdf_text = _rewrite_embedded_urdf_mesh_urls(
+            table_urdf_text,
+            source_urdf_path=table_urdf_path,
+            raw_base=raw_base,
+        )
 
     timestamps = np.arange(len(frames), dtype=np.float32) / 60.0
     robots = [
@@ -264,8 +340,12 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         self.wandb_key = wandb_key
         self.github_raw_base = github_raw_base
         self.url_check = url_check
-        self._object_urdf_text = object_urdf_text_for_env(inner, self.env_id)
-        self._table_urdf_text = table_urdf_text_for_env(inner, self.env_id)
+        self._object_urdf_text, self._object_urdf_path = object_urdf_for_env(
+            inner, self.env_id
+        )
+        self._table_urdf_text, self._table_urdf_path = table_urdf_for_env(
+            inner, self.env_id
+        )
 
         self._step = 0
         self._capture_index = 0
@@ -311,6 +391,8 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
             frames=frames,
             object_urdf_text=self._object_urdf_text,
             table_urdf_text=self._table_urdf_text,
+            object_urdf_path=self._object_urdf_path,
+            table_urdf_path=self._table_urdf_path,
             github_raw_base=self.github_raw_base,
             url_check=self.url_check,
         )
