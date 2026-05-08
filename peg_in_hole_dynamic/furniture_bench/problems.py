@@ -35,8 +35,8 @@ ONE_LEG_PRE_INSERT_OFFSET_M = 0.025
 ONE_LEG_THREAD_PITCH_M = 0.00937368684342171
 
 
-def _one_leg_dense_insert_waypoints(final_pose):
-    """Return lead-in + two-turn screw waypoints + final assembled pose."""
+def _one_leg_screw_insert_waypoints(final_pose, turns):
+    """Return lead-in + screw waypoints at the requested turns + final pose."""
     final_pose = tuple(float(v) for v in final_pose)
     final_pos = np.asarray(final_pose[:3], dtype=float)
     final_quat = np.asarray(final_pose[3:7], dtype=float)
@@ -51,18 +51,28 @@ def _one_leg_dense_insert_waypoints(final_pose):
     lead_pos = final_pos - insertion_dir * ONE_LEG_PRE_INSERT_OFFSET_M
     waypoints.append((*lead_pos.tolist(), *final_quat.tolist()))
 
-    # Two turns of screw guidance. Full-turn waypoints are intentionally the
-    # same SO(3) orientation as final; their ordering/z offset carries phase.
-    for turns in (2.0, 1.5, 1.0, 0.5):
-        backoff = turns * ONE_LEG_THREAD_PITCH_M
+    # Screw guidance. Full-turn waypoints are intentionally the same SO(3)
+    # orientation as final; their ordering/z offset carries phase.
+    for turn in turns:
+        backoff = float(turn) * ONE_LEG_THREAD_PITCH_M
         pos = final_pos - insertion_dir * backoff
-        quat = (R.from_euler("z", 360.0 * turns, degrees=True) * final_rot).as_quat()
+        quat = (R.from_euler("z", 360.0 * float(turn), degrees=True) * final_rot).as_quat()
         if float(np.dot(quat, final_quat)) < 0.0:
             quat = -quat
         waypoints.append((*pos.tolist(), *quat.tolist()))
 
     waypoints.append(final_pose)
     return tuple(waypoints)
+
+
+def _one_leg_dense_insert_waypoints(final_pose):
+    """Return lead-in + two-turn screw waypoints + final assembled pose."""
+    return _one_leg_screw_insert_waypoints(final_pose, turns=(2.0, 1.5, 1.0, 0.5))
+
+
+def _one_leg_semi_dense_insert_waypoints(final_pose):
+    """Return lead-in + one-turn screw waypoints + final assembled pose."""
+    return _one_leg_screw_insert_waypoints(final_pose, turns=(1.0, 0.5))
 
 
 def _register_problem_variant(
@@ -148,12 +158,14 @@ def _register_one_leg() -> None:
         qx, qy, qz, qw,
     )
     dense_waypoints = _one_leg_dense_insert_waypoints(final_pose)
+    semi_dense_waypoints = _one_leg_semi_dense_insert_waypoints(final_pose)
     sparse_waypoints = (dense_waypoints[0], dense_waypoints[-1])
 
     base_name = "furniture_bench.one_leg"
     for variant_name, insert_poses in (
         (base_name, dense_waypoints),
         (f"{base_name}_dense", dense_waypoints),
+        (f"{base_name}_semi_dense", semi_dense_waypoints),
         (f"{base_name}_sparse", sparse_waypoints),
     ):
         _register_problem_variant(
@@ -175,6 +187,7 @@ def _register_one_leg() -> None:
         for variant_name, insert_poses in (
             (hybrid_base_name, dense_waypoints),
             (f"{hybrid_base_name}_dense", dense_waypoints),
+            (f"{hybrid_base_name}_semi_dense", semi_dense_waypoints),
             (f"{hybrid_base_name}_sparse", sparse_waypoints),
         ):
             _register_problem_variant(
