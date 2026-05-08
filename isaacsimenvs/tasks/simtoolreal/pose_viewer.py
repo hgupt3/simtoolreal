@@ -216,6 +216,16 @@ def table_urdf_text_for_env(env, env_id: int) -> str:
     return table_urdf_for_env(env, env_id)[0]
 
 
+def hole_urdf_for_env(env, env_id: int) -> tuple[str, Path] | tuple[None, None]:
+    """Return the peg-in-hole receptive URDF text when the env exposes one."""
+
+    hole_paths = getattr(env, "_hole_urdf_paths", None)
+    if not hole_paths:
+        return None, None
+    urdf_path = Path(hole_paths[env_id % len(hole_paths)])
+    return urdf_path.read_text(encoding="utf-8"), urdf_path
+
+
 def capture_pose_viewer_frame(env, env_id: int) -> dict[str, Any]:
     """Capture one env-local frame from a live SimToolRealEnv."""
 
@@ -235,8 +245,9 @@ def capture_pose_viewer_frame(env, env_id: int) -> dict[str, Any]:
     object_pos = env.object.data.root_pos_w[env_id] - origin
     goal_pos = env.goal_viz.data.root_pos_w[env_id] - origin
     table_pos = env.table.data.root_pos_w[env_id] - origin
+    hole = getattr(env, "hole", None)
 
-    return {
+    frame = {
         "env_id": int(env_id),
         "robot_joint_names": joint_names,
         "robot_joint_pos": _to_numpy(joint_pos),
@@ -245,6 +256,10 @@ def capture_pose_viewer_frame(env, env_id: int) -> dict[str, Any]:
         "goal_pose": _pose_xyzw(goal_pos, env.goal_viz.data.root_quat_w[env_id]),
         "table_pose": _pose_xyzw(table_pos, env.table.data.root_quat_w[env_id]),
     }
+    if hole is not None:
+        hole_pos = hole.data.root_pos_w[env_id] - origin
+        frame["hole_pose"] = _pose_xyzw(hole_pos, hole.data.root_quat_w[env_id])
+    return frame
 
 
 def build_pose_viewer_html(
@@ -252,8 +267,10 @@ def build_pose_viewer_html(
     frames: list[dict[str, Any]],
     object_urdf_text: str,
     table_urdf_text: str,
+    hole_urdf_text: str | None = None,
     object_urdf_path: Path | None = None,
     table_urdf_path: Path | None = None,
+    hole_urdf_path: Path | None = None,
     github_raw_base: str | None = None,
     url_check: str = "skip",
 ) -> str:
@@ -281,6 +298,12 @@ def build_pose_viewer_html(
             source_urdf_path=table_urdf_path,
             raw_base=raw_base,
         )
+    if hole_urdf_text is not None and hole_urdf_path is not None:
+        hole_urdf_text = _rewrite_embedded_urdf_mesh_urls(
+            hole_urdf_text,
+            source_urdf_path=hole_urdf_path,
+            raw_base=raw_base,
+        )
 
     timestamps = np.arange(len(frames), dtype=np.float32) / 60.0
     robots = [
@@ -293,16 +316,20 @@ def build_pose_viewer_html(
             color_override=(0.20, 0.72, 0.31),
         ),
     ]
+    object_poses = {
+        "table": np.stack([frame["table_pose"] for frame in frames]),
+        "object": np.stack([frame["object_pose"] for frame in frames]),
+        "goal": np.stack([frame["goal_pose"] for frame in frames]),
+    }
+    if hole_urdf_text is not None and all("hole_pose" in frame for frame in frames):
+        robots.insert(2, make_embedded_robot(name="hole", urdf_text=hole_urdf_text))
+        object_poses["hole"] = np.stack([frame["hole_pose"] for frame in frames])
 
     return create_html(
         joint_names=frames[0]["robot_joint_names"],
         robot_joint_positions=np.stack([frame["robot_joint_pos"] for frame in frames]),
         robots=robots,
-        object_poses={
-            "table": np.stack([frame["table_pose"] for frame in frames]),
-            "object": np.stack([frame["object_pose"] for frame in frames]),
-            "goal": np.stack([frame["goal_pose"] for frame in frames]),
-        },
+        object_poses=object_poses,
         robot_base_poses=np.stack([frame["robot_base_pose"] for frame in frames]),
         timestamps=timestamps,
     )
@@ -346,6 +373,7 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         self._table_urdf_text, self._table_urdf_path = table_urdf_for_env(
             inner, self.env_id
         )
+        self._hole_urdf_text, self._hole_urdf_path = hole_urdf_for_env(inner, self.env_id)
 
         self._step = 0
         self._capture_index = 0
@@ -391,8 +419,10 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
             frames=frames,
             object_urdf_text=self._object_urdf_text,
             table_urdf_text=self._table_urdf_text,
+            hole_urdf_text=self._hole_urdf_text,
             object_urdf_path=self._object_urdf_path,
             table_urdf_path=self._table_urdf_path,
+            hole_urdf_path=self._hole_urdf_path,
             github_raw_base=self.github_raw_base,
             url_check=self.url_check,
         )
@@ -413,10 +443,7 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
             return
 
         try:
-            wandb.log(
-                {"global_step": self._step, self.wandb_key: wandb.Html(html_text)},
-                step=self._step,
-            )
+            wandb.log({self.wandb_key: wandb.Html(html_text)})
             print(f"[pose_viewer] logged WandB Html key={self.wandb_key} step={self._step}", flush=True)
         except Exception as exc:
             print(f"[pose_viewer] WandB log failed: {exc}", flush=True)
