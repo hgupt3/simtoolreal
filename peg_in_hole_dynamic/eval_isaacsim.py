@@ -36,6 +36,7 @@ if str(REPO_ROOT) not in sys.path:
 DEFAULT_TASK = "Isaacsimenvs-PegInHole-Direct-v0"
 DEFAULT_AGENT = "rl_games_sapg_cfg_entry_point"
 DEFAULT_PROBLEM = "peg.tol0p5mm"
+DEFAULT_RANDOM_GOAL_SUCCESS_TOLERANCE = 0.01
 GOAL_MODES = ("preInsertAndFinal", "finalGoalOnly")
 CONTROL_DT = 1.0 / 60.0
 
@@ -288,6 +289,9 @@ def _apply_env_overrides(
     cfg.peg_in_hole.random_goal_fraction = float(random_goal_fraction)
     cfg.peg_in_hole.insertion_success_tolerance = float(insertion_success_tolerance)
     cfg.peg_in_hole.retract_success_tolerance = float(retract_success_tolerance)
+    if float(random_goal_fraction) > 0.0:
+        cfg.termination.success_tolerance = DEFAULT_RANDOM_GOAL_SUCCESS_TOLERANCE
+        cfg.termination.target_success_tolerance = DEFAULT_RANDOM_GOAL_SUCCESS_TOLERANCE
     cfg.termination.force_consecutive_near_goal_steps = True
 
     merged = {}
