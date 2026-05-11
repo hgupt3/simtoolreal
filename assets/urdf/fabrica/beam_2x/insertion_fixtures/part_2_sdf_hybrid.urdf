@@ -54,14 +54,14 @@
       </geometry>
     </collision>
     <visual>
-      <origin xyz="-0.000000 -0.000000 0.012666" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="-0.000000 -0.000000 0.012666" rpy="-0.000000 0.000000 0.000000"/>
       <geometry>
         <mesh filename="../6/sdf_hybrid/6_hole_patch.obj" scale="1 1 1"/>
       </geometry>
       <material name="hole"/>
     </visual>
     <collision>
-      <origin xyz="-0.000000 -0.000000 0.012666" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="-0.000000 -0.000000 0.012666" rpy="-0.000000 0.000000 0.000000"/>
       <geometry>
         <mesh filename="../6/sdf_hybrid/6_hole_patch.obj" scale="1 1 1"/>
       </geometry>

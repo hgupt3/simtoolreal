@@ -46,6 +46,14 @@ ROBOT_URDF = REPO_ROOT / "assets/urdf/kuka_sharpa_description/iiwa14_left_sharpa
 DEFAULT_ARM_DOFS = np.array([-1.571, 1.571 - np.deg2rad(10), 0.0,
                              1.376 + np.deg2rad(10), 0.0, 1.485, 1.308])
 
+# Per-env hole XY randomization range (matches PegInHole.yaml /
+# peg_in_hole_env_cfg defaults). The env samples hole_pos uniformly within
+# these per-axis bounds; in the viewer we render the full range as a
+# translucent footprint on the table top, and let the user drag a slider
+# within the range to position the whole assembly.
+HOLE_X_RANGE = (-0.1875, 0.1875)
+HOLE_Y_RANGE = (-0.1, 0.1)
+
 
 def _xyzw_to_wxyz(q: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
     qx, qy, qz, qw = q
@@ -207,6 +215,7 @@ class ProblemVisualizer:
         self._show_receptive_keypoints: bool = False
         self._fixture_opacity: float = 0.5
         self._insertion_opacity: float = 1.0
+        self._assembly_xy: Tuple[float, float] = (0.0, 0.0)
         self._build_static()
 
     # ---- static (built once) ----
@@ -228,6 +237,19 @@ class ProblemVisualizer:
             dimensions=TABLE_DIMENSIONS,
             position=(0, 0, 0),
             opacity=0.85,
+        )
+
+        # Fixture XY randomization footprint — translucent box on the table
+        # top whose extents match the env's hole_x_range / hole_y_range. The
+        # assembly slider position is drawn from inside this region.
+        rx_lo, rx_hi = HOLE_X_RANGE
+        ry_lo, ry_hi = HOLE_Y_RANGE
+        self.server.scene.add_box(
+            "/fixture_range",
+            color=(80, 200, 255),
+            dimensions=(rx_hi - rx_lo, ry_hi - ry_lo, 0.002),
+            position=((rx_lo + rx_hi) / 2, (ry_lo + ry_hi) / 2, TABLE_TOP_Z + 0.001),
+            opacity=0.18,
         )
 
         # Robot — pose-only ViserUrdf at the env's robot location.
@@ -299,15 +321,18 @@ class ProblemVisualizer:
             return
         p = PROBLEM_REGISTRY[self._current_problem]
 
-        # --- receptive object at world (0, 0, table_top_z + hole_z_offset) ---
-        # This matches what the env will do: hole_pos = (rand_x, rand_y,
-        # table_top_z + holeZOffset). For visualization we fix XY at 0 and
-        # use the per-problem hole_z_offset.
+        # --- receptive object at world (assembly_x, assembly_y, table_top_z + hole_z_offset) ---
+        # The env picks hole_pos = (rand_x, rand_y, table_top_z + holeZOffset)
+        # uniformly within HOLE_X_RANGE × HOLE_Y_RANGE. Here the slider value
+        # (_assembly_xy) drives the receptive XY directly, and the insertion
+        # object shifts by the same XY so the whole assembly translates as a
+        # rigid unit.
+        ax, ay = self._assembly_xy
         recv_world_z = TABLE_TOP_Z + p.hole_z_offset
         receptive_abs = ASSETS_ROOT / p.receptive_urdf
         recv_frame = self._track(self.server.scene.add_frame(
             f"{ns}/receptive",
-            position=(0, 0, recv_world_z),
+            position=(ax, ay, recv_world_z),
             wxyz=(1, 0, 0, 0),
             show_axes=True, axes_length=0.1, axes_radius=0.003,
         ))
@@ -332,8 +357,8 @@ class ProblemVisualizer:
 
         # --- insertion object at the selected pose (relative to receptive) ---
         (ix, iy, iz), (qx, qy, qz, qw) = self._selected_position_quat(p)
-        # Lift to world frame by adding the receptive's world z.
-        ix_world, iy_world, iz_world = ix, iy, iz + recv_world_z
+        # Lift to world frame by adding the receptive's world position.
+        ix_world, iy_world, iz_world = ix + ax, iy + ay, iz + recv_world_z
         ins_frame = self._track(self.server.scene.add_frame(
             f"{ns}/insertion",
             position=(ix_world, iy_world, iz_world),
@@ -387,7 +412,7 @@ class ProblemVisualizer:
             R_ins = _R.from_quat([qx_f, qy_f, qz_f, qw_f]).as_matrix()
             for k, c in enumerate(_keypoint_corners(half_ext)):
                 rec_local = R_ins @ np.asarray(c) + np.array([x_f, y_f, z_f])
-                world = (rec_local[0], rec_local[1], rec_local[2] + recv_world_z)
+                world = (rec_local[0] + ax, rec_local[1] + ay, rec_local[2] + recv_world_z)
                 self._track(self.server.scene.add_icosphere(
                     f"{ns}/receptive_kp_{k}",
                     position=world,
@@ -461,6 +486,10 @@ class ProblemVisualizer:
             except Exception:
                 pass
 
+    def set_assembly_xy(self, x: float, y: float) -> None:
+        self._assembly_xy = (float(x), float(y))
+        self.render()
+
 
 def _free_port(start: int = 8043, span: int = 20) -> Optional[int]:
     import socket
@@ -523,6 +552,14 @@ def main():
         ins_opacity_slider = server.gui.add_slider(
             "Insertion opacity", min=0.0, max=1.0, step=0.05, initial_value=1.0,
         )
+        assembly_x_slider = server.gui.add_slider(
+            "Assembly X", min=HOLE_X_RANGE[0], max=HOLE_X_RANGE[1],
+            step=0.005, initial_value=0.0,
+        )
+        assembly_y_slider = server.gui.add_slider(
+            "Assembly Y", min=HOLE_Y_RANGE[0], max=HOLE_Y_RANGE[1],
+            step=0.005, initial_value=0.0,
+        )
         info = server.gui.add_markdown("")
         viz.attach_info(info)
 
@@ -554,6 +591,14 @@ def main():
     @ins_opacity_slider.on_update
     def _on_ins_opacity(_) -> None:
         viz.set_insertion_opacity(ins_opacity_slider.value)
+
+    @assembly_x_slider.on_update
+    def _on_assembly_x(_) -> None:
+        viz.set_assembly_xy(assembly_x_slider.value, assembly_y_slider.value)
+
+    @assembly_y_slider.on_update
+    def _on_assembly_y(_) -> None:
+        viz.set_assembly_xy(assembly_x_slider.value, assembly_y_slider.value)
 
     viz.set_fixture_opacity(opacity_slider.value)
     viz.set_insertion_opacity(ins_opacity_slider.value)

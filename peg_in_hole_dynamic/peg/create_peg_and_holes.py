@@ -27,7 +27,7 @@ import trimesh
 from PIL import Image
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = REPO_ROOT / "assets/urdf/peg_in_hole"
 
 HANDLE_EXTENTS = (0.25, 0.03, 0.02)
@@ -36,6 +36,13 @@ HEAD_EXTENTS = (0.02, 0.10, 0.02)
 # the natural grasp point (policy scale uses handle extents — see objects.py).
 HANDLE_CENTER = (0.0, 0.0, 0.0)
 HEAD_CENTER = (0.115, 0.0, 0.0)   # head outer face flush with handle +X end (0.125)
+# L-peg variant: forms a proper L by sharing a corner block with the handle.
+# The head's -Y face is flush with the handle's -Y face (both at -0.015) and
+# the head extends 5cm past the handle's +Y face — the 5cm "free" extension
+# is the "half" of the original T-peg head's 10cm full span. Total head Y
+# extent = handle_Y (0.03) + 0.05 = 0.08 m.
+LHEAD_EXTENTS = (0.02, 0.08, 0.02)
+LHEAD_CENTER = (0.115, 0.025, 0.0)   # head spans Y in [-0.015, +0.065]
 
 HOLE_FOOTPRINT_X = 0.08
 HOLE_FOOTPRINT_Y = 0.08
@@ -82,6 +89,13 @@ def peg_boxes():
     return [
         (HANDLE_CENTER, HANDLE_EXTENTS),
         (HEAD_CENTER, HEAD_EXTENTS),
+    ]
+
+
+def lpeg_boxes():
+    return [
+        (HANDLE_CENTER, HANDLE_EXTENTS),
+        (LHEAD_CENTER, LHEAD_EXTENTS),
     ]
 
 
@@ -167,8 +181,16 @@ def box_xml(boxes, tag: str, material_name=None, indent="    "):
     return "\n".join(parts)
 
 
-def write_peg_urdf(out_dir: Path):
-    boxes = peg_boxes()
+def write_peg_link_urdf(out_dir: Path, boxes, urdf_name: str, robot_name: str, link_name: str):
+    """Write a single-link peg-like URDF.
+
+    Mass is computed from the union of boxes (volumes summed without
+    deduplicating the small handle/head overlap — same approximation used by
+    the original T-peg). COM is the volume-weighted centroid in X and Y. The
+    inertia tensor uses the handle (boxes[0]) as a dominant approximation;
+    this is what the original T-peg URDF did, and the head's contribution is
+    a small correction for sim purposes.
+    """
     h_c, h_e = boxes[0]
     d_c, d_e = boxes[1]
     vol_h = h_e[0] * h_e[1] * h_e[2]
@@ -176,30 +198,45 @@ def write_peg_urdf(out_dir: Path):
     vol = vol_h + vol_d
     mass = DENSITY * vol
     com_x = (h_c[0] * vol_h + d_c[0] * vol_d) / vol
+    com_y = (h_c[1] * vol_h + d_c[1] * vol_d) / vol
+    com_z = (h_c[2] * vol_h + d_c[2] * vol_d) / vol
     ixx = mass * (h_e[1] ** 2 + h_e[2] ** 2) / 12
     iyy = mass * (h_e[0] ** 2 + h_e[2] ** 2) / 12
     izz = mass * (h_e[0] ** 2 + h_e[1] ** 2) / 12
 
-    vis = box_xml(boxes, "visual", material_name="peg_red")
+    material_name = "peg_red"
+    vis = box_xml(boxes, "visual", material_name=material_name)
     col = box_xml(boxes, "collision")
     r, g, b = PEG_COLOR
     xml = f'''<?xml version="1.0"?>
-<robot name="peg">
-  <material name="peg_red">
+<robot name="{robot_name}">
+  <material name="{material_name}">
     <color rgba="{r/255:.4f} {g/255:.4f} {b/255:.4f} 1.0"/>
   </material>
-  <link name="peg">
+  <link name="{link_name}">
 {vis}
 {col}
     <inertial>
       <mass value="{mass:.6f}"/>
-      <origin xyz="{com_x:.6f} 0 0" rpy="0 0 0"/>
+      <origin xyz="{com_x:.6f} {com_y:.6f} {com_z:.6f}" rpy="0 0 0"/>
       <inertia ixx="{ixx:.6e}" ixy="0" ixz="0" iyy="{iyy:.6e}" iyz="0" izz="{izz:.6e}"/>
     </inertial>
   </link>
 </robot>
 '''
-    (out_dir / "peg.urdf").write_text(xml)
+    (out_dir / urdf_name).write_text(xml)
+
+
+def write_peg_urdf(out_dir: Path):
+    write_peg_link_urdf(
+        out_dir, peg_boxes(), urdf_name="peg.urdf", robot_name="peg", link_name="peg"
+    )
+
+
+def write_lpeg_urdf(out_dir: Path):
+    write_peg_link_urdf(
+        out_dir, lpeg_boxes(), urdf_name="lpeg.urdf", robot_name="lpeg", link_name="lpeg"
+    )
 
 
 def _scene_box_xml(center_scene, extents, material_name=None, indent="    "):
@@ -317,6 +354,13 @@ def main():
     write_stl(peg_dir, "peg", peg_mesh)
     write_peg_urdf(peg_dir)
     print(f"[peg] extents={peg_mesh.extents}  -> {peg_dir}")
+
+    lpeg_dir = ASSETS_DIR / "lpeg"
+    lpeg_mesh = boxes_to_mesh(lpeg_boxes())
+    write_obj_mtl_png(lpeg_dir, "lpeg", lpeg_mesh, PEG_COLOR)
+    write_stl(lpeg_dir, "lpeg", lpeg_mesh)
+    write_lpeg_urdf(lpeg_dir)
+    print(f"[lpeg] extents={lpeg_mesh.extents}  -> {lpeg_dir}")
 
     for tol_mm in TOLERANCES_MM:
         tol_m = tol_mm * 1e-3

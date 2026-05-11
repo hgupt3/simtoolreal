@@ -236,17 +236,11 @@ class PegInHoleEnv(SimToolRealEnv):
 
         table_top_z = self._table_z_per_env[env_ids] + TABLE_HALF_HEIGHT
 
-        obj_pos_local = torch.zeros(n, 3, dtype=torch.float32, device=self.device)
-        obj_pos_local[:, 2] = table_top_z + 0.1
-        obj_quat = torch.tensor(
-            [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32
-        ).unsqueeze(0).expand(n, -1)
-        obj_pose = torch.cat([obj_pos_local + env_origins, obj_quat], dim=-1)
-        self.object.write_root_pose_to_sim(obj_pose, env_ids=env_ids)
-        self.object.write_root_velocity_to_sim(
-            torch.zeros(n, 6, device=self.device), env_ids=env_ids
-        )
-        self._object_init_z[env_ids] = obj_pos_local[:, 2]
+        # Object pose was already written by SimToolRealEnv._reset_object_pose
+        # (called from super()._reset_idx via reset_env_state). It honors
+        # cfg.reset.fixed_start_pose when set, otherwise samples
+        # cfg.reset.reset_position_noise_x/y/z + random_orientation. We do not
+        # override it here.
 
         hole_x_min, hole_x_max = (float(v) for v in pih_cfg.hole_x_range)
         hole_y_min, hole_y_max = (float(v) for v in pih_cfg.hole_y_range)
@@ -262,7 +256,10 @@ class PegInHoleEnv(SimToolRealEnv):
             self.hole_pos[rg_ids, 0:2] = 0.0
             self.hole_pos[rg_ids, 2] = -1.0
 
-        hole_pose = torch.cat([self.hole_pos[env_ids] + env_origins, obj_quat], dim=-1)
+        hole_quat = torch.tensor(
+            [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32
+        ).unsqueeze(0).expand(n, -1)
+        hole_pose = torch.cat([self.hole_pos[env_ids] + env_origins, hole_quat], dim=-1)
         self.hole.write_root_pose_to_sim(hole_pose, env_ids=env_ids)
         self.hole.write_root_velocity_to_sim(
             torch.zeros(n, 6, device=self.device), env_ids=env_ids

@@ -88,6 +88,36 @@ def slice_mesh_by_axis_range(mesh: trimesh.Trimesh, axis: int,
     return manifold_to_trimesh(a ^ b)   # ^ = boolean intersection
 
 
+def _bbox_to_centered_box(bb_min, bb_max, pad: float) -> trimesh.Trimesh:
+    bb_min = np.asarray(bb_min, dtype=float)
+    bb_max = np.asarray(bb_max, dtype=float)
+    extents = (bb_max - bb_min) + 2 * pad
+    center = (bb_min + bb_max) / 2.0
+    return _box_around(tuple(extents), tuple(center))
+
+
+def slice_mesh_by_3d_bbox(mesh: trimesh.Trimesh,
+                          bb_min, bb_max,
+                          pad: float = 0.001,
+                          ) -> trimesh.Trimesh:
+    """Boolean-intersect ``mesh`` with the 3D axis-aligned box
+    ``[bb_min, bb_max]`` (expanded by ``pad`` on each face)."""
+    a = trimesh_to_manifold(mesh)
+    b = trimesh_to_manifold(_bbox_to_centered_box(bb_min, bb_max, pad))
+    return manifold_to_trimesh(a ^ b)
+
+
+def subtract_3d_bbox_from_mesh(mesh: trimesh.Trimesh,
+                                bb_min, bb_max,
+                                pad: float = 0.001,
+                                ) -> trimesh.Trimesh:
+    """Boolean-subtract the 3D axis-aligned box ``[bb_min, bb_max]``
+    (expanded by ``pad``) from ``mesh``. Returns the watertight remainder."""
+    a = trimesh_to_manifold(mesh)
+    b = trimesh_to_manifold(_bbox_to_centered_box(bb_min, bb_max, pad))
+    return manifold_to_trimesh(a - b)
+
+
 def slice_mesh_by_xy_bbox(mesh: trimesh.Trimesh,
                           x_lo: float, x_hi: float,
                           y_lo: float, y_hi: float,

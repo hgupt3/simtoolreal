@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot name="lamp_base">
+  <link name="lamp_base">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="lamp_base_canonical.obj" scale="1 1 1"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="lamp_base_canonical.obj" scale="1 1 1"/></geometry>
+    </collision>
+    <inertial><density value="800.0"/></inertial>
+  </link>
+</robot>

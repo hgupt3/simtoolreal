@@ -61,9 +61,9 @@ SDF_PHYSX_OVERRIDES = {
 
 
 EVAL_DR_OFF_OVERRIDES = {
-    "env.reset.reset_position_noise_x": 0.0,
-    "env.reset.reset_position_noise_y": 0.0,
-    "env.reset.reset_position_noise_z": 0.0,
+    # reset_position_noise_x/y/z are intentionally left at training values so
+    # eval rollouts see the same start-pose variation the policy was trained
+    # under. Set fixed_start_pose if you want a deterministic start pose.
     "env.reset.reset_dof_pos_random_interval_arm": 0.0,
     "env.reset.reset_dof_pos_random_interval_fingers": 0.0,
     "env.reset.reset_dof_vel_random_interval": 0.0,

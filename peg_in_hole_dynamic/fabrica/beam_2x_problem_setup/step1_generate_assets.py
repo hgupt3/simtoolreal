@@ -95,11 +95,17 @@ def _bbox_overlaps(bb1, bb2, padding: float) -> bool:
 def _decompose_around_hole(part_bbox: Tuple[np.ndarray, np.ndarray],
                            hole_bbox: Tuple[np.ndarray, np.ndarray]
                            ) -> List[Tuple[float, float, float, float, float, float]]:
-    """Return up to 4 axis-aligned boxes (cx, cy, cz, sx, sy, sz) that tile
-    the receiver part's A-frame bbox while skipping the hole's XY footprint.
+    """Return up to 6 axis-aligned boxes (cx, cy, cz, sx, sy, sz) that tile
+    the receiver part's A-frame bbox while skipping the 3D hole region.
 
-    Z extent always uses the full part bbox Z. Boxes outside the part's bbox
-    or with non-positive extent are dropped.
+    The hole_bbox is the inserter's A-frame bbox (clipped to the part's bbox).
+    Outside the hole's Z slab we emit full-XY "below" and "above" boxes; within
+    the slab we emit up to 4 XY strips around the hole's XY footprint. This
+    keeps the previous axial-insertion behavior (no below/above boxes when the
+    inserter's Z spans the full receiver Z) while also covering lateral
+    insertions where the inserter touches only a Z slab of the receiver.
+
+    Boxes with non-positive extent are dropped.
     """
     p_min, p_max = part_bbox
     h_min, h_max = hole_bbox
@@ -108,31 +114,50 @@ def _decompose_around_hole(part_bbox: Tuple[np.ndarray, np.ndarray],
     hx_hi = min(h_max[0], p_max[0])
     hy_lo = max(h_min[1], p_min[1])
     hy_hi = min(h_max[1], p_max[1])
-    cz = (p_min[2] + p_max[2]) / 2
-    sz = p_max[2] - p_min[2]
-    out = []
-    # Top strip: y > hy_hi
-    if p_max[1] > hy_hi:
-        sx = p_max[0] - p_min[0]
-        sy = p_max[1] - hy_hi
-        out.append(((p_min[0] + p_max[0]) / 2, (hy_hi + p_max[1]) / 2, cz, sx, sy, sz))
-    # Bottom strip: y < hy_lo
-    if hy_lo > p_min[1]:
-        sx = p_max[0] - p_min[0]
-        sy = hy_lo - p_min[1]
-        out.append(((p_min[0] + p_max[0]) / 2, (p_min[1] + hy_lo) / 2, cz, sx, sy, sz))
-    # Left strip: x < hx_lo, y in (hy_lo, hy_hi)
-    if hx_lo > p_min[0]:
-        sx = hx_lo - p_min[0]
-        sy = max(0.0, hy_hi - hy_lo)
-        if sy > 1e-6:
-            out.append(((p_min[0] + hx_lo) / 2, (hy_lo + hy_hi) / 2, cz, sx, sy, sz))
-    # Right strip: x > hx_hi, y in (hy_lo, hy_hi)
-    if p_max[0] > hx_hi:
-        sx = p_max[0] - hx_hi
-        sy = max(0.0, hy_hi - hy_lo)
-        if sy > 1e-6:
-            out.append(((hx_hi + p_max[0]) / 2, (hy_lo + hy_hi) / 2, cz, sx, sy, sz))
+    hz_lo = max(h_min[2], p_min[2])
+    hz_hi = min(h_max[2], p_max[2])
+
+    sx_full = p_max[0] - p_min[0]
+    sy_full = p_max[1] - p_min[1]
+    cx_mid  = (p_min[0] + p_max[0]) / 2
+    cy_mid  = (p_min[1] + p_max[1]) / 2
+
+    out: List[Tuple[float, float, float, float, float, float]] = []
+    # Below the hole in z: full XY × (p_min[2], hz_lo)
+    if hz_lo > p_min[2] + 1e-6:
+        sz = hz_lo - p_min[2]
+        cz = (p_min[2] + hz_lo) / 2
+        out.append((cx_mid, cy_mid, cz, sx_full, sy_full, sz))
+    # Above the hole in z: full XY × (hz_hi, p_max[2])
+    if p_max[2] > hz_hi + 1e-6:
+        sz = p_max[2] - hz_hi
+        cz = (hz_hi + p_max[2]) / 2
+        out.append((cx_mid, cy_mid, cz, sx_full, sy_full, sz))
+
+    # Within the hole z range, tile XY around the hole footprint.
+    if hz_hi > hz_lo + 1e-6:
+        cz = (hz_lo + hz_hi) / 2
+        sz = hz_hi - hz_lo
+        # Top strip: y > hy_hi
+        if p_max[1] > hy_hi + 1e-6:
+            sy = p_max[1] - hy_hi
+            out.append((cx_mid, (hy_hi + p_max[1]) / 2, cz, sx_full, sy, sz))
+        # Bottom strip: y < hy_lo
+        if hy_lo > p_min[1] + 1e-6:
+            sy = hy_lo - p_min[1]
+            out.append((cx_mid, (p_min[1] + hy_lo) / 2, cz, sx_full, sy, sz))
+        # Left strip: x < hx_lo, y in (hy_lo, hy_hi)
+        if hx_lo > p_min[0] + 1e-6:
+            sx = hx_lo - p_min[0]
+            sy = max(0.0, hy_hi - hy_lo)
+            if sy > 1e-6:
+                out.append(((p_min[0] + hx_lo) / 2, (hy_lo + hy_hi) / 2, cz, sx, sy, sz))
+        # Right strip: x > hx_hi, y in (hy_lo, hy_hi)
+        if p_max[0] > hx_hi + 1e-6:
+            sx = p_max[0] - hx_hi
+            sy = max(0.0, hy_hi - hy_lo)
+            if sy > 1e-6:
+                out.append(((hx_hi + p_max[0]) / 2, (hy_lo + hy_hi) / 2, cz, sx, sy, sz))
     return out
 
 

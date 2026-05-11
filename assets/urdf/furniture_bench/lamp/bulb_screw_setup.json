@@ -1,0 +1,32 @@
+{
+  "hole_xy_canonical": [
+    -9.184850993605154e-19,
+    7.999999999987516e-06
+  ],
+  "hole_xy_size_canonical": [
+    0.012552,
+    0.016357
+  ],
+  "active_corner_pos_yup_obj": [
+    0.0,
+    -0.0678,
+    0.0
+  ],
+  "active_corner_rpy_yup": [
+    0.0,
+    0.0,
+    3.141592653589793
+  ],
+  "bulb_centroid_in_src": [
+    0.0,
+    0.007500000000000003,
+    8.000000000001062e-06
+  ],
+  "pos_canonical_centroid": [
+    -9.184850993605154e-19,
+    7.999999999987516e-06,
+    0.061000000000000006
+  ],
+  "parent_part": "lamp_base",
+  "child_part": "lamp_bulb"
+}

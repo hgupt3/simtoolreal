@@ -45,8 +45,10 @@ from peg_in_hole_dynamic.sdf_hybrid_utils import (
     add_mesh_collision,
     add_mesh_visual,
     add_sdf_collision,
+    slice_mesh_by_3d_bbox,
     slice_mesh_by_axis_range,
     slice_mesh_by_xy_bbox,
+    subtract_3d_bbox_from_mesh,
 )
 from peg_in_hole_dynamic.fabrica.beam_2x_problem_setup.step1_generate_assets import (
     NEAR_PADDING,
@@ -71,56 +73,104 @@ BODY_COACD_KW = dict(threshold=0.03, max_convex_hull=-1, seed=0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Inserter splitting: long-axis tip + body
+# Inserter splitting: insertion-axis tip + body
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _long_axis(mesh: trimesh.Trimesh) -> int:
-    extents = mesh.extents
-    return int(np.argmax(extents))
+def _insertion_axis(tip_dir: np.ndarray) -> int:
+    """Canonical axis most aligned with the insertion direction.
+
+    The world insertion direction is (0,0,-1); ``tip_dir`` is that vector
+    transformed into the inserter's canonical frame. The axis whose
+    canonical basis vector projects most strongly onto ``tip_dir`` is the
+    one we slice the tip off of.
+    """
+    return int(np.argmax(np.abs(tip_dir)))
 
 
-def _slice_inserter_canonical(canonical: trimesh.Trimesh, tip_dir: np.ndarray
-                               ) -> Tuple[int, str, trimesh.Trimesh, trimesh.Trimesh]:
-    """Identify the canonical mesh's long axis, then cut it into
-    (tip, body) where ``tip`` is the ``TIP_HEIGHT_M``-thick slab on the
-    side of the long axis that the URDF-pose-applied 180° X flip will
-    bring "down" in world.
+def _a_frame_bbox_in_canonical(
+    bb_A: Tuple[np.ndarray, np.ndarray],
+    pose: Tuple[Tuple[float, float, float], Tuple[float, float, float, float]],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Project an axis-aligned A-frame bbox into the canonical frame of an
+    object whose pose is ``(pos, quat)`` (canonical → A). Returns the AABB
+    of the rotated bbox in canonical."""
+    pos, quat = pose
+    R_can_to_A = R.from_quat(quat).as_matrix()
+    R_A_to_can = R_can_to_A.T
+    bb_min, bb_max = bb_A
+    corners_A = np.array([
+        [bb_min[0], bb_min[1], bb_min[2]],
+        [bb_min[0], bb_min[1], bb_max[2]],
+        [bb_min[0], bb_max[1], bb_min[2]],
+        [bb_min[0], bb_max[1], bb_max[2]],
+        [bb_max[0], bb_min[1], bb_min[2]],
+        [bb_max[0], bb_min[1], bb_max[2]],
+        [bb_max[0], bb_max[1], bb_min[2]],
+        [bb_max[0], bb_max[1], bb_max[2]],
+    ])
+    corners_C = (corners_A - np.asarray(pos)) @ R_A_to_can.T
+    return corners_C.min(axis=0), corners_C.max(axis=0)
+
+
+def _slice_inserter_canonical(
+    canonical: trimesh.Trimesh,
+    tip_dir: np.ndarray,
+    receiver_bb_can: Tuple[np.ndarray, np.ndarray] | None = None,
+) -> Tuple[int, str, trimesh.Trimesh, trimesh.Trimesh]:
+    """Pick the canonical axis aligned with insertion, then cut into
+    (tip, body) where ``tip`` is a 3D slab covering only the receiver's
+    contact region: ``TIP_HEIGHT_M``-thick along the insertion axis on
+    the side that goes "down" in world, and clipped to the receiver's
+    footprint (``receiver_bb_can`` ± ``HOLE_PAD``) in the other two axes.
+
+    If ``receiver_bb_can`` is ``None``, the tip spans the canonical's full
+    extent in the other two axes (the previous behavior — useful when the
+    inserter's lateral extent is fully covered by the receiver, or when no
+    receiver bbox is available).
 
     Returns ``(axis_index, tip_side ∈ {"min", "max"}, tip_mesh, body_mesh)``.
-
-    The flip rule (for fabrica's pose convention `R = inverse(q_a→c)`
-    composed with the env's 180° X flip) is: under 180° X, ``z → -z``;
-    under 180° Y, ``z → -z`` too. So if the canonical long axis is **Z**,
-    the canonical-MAX end of Z becomes the world-MIN end (i.e. the tip).
-    For X / Y long axes, the same rule depending on which X-flipped
-    axis is now vertical — but the pose itself rotates the mesh into
-    its A-frame orientation, so we just pick the side based on what
-    the inserter direction (0,0,-1) projects to in canonical frame.
     """
-    axis = _long_axis(canonical)
+    axis = _insertion_axis(tip_dir)
     bb_min, bb_max = canonical.bounds.copy()
-    long_extent = bb_max[axis] - bb_min[axis]
-    if long_extent <= TIP_HEIGHT_M + 1e-4:
+    axis_extent = bb_max[axis] - bb_min[axis]
+    if axis_extent <= TIP_HEIGHT_M + 1e-4:
         raise ValueError(
-            f"Canonical mesh long-axis extent ({long_extent*1000:.1f} mm) is "
-            f"not larger than the requested tip height ({TIP_HEIGHT_M*1000:.1f} mm)."
+            f"Canonical mesh extent along insertion axis "
+            f"({axis_extent*1000:.1f} mm) is not larger than the requested "
+            f"tip height ({TIP_HEIGHT_M*1000:.1f} mm)."
         )
 
-    # Pick the side whose canonical-axis points most along `tip_dir`.
-    # `tip_dir` is the canonical-frame insertion direction (the direction
-    # the tip moves during insertion). If canonical +axis aligns with
-    # `tip_dir` (pos_dot > 0), the tip is at the canonical max-end. If
-    # canonical +axis is opposite to `tip_dir` (pos_dot < 0), the tip is
-    # at the canonical min-end.
     pos_dot = float(tip_dir[axis])
     side = "max" if pos_dot > 0 else "min"
 
+    # Build the 3D tip box in canonical frame. Insertion-axis range is the
+    # TIP_HEIGHT_M slab on the leading side; the other two axes are clipped
+    # to the receiver's projected footprint (with HOLE_PAD), or to the full
+    # canonical extent when the receiver bbox isn't supplied.
+    tip_bb_min = bb_min.copy()
+    tip_bb_max = bb_max.copy()
     if side == "min":
-        tip = slice_mesh_by_axis_range(canonical, axis, bb_min[axis], bb_min[axis] + TIP_HEIGHT_M)
-        body = slice_mesh_by_axis_range(canonical, axis, bb_min[axis] + TIP_HEIGHT_M, bb_max[axis])
+        tip_bb_max[axis] = bb_min[axis] + TIP_HEIGHT_M
     else:
-        tip = slice_mesh_by_axis_range(canonical, axis, bb_max[axis] - TIP_HEIGHT_M, bb_max[axis])
-        body = slice_mesh_by_axis_range(canonical, axis, bb_min[axis], bb_max[axis] - TIP_HEIGHT_M)
+        tip_bb_min[axis] = bb_max[axis] - TIP_HEIGHT_M
+
+    if receiver_bb_can is not None:
+        recv_min, recv_max = receiver_bb_can
+        for other in range(3):
+            if other == axis:
+                continue
+            tip_bb_min[other] = max(bb_min[other], recv_min[other] - HOLE_PAD)
+            tip_bb_max[other] = min(bb_max[other], recv_max[other] + HOLE_PAD)
+            if tip_bb_max[other] <= tip_bb_min[other]:
+                raise ValueError(
+                    f"Receiver footprint along canonical axis {('XYZ'[other])} "
+                    f"({recv_min[other]:.4f}, {recv_max[other]:.4f}) does not "
+                    f"overlap inserter canonical bbox "
+                    f"({bb_min[other]:.4f}, {bb_max[other]:.4f})."
+                )
+
+    tip = slice_mesh_by_3d_bbox(canonical, tip_bb_min, tip_bb_max)
+    body = subtract_3d_bbox_from_mesh(canonical, tip_bb_min, tip_bb_max)
     return axis, side, tip, body
 
 
@@ -279,14 +329,27 @@ def _process_problem(transforms: dict, steps: List[str],
     inserter_A    = _transform_to_A(inserter_canonical, inserter_pose)
     inserter_bb_A = _bbox(inserter_A)
 
+    # Localize the SDF tip to just the receiver's contact footprint:
+    # project the receiver's A-frame bbox into the inserter's canonical
+    # frame so we can clip the tip slab in the two non-insertion axes.
+    recv_canonical_for_clip, _ = _load_part_meshes(receiver_id)
+    recv_pose_for_clip = _assembled_pose(transforms, receiver_id)
+    recv_A_for_clip = _transform_to_A(recv_canonical_for_clip, recv_pose_for_clip)
+    recv_bb_A_for_clip = _bbox(recv_A_for_clip)
+    receiver_bb_in_inserter_can = _a_frame_bbox_in_canonical(
+        recv_bb_A_for_clip, inserter_pose,
+    )
+
     # World insertion direction is (0, 0, -1) in the env's A-frame; project
-    # it back into canonical so we can pick which long-axis end is the tip.
+    # it back into canonical so we can pick which axis end is the tip.
     R_can_to_A = R.from_quat(inserter_pose[1]).as_matrix()
     insertion_dir_can = R_can_to_A.T @ np.array([0.0, 0.0, -1.0])
     axis, side, tip_mesh, body_mesh = _slice_inserter_canonical(
         inserter_canonical, insertion_dir_can,
+        receiver_bb_can=receiver_bb_in_inserter_can,
     )
-    print(f"  inserter long axis = {'XYZ'[axis]} ({side}-end is tip), "
+    print(f"  inserter insertion axis = {'XYZ'[axis]} ({side}-end is tip, "
+          f"clipped to receiver footprint), "
           f"tip {len(tip_mesh.vertices)}v / body {len(body_mesh.vertices)}v")
 
     inserter_dir = ASSEMBLY_DIR / inserter_id / "sdf_hybrid"

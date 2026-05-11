@@ -32,7 +32,6 @@ from peg_in_hole_dynamic.furniture_bench.one_leg_problem_setup.step2_generate_as
     ASSETS_FB,
     HOLE_PADDING_M,
     REPO_ROOT,
-    _decompose_plate_around_one_hole,
 )
 from peg_in_hole_dynamic.sdf_hybrid_utils import (
     add_box_collision_visual,
@@ -44,6 +43,57 @@ from peg_in_hole_dynamic.sdf_hybrid_utils import (
 SDF_RES = 256
 THREAD_LENGTH_M = 0.025
 DETAIL_PATCH_PAD_M = 0.016
+# Bulk fixture is modeled as an open-top tray: a thin base plate at the
+# table's bottom face + 4 thin perimeter walls running from the base plate
+# top up to the table top. The SDF hole patch sits inside the cavity at
+# the table-top height where the leg threads engage.
+BASE_PLATE_THICKNESS_M = 0.005
+WALL_THICKNESS_M       = 0.005
+
+
+def _open_top_tray_boxes(
+    plate_xmin: float, plate_xmax: float,
+    plate_ymin: float, plate_ymax: float,
+    plate_zmin: float, plate_zmax: float,
+    base_t: float = BASE_PLATE_THICKNESS_M,
+    wall_t: float = WALL_THICKNESS_M,
+) -> List[Tuple[float, float, float, float, float, float]]:
+    """Tile the table footprint as an open-top tray: a single base plate at
+    the table's bottom face + 4 thin perimeter walls running from the base
+    plate top up to the table's top face.
+
+    Returns a list of (cx, cy, cz, sx, sy, sz) tuples — 5 boxes total. The
+    cavity in the middle (between the walls and above the base plate) is
+    open and is filled in collision by the SDF hole-patch mesh.
+    """
+    sx_full = plate_xmax - plate_xmin
+    sy_full = plate_ymax - plate_ymin
+    cx_mid  = (plate_xmin + plate_xmax) / 2
+    cy_mid  = (plate_ymin + plate_ymax) / 2
+
+    base_top = plate_zmin + base_t
+    wall_z_lo = base_top
+    wall_z_hi = plate_zmax
+    wall_z_ext = wall_z_hi - wall_z_lo
+    wall_z_mid = (wall_z_lo + wall_z_hi) / 2
+
+    out: List[Tuple[float, float, float, float, float, float]] = []
+    # Base plate (full footprint at the bottom of the table)
+    out.append((cx_mid, cy_mid, (plate_zmin + base_top) / 2,
+                sx_full, sy_full, base_t))
+    # North/South walls span the full X (overlap the corners)
+    out.append((cx_mid, plate_ymax - wall_t / 2, wall_z_mid,
+                sx_full, wall_t, wall_z_ext))
+    out.append((cx_mid, plate_ymin + wall_t / 2, wall_z_mid,
+                sx_full, wall_t, wall_z_ext))
+    # East/West walls span the inner Y range (between N/S walls), so the
+    # corner regions are covered by the N/S walls only.
+    inner_sy = max(0.0, sy_full - 2 * wall_t)
+    out.append((plate_xmax - wall_t / 2, cy_mid, wall_z_mid,
+                wall_t, inner_sy, wall_z_ext))
+    out.append((plate_xmin + wall_t / 2, cy_mid, wall_z_mid,
+                wall_t, inner_sy, wall_z_ext))
+    return out
 
 
 def _write_pretty(root: ET.Element, out_path: Path) -> None:
@@ -212,13 +262,13 @@ def main() -> None:
     print(f"  detail OBJ → {detail_patch_path.relative_to(REPO_ROOT)}")
 
     bb = canonical_top.bounds
-    # Use the detail patch footprint for the bulk cutout so the coarse boxes
-    # do not overlap the SDF contact patch.
-    bulk_boxes = _decompose_plate_around_one_hole(
+    # Open-top tray: base plate + 4 perimeter walls. The cavity in the
+    # middle is left open so the SDF hole patch is the only thing the leg
+    # collides with at the active hole.
+    bulk_boxes = _open_top_tray_boxes(
         plate_xmin=float(bb[0, 0]), plate_xmax=float(bb[1, 0]),
         plate_ymin=float(bb[0, 1]), plate_ymax=float(bb[1, 1]),
         plate_zmin=float(bb[0, 2]), plate_zmax=float(bb[1, 2]),
-        hole_bbox_xy=detail_bbox_xy,
     )
 
     fixtures_dir = ASSETS_FB / "square_table" / "insertion_fixtures"

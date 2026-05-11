@@ -1,0 +1,74 @@
+{
+  "_meta": {
+    "source": "peg_in_hole_dynamic/furniture_bench/bulb_problem_setup/upstream_snapshots/lamp.py",
+    "upstream_repo": "github.com/clvrai/furniture-bench (MIT)",
+    "frame": "y-up (verbatim from upstream).",
+    "z_up_conversion_note": "Apply R_x(+90 deg) so (x,y,z)_yup -> (x,-z,y)_zup; same R rotates child-relative poses."
+  },
+  "parts": [
+    {
+      "idx": 0,
+      "name": "lamp_base"
+    },
+    {
+      "idx": 1,
+      "name": "lamp_bulb"
+    },
+    {
+      "idx": 2,
+      "name": "lamp_hood"
+    }
+  ],
+  "assembled_rel_poses_yup": {
+    "0->1": [
+      {
+        "pos": [
+          0.0,
+          -0.0678,
+          0.0
+        ],
+        "rpy_xyz": [
+          0.0,
+          0.0,
+          3.141592653589793
+        ]
+      }
+    ],
+    "0->2": [
+      {
+        "pos": [
+          0.0,
+          -0.088324,
+          0.0
+        ],
+        "rpy_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ]
+  },
+  "tasks": {
+    "lamp": {
+      "should_be_assembled": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ]
+      ]
+    },
+    "bulb_screw": {
+      "should_be_assembled": [
+        [
+          0,
+          1
+        ]
+      ]
+    }
+  }
+}

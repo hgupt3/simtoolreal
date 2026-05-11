@@ -31,7 +31,7 @@ class PegInHoleCfg:
     goal_mode: str = "preInsertAndFinal"
 
     hole_x_range: tuple[float, float] = (-0.1875, 0.1875)
-    hole_y_range: tuple[float, float] = (-0.1, 0.2)
+    hole_y_range: tuple[float, float] = (-0.1, 0.1)
 
     goal_xy_obs_noise: float = 0.002
     random_goal_fraction: float = 0.0

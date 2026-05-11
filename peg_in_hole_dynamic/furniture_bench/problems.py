@@ -33,6 +33,8 @@ _ASSETS_FB = _REPO_ROOT / "assets" / "urdf" / "furniture_bench"
 R_X90 = R.from_euler("x", 90, degrees=True)
 ONE_LEG_PRE_INSERT_OFFSET_M = 0.025
 ONE_LEG_THREAD_PITCH_M = 0.00937368684342171
+BULB_PRE_INSERT_OFFSET_M = 0.025
+BULB_THREAD_PITCH_M = 0.00937368684342171  # same as one_leg until tuned
 
 
 def _one_leg_screw_insert_waypoints(final_pose, turns):
@@ -200,3 +202,110 @@ def _register_one_leg() -> None:
 
 
 _register_one_leg()
+
+
+# ─── Bulb-into-base (lamp assembly) ────────────────────────────────────────
+
+def _bulb_screw_waypoints(final_pose, turns):
+    """Same shape as one_leg waypoints, but parameterized on bulb constants."""
+    final_pose = tuple(float(v) for v in final_pose)
+    final_pos = np.asarray(final_pose[:3], dtype=float)
+    final_quat = np.asarray(final_pose[3:7], dtype=float)
+    final_rot = R.from_quat(final_quat)
+    insertion_dir = np.asarray((0.0, 0.0, -1.0), dtype=float)
+
+    waypoints = []
+    lead_pos = final_pos - insertion_dir * BULB_PRE_INSERT_OFFSET_M
+    waypoints.append((*lead_pos.tolist(), *final_quat.tolist()))
+    for turn in turns:
+        backoff = float(turn) * BULB_THREAD_PITCH_M
+        pos = final_pos - insertion_dir * backoff
+        quat = (R.from_euler("z", 360.0 * float(turn), degrees=True) * final_rot).as_quat()
+        if float(np.dot(quat, final_quat)) < 0.0:
+            quat = -quat
+        waypoints.append((*pos.tolist(), *quat.tolist()))
+    waypoints.append(final_pose)
+    return tuple(waypoints)
+
+
+def _register_bulb_screw() -> None:
+    setup_path = _ASSETS_FB / "lamp" / "bulb_screw_setup.json"
+    assembly_path = _ASSETS_FB / "lamp" / "assembly.json"
+    if not setup_path.is_file() or not assembly_path.is_file():
+        _LOG.info("furniture_bench.bulb_screw: missing setup/assembly JSON — skipping")
+        return
+
+    setup = json.loads(setup_path.read_text())
+    child_part = setup["child_part"]
+
+    # Only the sdf_hybrid variant is registered (step2 does not produce a
+    # non-hybrid receptive URDF for the bulb — the lamp_base mesh isn't a
+    # flat plate, so the synthetic-slab visual doesn't apply).
+    hybrid_recv = _ASSETS_FB / "lamp" / "insertion_fixtures" / "bulb_screw_sdf_hybrid.urdf"
+    hybrid_key = f"furniture_bench_{child_part}_sdf_hybrid"
+    if not hybrid_recv.is_file() or hybrid_key not in NAME_TO_OBJECT:
+        _LOG.warning(
+            "furniture_bench.bulb_screw: missing sdf_hybrid asset (%s, %s) -- skipping",
+            hybrid_recv, hybrid_key,
+        )
+        return
+
+    meta_path = _ASSETS_FB / "lamp" / child_part / "canonical_meta.json"
+    if not meta_path.is_file():
+        _LOG.warning("furniture_bench.bulb_screw: missing %s -- skipping", meta_path)
+        return
+    meta = json.loads(meta_path.read_text())
+    P_inserter = np.asarray(meta["R_storage_to_canonical"], dtype=float)
+
+    # Read the receiver's R from canonical_meta.json so the q_urdf composition
+    # picks up the lamp_base's R_x(-90°) override (instead of the default
+    # R_x(+90°) used by one_leg).
+    recv_meta_path = _ASSETS_FB / "lamp" / setup["parent_part"] / "canonical_meta.json"
+    if not recv_meta_path.is_file():
+        _LOG.warning("furniture_bench.bulb_screw: missing %s -- skipping", recv_meta_path)
+        return
+    P_receiver = np.asarray(
+        json.loads(recv_meta_path.read_text())["R_storage_to_canonical"], dtype=float
+    )
+
+    pos_canonical = np.asarray(setup["pos_canonical_centroid"], dtype=float)
+    rpy_yup = np.asarray(setup["active_corner_rpy_yup"], dtype=float)
+    R_yup_rel = R.from_euler("xyz", rpy_yup)
+    q = R.from_matrix(P_receiver) * R_yup_rel * R.from_matrix(P_inserter.T)
+    qx, qy, qz, qw = (float(v) for v in q.as_quat())
+
+    import trimesh
+    base_canonical = trimesh.load(
+        str(_ASSETS_FB / "lamp" / setup["parent_part"]
+            / f"{setup['parent_part']}_canonical.obj"),
+        force="mesh", process=False,
+    )
+    hole_z_offset = float((base_canonical.bounds[1, 2] - base_canonical.bounds[0, 2]) / 2)
+
+    final_pose = (
+        float(pos_canonical[0]), float(pos_canonical[1]), float(pos_canonical[2]),
+        qx, qy, qz, qw,
+    )
+    dense_waypoints      = _bulb_screw_waypoints(final_pose, turns=(2.0, 1.5, 1.0, 0.5))
+    semi_dense_waypoints = _bulb_screw_waypoints(final_pose, turns=(1.0, 0.5))
+    sparse_waypoints     = (dense_waypoints[0], dense_waypoints[-1])
+
+    base_name = "furniture_bench.bulb_screw_sdf_hybrid"
+    recv_rel = hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix()
+    for variant_name, insert_poses in (
+        (base_name, dense_waypoints),
+        (f"{base_name}_dense", dense_waypoints),
+        (f"{base_name}_semi_dense", semi_dense_waypoints),
+        (f"{base_name}_sparse", sparse_waypoints),
+    ):
+        PROBLEM_REGISTRY[variant_name] = Problem(
+            name=variant_name,
+            insertion_object_name=hybrid_key,
+            receptive_urdf=recv_rel,
+            insert_pose_rel_receptive=insert_poses,
+            hole_z_offset=hole_z_offset,
+            pre_insert_offset=BULB_PRE_INSERT_OFFSET_M,
+        )
+
+
+_register_bulb_screw()

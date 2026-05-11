@@ -44,7 +44,7 @@ peg_in_hole:
   problem: "peg.tol0p5mm"
   goal_mode: "preInsertAndFinal"
   hole_x_range: [-0.1875, 0.1875]
-  hole_y_range: [-0.1, 0.2]
+  hole_y_range: [-0.1, 0.1]
   goal_xy_obs_noise: 0.002
   random_goal_fraction: 0.0
   random_goal_max_successes: 5

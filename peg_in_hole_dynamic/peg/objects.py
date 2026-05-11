@@ -18,6 +18,12 @@ PEG_NAME_TO_OBJECT = {
         scale=rescale_by_factor((0.25, 0.03, 0.02), factor=25),
         need_vhacd=False,
     ),
+    # L-peg: same handle as peg (so scale matches), head shifted to one side.
+    "lpeg": Object(
+        urdf_path=ASSETS_DIR / "lpeg" / "lpeg.urdf",
+        scale=rescale_by_factor((0.25, 0.03, 0.02), factor=25),
+        need_vhacd=False,
+    ),
 }
 
 # FMB pegs (registered if canonical mesh + CoACD URDF exist)

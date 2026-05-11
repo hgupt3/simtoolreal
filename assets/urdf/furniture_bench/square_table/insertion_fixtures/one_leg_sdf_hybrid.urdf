@@ -2,55 +2,68 @@
 <robot name="one_leg_receptive_sdf_hybrid">
   <link name="receptive">
     <visual>
-      <origin xyz="0.000000 0.079556 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.000000 0.000000 -0.013125" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.162500 0.003389 0.031250"/>
+        <box size="0.162500 0.162501 0.005000"/>
       </geometry>
       <material name="bulk"/>
     </visual>
     <collision>
-      <origin xyz="0.000000 0.079556 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.000000 0.000000 -0.013125" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.162500 0.003389 0.031250"/>
+        <box size="0.162500 0.162501 0.005000"/>
       </geometry>
     </collision>
     <visual>
-      <origin xyz="0.000000 -0.022688 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.000000 0.078751 0.002500" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.162500 0.117125 0.031250"/>
+        <box size="0.162500 0.005000 0.026250"/>
       </geometry>
       <material name="bulk"/>
     </visual>
     <collision>
-      <origin xyz="0.000000 -0.022688 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.000000 0.078751 0.002500" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.162500 0.117125 0.031250"/>
+        <box size="0.162500 0.005000 0.026250"/>
       </geometry>
     </collision>
     <visual>
-      <origin xyz="-0.079446 0.056868 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.000000 -0.078751 0.002500" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.003608 0.041987 0.031250"/>
+        <box size="0.162500 0.005000 0.026250"/>
       </geometry>
       <material name="bulk"/>
     </visual>
     <collision>
-      <origin xyz="-0.079446 0.056868 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.000000 -0.078751 0.002500" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.003608 0.041987 0.031250"/>
+        <box size="0.162500 0.005000 0.026250"/>
       </geometry>
     </collision>
     <visual>
-      <origin xyz="0.023196 0.056868 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.078750 0.000000 0.002500" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.116108 0.041987 0.031250"/>
+        <box size="0.005000 0.152501 0.026250"/>
       </geometry>
       <material name="bulk"/>
     </visual>
     <collision>
-      <origin xyz="0.023196 0.056868 0.000000" rpy="0.000000 0.000000 0.000000"/>
+      <origin xyz="0.078750 0.000000 0.002500" rpy="0.000000 0.000000 0.000000"/>
       <geometry>
-        <box size="0.116108 0.041987 0.031250"/>
+        <box size="0.005000 0.152501 0.026250"/>
+      </geometry>
+    </collision>
+    <visual>
+      <origin xyz="-0.078750 0.000000 0.002500" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.005000 0.152501 0.026250"/>
+      </geometry>
+      <material name="bulk"/>
+    </visual>
+    <collision>
+      <origin xyz="-0.078750 0.000000 0.002500" rpy="0.000000 0.000000 0.000000"/>
+      <geometry>
+        <box size="0.005000 0.152501 0.026250"/>
       </geometry>
     </collision>
     <visual>

@@ -33,13 +33,14 @@ def _register_all() -> None:
             continue
         # tag is the part after "hole_" (e.g. "tol0p5mm")
         tag = hole_dir.name[len("hole_"):]
-        name = f"peg.{tag}"
-        PROBLEM_REGISTRY[name] = Problem(
-            name=name,
-            insertion_object_name="peg",
-            receptive_urdf=urdf_rel,
-            insert_pose_rel_receptive=make_pre_insert_sequence(_PEG_INSERT_POSE),
-        )
+        for prefix, object_name in (("peg", "peg"), ("Lpeg", "lpeg")):
+            name = f"{prefix}.{tag}"
+            PROBLEM_REGISTRY[name] = Problem(
+                name=name,
+                insertion_object_name=object_name,
+                receptive_urdf=urdf_rel,
+                insert_pose_rel_receptive=make_pre_insert_sequence(_PEG_INSERT_POSE),
+            )
 
 
 _register_all()
