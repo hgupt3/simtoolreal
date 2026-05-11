@@ -481,7 +481,6 @@
             const objLoader = new OBJLoader(loadingManager);
             const meshUrl = new URL(path, window.location.href);
             const baseUrl = new URL("./", meshUrl).toString();
-            const mtlUrl = new URL("material.mtl", meshUrl).toString();
 
             const loadObj = (materials = null) => {
               if (materials && !robotConfig.color_override) {
@@ -502,14 +501,32 @@
               return;
             }
 
-            const mtlLoader = new MTLLoader(loadingManager);
-            mtlLoader.setResourcePath(baseUrl);
-            mtlLoader.load(
-              mtlUrl,
-              (materials) => loadObj(materials),
-              undefined,
-              () => loadObj(),
-            );
+            // Only fetch material.mtl when the OBJ actually references one
+            // via `mtllib`. CoACD outputs and many trimesh exports ship
+            // vertex colors instead and have no .mtl on disk, so the old
+            // unconditional MTLLoader call produced a 404 + console noise
+            // for every such mesh. We sniff the OBJ text first (the second
+            // OBJLoader fetch reuses the HTTP cache) and skip MTL entirely
+            // when no mtllib is present.
+            fetch(meshUrl.toString())
+              .then((r) => (r.ok ? r.text() : ""))
+              .then((objText) => {
+                const m = objText.match(/^mtllib\s+(\S+)/m);
+                if (!m) {
+                  loadObj();
+                  return;
+                }
+                const mtlUrl = new URL(m[1], meshUrl).toString();
+                const mtlLoader = new MTLLoader(loadingManager);
+                mtlLoader.setResourcePath(baseUrl);
+                mtlLoader.load(
+                  mtlUrl,
+                  (materials) => loadObj(materials),
+                  undefined,
+                  () => loadObj(),
+                );
+              })
+              .catch(() => loadObj());
             return;
           }
 
