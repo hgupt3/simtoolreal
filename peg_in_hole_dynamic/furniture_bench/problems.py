@@ -33,7 +33,7 @@ _ASSETS_FB = _REPO_ROOT / "assets" / "urdf" / "furniture_bench"
 R_X90 = R.from_euler("x", 90, degrees=True)
 ONE_LEG_PRE_INSERT_OFFSET_M = 0.025
 ONE_LEG_THREAD_PITCH_M = 0.00937368684342171
-BULB_PRE_INSERT_OFFSET_M = 0.025
+BULB_PRE_INSERT_OFFSET_M = 0.030
 BULB_THREAD_PITCH_M = 0.00937368684342171  # same as one_leg until tuned
 
 
