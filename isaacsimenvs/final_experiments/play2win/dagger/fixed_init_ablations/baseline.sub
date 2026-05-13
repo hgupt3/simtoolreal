@@ -51,6 +51,13 @@ TEACHER_RUN_DIR="${TEACHER_RUN_DIR:-/share/portal/kk837/depthbasedRL/train_dir/i
 NUM_ENVS=512
 EXPL_BLOCK=128
 MINIBATCH_SIZE=2048
+# mini_epochs=4 (up from yaml default 2): empirically ~2x faster wall-clock
+# convergence on this BC-only task. yaml's PPO-tuned default of 2 is too few
+# passes per rollout when L_loss is pure MSE and there's no off-policy concern.
+MINI_EPOCHS=4
+# learning_rate=1e-4: yaml default. Exposed as a bash var so HP-search variants
+# can perturb it without re-touching the CLI block.
+LR=1e-4
 
 CRITIC=symmetric         # BC-only: PPO/value gradient is zeroed by λ_D=1.0.
 LAMBDA_D_START=1.0
@@ -137,6 +144,8 @@ echo "Hydra run dir:    $HYDRA_RUN_DIR"
 echo "num_envs:         $NUM_ENVS"
 echo "expl_block_size:  $EXPL_BLOCK"
 echo "minibatch_size:   $MINIBATCH_SIZE"
+echo "mini_epochs:      $MINI_EPOCHS"
+echo "learning_rate:    $LR"
 echo "critic:           $CRITIC"
 echo "fixed_start_pose: $FIXED_START_POSE"
 echo "hole_x_range:     $HOLE_X_RANGE"
@@ -243,5 +252,7 @@ python -u isaacsimenvs/dagger/train.py \
     agent.params.config.expl_coef_block_size=$EXPL_BLOCK \
     agent.params.config.minibatch_size=$MINIBATCH_SIZE \
     agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.mini_epochs=$MINI_EPOCHS \
+    agent.params.config.learning_rate=$LR \
     agent.params.config.lr_schedule=identity \
     hydra.run.dir="$HYDRA_RUN_DIR"

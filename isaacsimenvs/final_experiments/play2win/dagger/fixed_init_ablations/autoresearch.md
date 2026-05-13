@@ -78,14 +78,14 @@ If a configuration knob you'd like to tune isn't exposed as a `agent.params.conf
 
 ## The four tunable knobs
 
-| Knob | Bash var in sub | Hydra override line to add/edit | Yaml default | Baseline value |
-|------|-----------------|---------------------------------|--------------|----------------|
+| Knob | Bash var in sub | Hydra override line | Yaml default | Baseline value |
+|------|-----------------|---------------------|--------------|----------------|
 | Envs per rollout | `NUM_ENVS` | `env.scene.num_envs=$NUM_ENVS` | — | 512 |
 | Minibatch size | `MINIBATCH_SIZE` | `agent.params.config.minibatch_size=$MINIBATCH_SIZE` *and* `agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE` | 16384 | 2048 |
-| Mini-epochs | (add `MINI_EPOCHS=...`) | `agent.params.config.mini_epochs=$MINI_EPOCHS` | 2 | 2 (yaml default — currently not overridden in the sub) |
-| Learning rate | (add `LR=...`) | `agent.params.config.learning_rate=$LR` | 1e-4 | 1e-4 (yaml default — currently not overridden in the sub) |
+| Mini-epochs | `MINI_EPOCHS` | `agent.params.config.mini_epochs=$MINI_EPOCHS` | 2 | **4** (overridden — empirically ~2x faster wall-clock convergence than yaml's PPO-tuned default of 2) |
+| Learning rate | `LR` | `agent.params.config.learning_rate=$LR` | 1e-4 | 1e-4 |
 
-The last two aren't in the baseline sub's bash header today. Add them yourself when you want to tune them, and add the matching `agent.params.config.*` line to the python invocation block.
+All four are pre-exposed as bash variables at the top of `baseline.sub` with their corresponding `agent.params.config.*` CLI lines wired up. To tune one, edit the bash var. Do **not** add a fifth CLI override line — every knob the autoresearch loop should touch is already plumbed.
 
 ---
 
