@@ -2,3 +2,4 @@ timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rat
 2026-05-13T00:12:23-04:00	2fe0c76	baseline	512	2048	4	1e-4	128	3179.3	keep	measured baseline on this hardware
 2026-05-13T01:03:43-04:00	d493cfc	lpeg_v_n512_mb2048_me4_lr3e-4	512	2048	4	3e-4	128	1841.0	keep	LR 1e-4 -> 3e-4; 42% faster than baseline
 2026-05-13T01:03:43-04:00	449114c	lpeg_v_n512_mb2048_me8_lr1e-4	512	2048	8	1e-4	128	1754.9	keep	MINI_EPOCHS 4 -> 8; 45% faster than baseline; new best
+2026-05-13T01:35:40-04:00	2cc4f39	lpeg_v_n512_mb2048_me8_lr3e-4	512	2048	8	3e-4	128	1557.5	keep	combine me8 + lr3e-4; 51% faster than baseline; new best
