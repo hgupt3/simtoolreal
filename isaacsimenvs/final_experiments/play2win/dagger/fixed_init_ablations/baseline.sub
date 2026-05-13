@@ -116,7 +116,7 @@ CAPTURE_VIEWER_INTERVAL=6000
 CAPTURE_VIEWER_ENV_ID=0
 CAPTURE_VIEWER_WANDB_KEY="interactive_viewer"
 
-WANDB_PROJECT="dagger_fixedinit_ablations"
+WANDB_PROJECT="dagger_fixedinit_autoresearch"
 WANDB_GROUP="bc_only_det"
 EXPERIMENT_TAG="lpeg_tol0p5mm_bc_only_det_with_delays_max3"
 

@@ -40,7 +40,7 @@ JOBID=$(sbatch isaacsimenvs/final_experiments/play2win/dagger/fixed_init_ablatio
 echo "baseline job: $JOBID"
 # The sub's HYDRA_RUN_DIR is keyed by EXPERIMENT_TAG + datetime; resolve it once the dir appears:
 while true; do
-  RUN_DIR=$(ls -dt /share/portal/kk837/depthbasedRL/train_dir/dagger_fixedinit_ablations/bc_only_det/lpeg_tol0p5mm_bc_only_det_with_delays_max3_* 2>/dev/null | head -1)
+  RUN_DIR=$(ls -dt /share/portal/kk837/depthbasedRL/train_dir/dagger_fixedinit_autoresearch/bc_only_det/lpeg_tol0p5mm_bc_only_det_with_delays_max3_* 2>/dev/null | head -1)
   [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR" ] && break
   sleep 30
 done
@@ -97,7 +97,7 @@ All four are pre-exposed as bash variables at the top of `baseline.sub` with the
 4. The following overrides MUST remain in every variant (else the run is invalid — discard immediately if you forgot):
    - `agent.params.config.lr_schedule=identity` (adaptive scheduler crushes LR to 1e-6 for BC; this fix is non-negotiable);
    - `USE_OBS_DELAY=True`, `USE_ACTION_DELAY=True`, `USE_CAMERA_DELAY=True` (all max=3) — delays are part of the testbed, not under tuning.
-   - `WANDB_PROJECT=dagger_fixedinit_ablations`, `WANDB_GROUP=bc_only_det` (so all variants plot together).
+   - `WANDB_PROJECT=dagger_fixedinit_autoresearch`, `WANDB_GROUP=bc_only_det` (so all variants plot together).
 5. `EXPERIMENT_TAG` must be unique vs. every prior row in `results.tsv`. Suggested format: `lpeg_v_n${NUM_ENVS}_mb${MINIBATCH_SIZE}_me${MINI_EPOCHS}_lr${LR}` then suffix with a short hash if you've used that combo before.
 
 ---
@@ -168,7 +168,7 @@ For each in-flight experiment, the run dir is:
 ```
 train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_NAME}/
 ```
-i.e. for our settings: `train_dir/dagger_fixedinit_ablations/bc_only_det/<EXPERIMENT_NAME>/`. The tensorboard summaries are under `<run_dir>/0_lpeg_tol0p5mm_sapg_dagger/summaries/events.out.tfevents.*`.
+i.e. for our settings: `train_dir/dagger_fixedinit_autoresearch/bc_only_det/<EXPERIMENT_NAME>/`. The tensorboard summaries are under `<run_dir>/0_lpeg_tol0p5mm_sapg_dagger/summaries/events.out.tfevents.*`.
 
 The metric scalar is **`successes`** (mean across envs, written each epoch by `EnvStatsAlgoObserver`). `env_max_goals = 2` for `goal_mode=preInsertAndFinal`, so a `successes` value of `1.8` corresponds to 90% success rate. Use this exact scalar key — `successes_max` and `successes_median` are different summaries.
 
@@ -229,7 +229,7 @@ Resolve the `RUN_DIR` for an experiment from its sub file: the sub computes `HYD
 ```
 ${REPO_ROOT}/train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_TAG}_${DATETIME}
 ```
-The `DATETIME` is recorded into `slurm.log` on the first line of stdout; you can also recover it by `ls -dt train_dir/dagger_fixedinit_ablations/bc_only_det/${EXPERIMENT_TAG}_*` and taking the first match.
+The `DATETIME` is recorded into `slurm.log` on the first line of stdout; you can also recover it by `ls -dt train_dir/dagger_fixedinit_autoresearch/bc_only_det/${EXPERIMENT_TAG}_*` and taking the first match.
 
 ---
 
@@ -267,7 +267,7 @@ Run through every item. If any fails, scrap the variant and pick a different per
 - [ ] `FIXED_START_POSE`, `HOLE_X_RANGE`, `HOLE_Y_RANGE` unchanged from baseline.
 - [ ] All reset-noise vars (`RESET_POSITION_NOISE_*`, `RESET_DOF_POS_NOISE_*`, `RESET_DOF_VEL_NOISE`, `TABLE_RESET_Z_RANGE`) = 0.0.
 - [ ] `LAMBDA_D_START=1.0`, `LAMBDA_D_FLOOR=1.0` (pure BC).
-- [ ] `WANDB_PROJECT="dagger_fixedinit_ablations"`, `WANDB_GROUP="bc_only_det"`.
+- [ ] `WANDB_PROJECT="dagger_fixedinit_autoresearch"`, `WANDB_GROUP="bc_only_det"`.
 - [ ] `EXPERIMENT_TAG` is unique vs. every prior row in `results.tsv`.
 
 ---
