@@ -1,0 +1,214 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=12
+#SBATCH --get-user-env
+#SBATCH --mem=120000
+#SBATCH -t 12-00:00:00
+#SBATCH --partition=portal
+#SBATCH --exclude=portal-compute-01
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# Clean baseline for the fixed-init ablation series: same fixed init as the
+# original ../distill_lpeg_tol0p5mm_bc_only_det_fixedinit.sub but in the new
+# `dagger_fixedinit_ablations` wandb group so it plots side-by-side with the
+# delay-on variant (distill_lpeg_tol0p5mm_bc_only_det_with_delays_max3.sub).
+#
+# All knobs verbatim from the original fixedinit sub — no delays, no
+# DR force/torque, reset noise zeroed, etc. Only the wandb group/tag differ.
+
+TASK_ID="Isaacsimenvs-PegInHoleDepthStudent-Direct-v0"
+AGENT_KEY="rl_games_dagger_sapg_cfg_entry_point"
+PROBLEM="Lpeg.tol0p5mm"
+GOAL_MODE="preInsertAndFinal"
+
+TEACHER_RUN_DIR="${TEACHER_RUN_DIR:-/share/portal/kk837/depthbasedRL/train_dir/isaacsimenvs/play2win_peg_insertion/lpeg_tol0p5mm_finetune_rgf0_2026-05-11_16-50-01}"
+
+# 512 envs × 16 horizon = 8192 batch. minibatch_size=2048 → 4 minibatches/epoch.
+# expl_block_size=128 → 4 SAPG blocks; num_envs % expl_block_size == 0.
+NUM_ENVS=512
+EXPL_BLOCK=128
+MINIBATCH_SIZE=2048
+
+CRITIC=symmetric         # BC-only: PPO/value gradient is zeroed by λ_D=1.0.
+LAMBDA_D_START=1.0
+LAMBDA_D_FLOOR=1.0
+LAMBDA_D_DECAY_FRAC=0.5
+
+# === Fixed-init knobs ===
+FIXED_START_POSE="[-0.10,0.0,0.63,1.0,0.0,0.0,0.0]"
+HOLE_X_RANGE="[0.10,0.10]"
+HOLE_Y_RANGE="[0.0,0.0]"
+
+# === Env overrides — match the baseline fixedinit sub verbatim ===
+RANDOM_GOAL_FRACTION=0.0
+RANDOM_GOAL_MAX_SUCCESSES=5
+GOAL_XY_OBS_NOISE=0.002
+INSERTION_SUCCESS_TOLERANCE=0.010
+SUCCESS_TOLERANCE=0.01
+TARGET_SUCCESS_TOLERANCE=0.01
+
+ENABLE_RETRACT=True
+RETRACT_REWARD_SCALE=1.0
+RETRACT_DISTANCE_THRESHOLD=0.1
+RETRACT_SUCCESS_TOLERANCE=0.005
+
+USE_OBS_DELAY=False
+USE_ACTION_DELAY=False
+USE_OBJECT_STATE_DELAY_NOISE=False
+OBJECT_STATE_XYZ_NOISE_STD=0.01
+OBJECT_STATE_ROTATION_NOISE_DEG=5.0
+JOINT_VELOCITY_OBS_NOISE_STD=0.0
+OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
+
+FORCE_SCALE=0.0
+TORQUE_SCALE=0.0
+
+RESET_POSITION_NOISE_X=0.0
+RESET_POSITION_NOISE_Y=0.0
+RESET_POSITION_NOISE_Z=0.0
+RESET_DOF_POS_NOISE_ARM=0.0
+RESET_DOF_POS_NOISE_FINGERS=0.0
+RESET_DOF_VEL_NOISE=0.0
+TABLE_RESET_Z_RANGE=0.0
+
+LIFTING_REW_SCALE=20.0
+LIFTING_BONUS=300.0
+FORCE_CONSECUTIVE_NEAR_GOAL=True
+
+CAPTURE_VIEWER_LEN=600
+CAPTURE_VIEWER_INTERVAL=6000
+CAPTURE_VIEWER_ENV_ID=0
+CAPTURE_VIEWER_WANDB_KEY="interactive_viewer"
+
+WANDB_PROJECT="dagger_fixedinit_ablations"
+WANDB_GROUP="bc_only_det"
+EXPERIMENT_TAG="lpeg_tol0p5mm_bc_only_det_no_delays"
+
+set -euo pipefail
+REPO_ROOT="/share/portal/kk837/depthbasedRL"
+if [ ! -d "$TEACHER_RUN_DIR" ]; then
+    echo "Teacher run dir not found: $TEACHER_RUN_DIR" >&2
+    exit 1
+fi
+
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+EXPERIMENT_NAME="${EXPERIMENT_TAG}_${DATETIME}"
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    scontrol update JobId="$SLURM_JOB_ID" JobName="$EXPERIMENT_NAME" || true
+fi
+HYDRA_RUN_DIR="${REPO_ROOT}/train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_NAME}"
+mkdir -p "$HYDRA_RUN_DIR"
+exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
+
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo ""
+echo "Teacher run dir:  $TEACHER_RUN_DIR"
+echo "Hydra run dir:    $HYDRA_RUN_DIR"
+echo "num_envs:         $NUM_ENVS"
+echo "expl_block_size:  $EXPL_BLOCK"
+echo "minibatch_size:   $MINIBATCH_SIZE"
+echo "critic:           $CRITIC"
+echo "fixed_start_pose: $FIXED_START_POSE"
+echo "hole_x_range:     $HOLE_X_RANGE"
+echo "hole_y_range:     $HOLE_Y_RANGE"
+echo ""
+
+GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 30
+    done
+) &
+GPU_MONITOR_PID=$!
+
+RAM_LOG="${HYDRA_RUN_DIR}/ram_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$RAM_LOG"
+        free -m | head -2 >> "$RAM_LOG" 2>&1
+        ps -eo pid,rss,comm --sort=-rss --no-headers 2>/dev/null | head -5 >> "$RAM_LOG"
+        if [ -n "${SLURM_JOB_ID:-}" ] && command -v sstat >/dev/null 2>&1; then
+            sstat -j "$SLURM_JOB_ID" --format=MaxRSS,AveRSS --noheader 2>/dev/null >> "$RAM_LOG" || true
+        fi
+        sleep 30
+    done
+) &
+RAM_MONITOR_PID=$!
+
+trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
+
+cd "$REPO_ROOT"
+source .venv_isaacsim/bin/activate
+export OMNI_KIT_ACCEPT_EULA=YES
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache_dagger_${SLURM_JOB_ID:-$$}"
+mkdir -p "$OMNI_KIT_CACHE_PATH"
+
+python -u isaacsimenvs/dagger/train.py \
+    --task "$TASK_ID" \
+    --agent "$AGENT_KEY" \
+    --teacher-run-dir "$TEACHER_RUN_DIR" \
+    --critic "$CRITIC" \
+    --lambda-d-start "$LAMBDA_D_START" \
+    --lambda-d-floor "$LAMBDA_D_FLOOR" \
+    --lambda-d-decay-frac "$LAMBDA_D_DECAY_FRAC" \
+    --deterministic-rollouts \
+    --headless \
+    --enable_cameras \
+    --capture_viewer \
+    --capture_viewer_len "$CAPTURE_VIEWER_LEN" \
+    --capture_viewer_interval "$CAPTURE_VIEWER_INTERVAL" \
+    --capture_viewer_env_id "$CAPTURE_VIEWER_ENV_ID" \
+    --capture_viewer_wandb_key "$CAPTURE_VIEWER_WANDB_KEY" \
+    --wandb_activate \
+    --wandb_project "$WANDB_PROJECT" \
+    --wandb_group "$WANDB_GROUP" \
+    --wandb_entity kk837 \
+    --wandb_name "$EXPERIMENT_NAME" \
+    env.scene.num_envs=$NUM_ENVS \
+    env.scene.replicate_physics=True \
+    env.peg_in_hole.problem="$PROBLEM" \
+    env.peg_in_hole.goal_mode="$GOAL_MODE" \
+    env.peg_in_hole.goal_xy_obs_noise=$GOAL_XY_OBS_NOISE \
+    env.peg_in_hole.random_goal_fraction=$RANDOM_GOAL_FRACTION \
+    env.peg_in_hole.random_goal_max_successes=$RANDOM_GOAL_MAX_SUCCESSES \
+    env.peg_in_hole.insertion_success_tolerance=$INSERTION_SUCCESS_TOLERANCE \
+    "env.peg_in_hole.hole_x_range=$HOLE_X_RANGE" \
+    "env.peg_in_hole.hole_y_range=$HOLE_Y_RANGE" \
+    env.termination.success_tolerance=$SUCCESS_TOLERANCE \
+    env.termination.target_success_tolerance=$TARGET_SUCCESS_TOLERANCE \
+    env.peg_in_hole.enable_retract=$ENABLE_RETRACT \
+    env.peg_in_hole.retract_reward_scale=$RETRACT_REWARD_SCALE \
+    env.peg_in_hole.retract_distance_threshold=$RETRACT_DISTANCE_THRESHOLD \
+    env.peg_in_hole.retract_success_tolerance=$RETRACT_SUCCESS_TOLERANCE \
+    env.domain_randomization.force_scale=$FORCE_SCALE \
+    env.domain_randomization.torque_scale=$TORQUE_SCALE \
+    env.domain_randomization.use_obs_delay=$USE_OBS_DELAY \
+    env.domain_randomization.use_action_delay=$USE_ACTION_DELAY \
+    env.domain_randomization.use_object_state_delay_noise=$USE_OBJECT_STATE_DELAY_NOISE \
+    env.domain_randomization.object_state_xyz_noise_std=$OBJECT_STATE_XYZ_NOISE_STD \
+    env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
+    env.domain_randomization.joint_velocity_obs_noise_std=$JOINT_VELOCITY_OBS_NOISE_STD \
+    "env.domain_randomization.object_scale_noise_multiplier_range=$OBJECT_SCALE_NOISE_RANGE" \
+    "env.reset.fixed_start_pose=$FIXED_START_POSE" \
+    env.reset.reset_position_noise_x=$RESET_POSITION_NOISE_X \
+    env.reset.reset_position_noise_y=$RESET_POSITION_NOISE_Y \
+    env.reset.reset_position_noise_z=$RESET_POSITION_NOISE_Z \
+    env.reset.reset_dof_pos_random_interval_arm=$RESET_DOF_POS_NOISE_ARM \
+    env.reset.reset_dof_pos_random_interval_fingers=$RESET_DOF_POS_NOISE_FINGERS \
+    env.reset.reset_dof_vel_random_interval=$RESET_DOF_VEL_NOISE \
+    env.reset.table_reset_z_range=$TABLE_RESET_Z_RANGE \
+    env.reward.lifting_rew_scale=$LIFTING_REW_SCALE \
+    env.reward.lifting_bonus=$LIFTING_BONUS \
+    env.termination.force_consecutive_near_goal_steps=$FORCE_CONSECUTIVE_NEAR_GOAL \
+    agent.params.config.expl_coef_block_size=$EXPL_BLOCK \
+    agent.params.config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.lr_schedule=identity \
+    hydra.run.dir="$HYDRA_RUN_DIR"
