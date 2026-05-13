@@ -1,0 +1,241 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=12
+#SBATCH --get-user-env
+#SBATCH --mem=50000
+#SBATCH -t 12-00:00:00
+#SBATCH --partition=portal
+#SBATCH --exclude=portal-compute-01
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# Pure-BC ablation, 512-env variant of distill_lpeg_tol0p5mm_bc_only_det.sub.
+# Faster wall-clock (fewer envs to sim) and ~8x lower MaxRSS than the 4k run,
+# but each epoch sees 1/8 the data — useful as a fast sanity-check on the
+# new Teacher / central-env-info / pinned-block-id (=50) plumbing alongside
+# the canonical 4k run. 4k probe MaxRSS was 323 GB → 512 envs ≈ 40-60 GB.
+#
+# Env overrides MIRROR the teacher's training sub
+# (../peg_insertion/finetune_lpeg_tol0p5mm_rgf0.sub) verbatim — same delays,
+# noise, DR force/torque, reset noise, reward shaping, termination tolerances.
+# Any drift here puts the student's obs distribution out of the teacher's
+# training support, so the teacher labels degrade. If a setting changes
+# there, mirror it here (and in distill_lpeg_tol0p5mm_bc_only_det.sub).
+#
+# IMPORTANT — one extra Hydra override vs the parent yaml:
+#   lr_schedule=identity   The student yaml ships with `lr_schedule: adaptive`,
+#                          which is correct for PPO but pathological for BC.
+#                          With λ_D=1.0 the loss is pure MSE → student μ shifts
+#                          fast → KL between successive student snapshots is
+#                          ~0.2-0.6 (16-30× the 0.016 kl_threshold) → the
+#                          AdaptiveScheduler halves LR every epoch and floors
+#                          it at 1e-6 within ~250k frames. Identity scheduler
+#                          keeps LR pinned at 1e-4.
+
+TASK_ID="Isaacsimenvs-PegInHoleDepthStudent-Direct-v0"
+AGENT_KEY="rl_games_dagger_sapg_cfg_entry_point"
+PROBLEM="Lpeg.tol0p5mm"
+GOAL_MODE="preInsertAndFinal"
+
+TEACHER_RUN_DIR="${TEACHER_RUN_DIR:-/share/portal/kk837/depthbasedRL/train_dir/isaacsimenvs/play2win_peg_insertion/lpeg_tol0p5mm_finetune_rgf0_2026-05-11_16-50-01}"
+
+# 512 envs × 16 horizon = 8192 batch. minibatch_size=1024 → 8 minibatches/epoch
+# (same ratio as the 4k run). expl_coef_block_size=128 → 4 SAPG blocks.
+NUM_ENVS=256
+EXPL_BLOCK=64
+MINIBATCH_SIZE=512
+# mini_epochs=2 = yaml default (no override in the original n512 sub).
+# Exposed here so the autoresearch loop can tune it.
+MINI_EPOCHS=8
+# learning_rate=1e-4 = yaml default. Exposed for autoresearch.
+LR=3e-4
+
+CRITIC=symmetric         # value head on student trunk (drops central_value_config)
+                         # — saves ~3 GB GPU vs asymmetric. For BC-only the
+                         # PPO/value gradient is zeroed by λ_D=1.0 anyway.
+# All-BC: λ_D pinned at 1.0 forever → loss = MSE(student_μ, teacher_μ), no PPO term.
+LAMBDA_D_START=1.0
+LAMBDA_D_FLOOR=1.0
+LAMBDA_D_DECAY_FRAC=0.5
+
+# === Env overrides — copied verbatim from finetune_lpeg_tol0p5mm_rgf0.sub ===
+RANDOM_GOAL_FRACTION=0.0
+RANDOM_GOAL_MAX_SUCCESSES=5
+GOAL_XY_OBS_NOISE=0.0
+INSERTION_SUCCESS_TOLERANCE=0.010
+SUCCESS_TOLERANCE=0.01
+TARGET_SUCCESS_TOLERANCE=0.01
+
+ENABLE_RETRACT=True
+RETRACT_REWARD_SCALE=1.0
+RETRACT_DISTANCE_THRESHOLD=0.1
+RETRACT_SUCCESS_TOLERANCE=0.005
+
+USE_OBS_DELAY=True
+OBS_DELAY_MAX=3
+USE_ACTION_DELAY=True
+ACTION_DELAY_MAX=3
+USE_CAMERA_DELAY=True
+CAMERA_DELAY_MAX=3
+USE_OBJECT_STATE_DELAY_NOISE=False
+OBJECT_STATE_XYZ_NOISE_STD=0.01
+OBJECT_STATE_ROTATION_NOISE_DEG=5.0
+JOINT_VELOCITY_OBS_NOISE_STD=0.0
+OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
+
+FORCE_SCALE=0.0
+TORQUE_SCALE=0.0
+
+RESET_POSITION_NOISE_X=0.1
+RESET_POSITION_NOISE_Y=0.1
+RESET_POSITION_NOISE_Z=0.02
+RESET_DOF_POS_NOISE_ARM=0.1
+RESET_DOF_POS_NOISE_FINGERS=0.1
+RESET_DOF_VEL_NOISE=0.5
+TABLE_RESET_Z_RANGE=0.01
+
+LIFTING_REW_SCALE=20.0
+LIFTING_BONUS=300.0
+FORCE_CONSECUTIVE_NEAR_GOAL=True
+
+CAPTURE_VIEWER_LEN=600
+CAPTURE_VIEWER_INTERVAL=6000
+CAPTURE_VIEWER_ENV_ID=0
+CAPTURE_VIEWER_WANDB_KEY="interactive_viewer"
+
+WANDB_PROJECT="dagger_nonfixed_autoresearch"
+WANDB_GROUP="bc_only_det"
+EXPERIMENT_TAG="nf_n256_mb512_me8_lr3e-4"
+
+set -euo pipefail
+REPO_ROOT="/share/portal/kk837/depthbasedRL"
+if [ ! -d "$TEACHER_RUN_DIR" ]; then
+    echo "Teacher run dir not found: $TEACHER_RUN_DIR" >&2
+    exit 1
+fi
+
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+EXPERIMENT_NAME="${EXPERIMENT_TAG}_${DATETIME}"
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    scontrol update JobId="$SLURM_JOB_ID" JobName="$EXPERIMENT_NAME" || true
+fi
+HYDRA_RUN_DIR="${REPO_ROOT}/train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_NAME}"
+mkdir -p "$HYDRA_RUN_DIR"
+exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
+
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo ""
+echo "Teacher run dir:  $TEACHER_RUN_DIR"
+echo "Hydra run dir:    $HYDRA_RUN_DIR"
+echo "num_envs:         $NUM_ENVS"
+echo "expl_block_size:  $EXPL_BLOCK"
+echo "minibatch_size:   $MINIBATCH_SIZE"
+echo "mini_epochs:      $MINI_EPOCHS"
+echo "learning_rate:    $LR"
+echo "critic:           $CRITIC"
+echo "obs_delay:        $USE_OBS_DELAY (max=$OBS_DELAY_MAX)"
+echo "action_delay:     $USE_ACTION_DELAY (max=$ACTION_DELAY_MAX)"
+echo "camera_delay:     $USE_CAMERA_DELAY (max=$CAMERA_DELAY_MAX)"
+echo ""
+
+GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 30
+    done
+) &
+GPU_MONITOR_PID=$!
+
+RAM_LOG="${HYDRA_RUN_DIR}/ram_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$RAM_LOG"
+        free -m | head -2 >> "$RAM_LOG" 2>&1
+        ps -eo pid,rss,comm --sort=-rss --no-headers 2>/dev/null | head -5 >> "$RAM_LOG"
+        if [ -n "${SLURM_JOB_ID:-}" ] && command -v sstat >/dev/null 2>&1; then
+            sstat -j "$SLURM_JOB_ID" --format=MaxRSS,AveRSS --noheader 2>/dev/null >> "$RAM_LOG" || true
+        fi
+        sleep 30
+    done
+) &
+RAM_MONITOR_PID=$!
+
+trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
+
+cd "$REPO_ROOT"
+source .venv_isaacsim/bin/activate
+export OMNI_KIT_ACCEPT_EULA=YES
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache_dagger_${SLURM_JOB_ID:-$$}"
+mkdir -p "$OMNI_KIT_CACHE_PATH"
+
+python -u isaacsimenvs/dagger/train.py \
+    --task "$TASK_ID" \
+    --agent "$AGENT_KEY" \
+    --teacher-run-dir "$TEACHER_RUN_DIR" \
+    --critic "$CRITIC" \
+    --lambda-d-start "$LAMBDA_D_START" \
+    --lambda-d-floor "$LAMBDA_D_FLOOR" \
+    --lambda-d-decay-frac "$LAMBDA_D_DECAY_FRAC" \
+    --deterministic-rollouts \
+    --headless \
+    --enable_cameras \
+    --capture_viewer \
+    --capture_viewer_len "$CAPTURE_VIEWER_LEN" \
+    --capture_viewer_interval "$CAPTURE_VIEWER_INTERVAL" \
+    --capture_viewer_env_id "$CAPTURE_VIEWER_ENV_ID" \
+    --capture_viewer_wandb_key "$CAPTURE_VIEWER_WANDB_KEY" \
+    --wandb_activate \
+    --wandb_project "$WANDB_PROJECT" \
+    --wandb_group "$WANDB_GROUP" \
+    --wandb_entity kk837 \
+    --wandb_name "$EXPERIMENT_NAME" \
+    env.scene.num_envs=$NUM_ENVS \
+    env.scene.replicate_physics=True \
+    env.peg_in_hole.problem="$PROBLEM" \
+    env.peg_in_hole.goal_mode="$GOAL_MODE" \
+    env.peg_in_hole.goal_xy_obs_noise=$GOAL_XY_OBS_NOISE \
+    env.peg_in_hole.random_goal_fraction=$RANDOM_GOAL_FRACTION \
+    env.peg_in_hole.random_goal_max_successes=$RANDOM_GOAL_MAX_SUCCESSES \
+    env.peg_in_hole.insertion_success_tolerance=$INSERTION_SUCCESS_TOLERANCE \
+    env.termination.success_tolerance=$SUCCESS_TOLERANCE \
+    env.termination.target_success_tolerance=$TARGET_SUCCESS_TOLERANCE \
+    env.peg_in_hole.enable_retract=$ENABLE_RETRACT \
+    env.peg_in_hole.retract_reward_scale=$RETRACT_REWARD_SCALE \
+    env.peg_in_hole.retract_distance_threshold=$RETRACT_DISTANCE_THRESHOLD \
+    env.peg_in_hole.retract_success_tolerance=$RETRACT_SUCCESS_TOLERANCE \
+    env.domain_randomization.force_scale=$FORCE_SCALE \
+    env.domain_randomization.torque_scale=$TORQUE_SCALE \
+    env.domain_randomization.use_obs_delay=$USE_OBS_DELAY \
+    env.domain_randomization.obs_delay_max=$OBS_DELAY_MAX \
+    env.domain_randomization.use_action_delay=$USE_ACTION_DELAY \
+    env.domain_randomization.action_delay_max=$ACTION_DELAY_MAX \
+    env.student_obs.use_camera_delay=$USE_CAMERA_DELAY \
+    env.student_obs.camera_delay_max=$CAMERA_DELAY_MAX \
+    env.domain_randomization.use_object_state_delay_noise=$USE_OBJECT_STATE_DELAY_NOISE \
+    env.domain_randomization.object_state_xyz_noise_std=$OBJECT_STATE_XYZ_NOISE_STD \
+    env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
+    env.domain_randomization.joint_velocity_obs_noise_std=$JOINT_VELOCITY_OBS_NOISE_STD \
+    "env.domain_randomization.object_scale_noise_multiplier_range=$OBJECT_SCALE_NOISE_RANGE" \
+    env.reset.reset_position_noise_x=$RESET_POSITION_NOISE_X \
+    env.reset.reset_position_noise_y=$RESET_POSITION_NOISE_Y \
+    env.reset.reset_position_noise_z=$RESET_POSITION_NOISE_Z \
+    env.reset.reset_dof_pos_random_interval_arm=$RESET_DOF_POS_NOISE_ARM \
+    env.reset.reset_dof_pos_random_interval_fingers=$RESET_DOF_POS_NOISE_FINGERS \
+    env.reset.reset_dof_vel_random_interval=$RESET_DOF_VEL_NOISE \
+    env.reset.table_reset_z_range=$TABLE_RESET_Z_RANGE \
+    env.reward.lifting_rew_scale=$LIFTING_REW_SCALE \
+    env.reward.lifting_bonus=$LIFTING_BONUS \
+    env.termination.force_consecutive_near_goal_steps=$FORCE_CONSECUTIVE_NEAR_GOAL \
+    agent.params.config.expl_coef_block_size=$EXPL_BLOCK \
+    agent.params.config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.mini_epochs=$MINI_EPOCHS \
+    agent.params.config.learning_rate=$LR \
+    agent.params.config.lr_schedule=identity \
+    hydra.run.dir="$HYDRA_RUN_DIR"
