@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
 import isaaclab.sim as sim_utils
+from isaaclab.utils.math import quat_from_angle_axis, quat_mul
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg, RigidObject, RigidObjectCfg
 from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg
@@ -280,6 +282,170 @@ def setup_student_camera(env) -> None:
     )
 
 
+def _apply_depth_noise(env, depth: torch.Tensor) -> torch.Tensor:
+    """5-stage depth noise pipeline on raw-meters depth, shape (B, 1, H, W).
+
+    Stages (all gated by their own σ/prob being > 0):
+      1. additive Gaussian
+      2. spatially-correlated Gaussian (k×k mean-blur of i.i.d. noise)
+      3. per-pixel dropout to 0
+      4. per-pixel random-uniform replacement in [randu_min, randu_max]
+      5. stick artifacts (small random streaks)
+
+    No-op when `cfg.use_depth_aug=False`. Defaults match the team's "medium"
+    preset (see StudentObsCfg).
+    """
+    cfg = env.cfg.student_obs
+    if not bool(getattr(cfg, "use_depth_aug", False)):
+        return depth
+
+    out = depth.float()
+    device = out.device
+
+    # 1. additive Gaussian
+    gauss_std = float(cfg.depth_aug_gaussian_std_m)
+    if gauss_std > 0.0:
+        out = out + torch.randn_like(out) * gauss_std
+
+    # 2. spatially-correlated Gaussian: i.i.d. noise blurred by mean k×k kernel.
+    corr_std = float(cfg.depth_aug_correlated_std_m)
+    k = int(cfg.depth_aug_correlated_kernel_size)
+    if corr_std > 0.0 and k > 1:
+        noise = torch.randn_like(out) * corr_std
+        kernel = torch.ones(1, 1, k, k, device=device, dtype=out.dtype) / (k * k)
+        out = out + F.conv2d(noise, kernel, padding=k // 2)
+
+    # 3. per-pixel dropout to 0
+    p_drop = float(cfg.depth_aug_dropout_prob)
+    if p_drop > 0.0:
+        keep = (torch.rand_like(out) >= p_drop).to(out.dtype)
+        out = out * keep
+
+    # 4. per-pixel random-uniform replacement
+    p_randu = float(cfg.depth_aug_randu_prob)
+    if p_randu > 0.0:
+        lo = float(cfg.depth_aug_randu_min_m)
+        hi = float(cfg.depth_aug_randu_max_m)
+        mask = torch.rand_like(out) < p_randu
+        randu = torch.rand_like(out) * (hi - lo) + lo
+        out = torch.where(mask, randu, out)
+
+    # 5. stick artifacts (Poisson-count per image, vectorized line rasterization).
+    stick_prob = float(cfg.depth_aug_stick_prob)
+    max_sticks = int(cfg.depth_aug_max_sticks_per_image)
+    if stick_prob > 0.0 and max_sticks > 0:
+        out = _draw_depth_sticks(out, cfg=cfg, stick_prob=stick_prob, max_sticks=max_sticks)
+
+    return out
+
+
+def _draw_depth_sticks(
+    depth_b1hw: torch.Tensor,
+    *,
+    cfg,
+    stick_prob: float,
+    max_sticks: int,
+) -> torch.Tensor:
+    """Add up to `max_sticks` random line streaks per image. In-place safe."""
+    B, _, H, W = depth_b1hw.shape
+    device = depth_b1hw.device
+
+    # Expected stick count per image ~ stick_prob * (H*W). Cap at max_sticks.
+    expected = stick_prob * float(H * W)
+    counts = torch.poisson(torch.full((B,), expected, device=device)).clamp_(max=max_sticks).long()
+    if counts.sum() == 0:
+        return depth_b1hw
+
+    max_len = max(1, int(cfg.depth_aug_stick_max_len_px))
+    max_w = max(1, int(cfg.depth_aug_stick_max_width_px))
+    lo = float(cfg.depth_aug_randu_min_m)
+    hi = float(cfg.depth_aug_randu_max_m)
+
+    out = depth_b1hw.clone()
+    for b in range(B):
+        n = int(counts[b].item())
+        if n == 0:
+            continue
+        lengths = torch.randint(1, max_len + 1, (n,), device=device).tolist()
+        widths = torch.randint(1, max_w + 1, (n,), device=device).tolist()
+        angles = (torch.rand(n, device=device) * (2.0 * torch.pi)).tolist()
+        x0s = torch.randint(0, W, (n,), device=device).tolist()
+        y0s = torch.randint(0, H, (n,), device=device).tolist()
+        fills = (torch.rand(n, device=device) * (hi - lo) + lo).tolist()
+        for i in range(n):
+            length = lengths[i]
+            width = widths[i]
+            theta = angles[i]
+            dx = torch.cos(torch.tensor(theta)).item()
+            dy = torch.sin(torch.tensor(theta)).item()
+            fill = fills[i]
+            for s in range(length):
+                xi = int(x0s[i] + dx * s)
+                yi = int(y0s[i] + dy * s)
+                if not (0 <= xi < W and 0 <= yi < H):
+                    continue
+                w_half = width // 2
+                y_lo = max(0, yi - w_half)
+                y_hi = min(H, yi + w_half + 1)
+                x_lo = max(0, xi - w_half)
+                x_hi = min(W, xi + w_half + 1)
+                out[b, 0, y_lo:y_hi, x_lo:x_hi] = fill
+    return out
+
+
+def _apply_camera_pose_rand_at_reset(env, env_ids: torch.Tensor) -> None:
+    """Sample per-env camera-pose noise and apply via student_camera.set_world_poses.
+
+    Per-env at reset cadence: a fresh random offset is drawn each time
+    `env_ids` reset and the camera is moved on the spot. No persistent
+    per-env state; noise is regenerated every reset. No-op when
+    `cfg.use_camera_pose_rand=False`.
+    """
+    cfg = getattr(env.cfg, "student_obs", None)
+    camera = getattr(env, "student_camera", None)
+    if cfg is None or camera is None:
+        return
+    if not bool(getattr(cfg, "use_camera_pose_rand", False)):
+        return
+
+    env_ids = torch.as_tensor(env_ids, device=env.device, dtype=torch.long)
+    n = int(env_ids.numel())
+    if n == 0:
+        return
+
+    device = env.device
+    pos_range = torch.as_tensor(cfg.camera_pos_noise_m, device=device, dtype=torch.float32)
+    rot_range_deg = torch.as_tensor(cfg.camera_rot_noise_deg, device=device, dtype=torch.float32)
+    base_pos = torch.as_tensor(cfg.camera_pos, device=device, dtype=torch.float32)
+    base_quat = torch.as_tensor(cfg.camera_quat_wxyz, device=device, dtype=torch.float32)
+
+    pos_noise = (torch.rand(n, 3, device=device) * 2.0 - 1.0) * pos_range
+    rot_noise_rad = (torch.rand(n, 3, device=device) * 2.0 - 1.0) * rot_range_deg * (torch.pi / 180.0)
+
+    # RPY → wxyz quat: q = q_yaw * q_pitch * q_roll
+    axes = torch.eye(3, device=device, dtype=torch.float32)
+    q_roll = quat_from_angle_axis(rot_noise_rad[:, 0], axes[0].expand(n, -1))
+    q_pitch = quat_from_angle_axis(rot_noise_rad[:, 1], axes[1].expand(n, -1))
+    q_yaw = quat_from_angle_axis(rot_noise_rad[:, 2], axes[2].expand(n, -1))
+    rot_noise_quat = quat_mul(q_yaw, quat_mul(q_pitch, q_roll))
+
+    pos_w = env.scene.env_origins[env_ids] + base_pos + pos_noise
+    quat = quat_mul(rot_noise_quat, base_quat.expand(n, -1))
+
+    # Isaac Lab 5.1+: when Fabric is enabled, write through to USD so the
+    # renderer actually picks up the new camera pose.
+    view = getattr(camera, "_view", None)
+    if view is not None and hasattr(view, "_sync_usd_on_fabric_write"):
+        view._sync_usd_on_fabric_write = True
+
+    camera.set_world_poses(
+        positions=pos_w,
+        orientations=quat,
+        env_ids=env_ids,
+        convention=str(cfg.camera_convention),
+    )
+
+
 def _preprocess_student_depth(env, depth: torch.Tensor) -> torch.Tensor:
     cfg = env.cfg.student_obs
     depth = depth.float()
@@ -393,6 +559,10 @@ def read_student_camera_image(env) -> torch.Tensor:
             depth = depth.unsqueeze(1)
         else:
             raise RuntimeError(f"Unsupported depth tensor shape: {tuple(depth.shape)}")
+        depth_raw = depth
+        depth = _apply_depth_noise(env, depth)
+        env._last_student_depth_raw_m = depth_raw.detach()
+        env._last_student_depth_noisy_m = depth.detach()
         depth = _preprocess_student_depth(env, depth)
         image_parts.append(_crop_student_image(env, depth))
 

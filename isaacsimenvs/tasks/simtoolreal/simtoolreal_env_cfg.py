@@ -185,6 +185,27 @@ class StudentObsCfg:
     focus_distance: float = 400.0
     clipping_range: tuple[float, float] = (0.1, 5.0)
 
+    # Camera pose randomization (sampled per env at reset, fixed during episode).
+    # Master switch + numerical defaults are the team's "medium" preset.
+    use_camera_pose_rand: bool = False
+    camera_pos_noise_m: tuple[float, float, float] = (0.01, 0.01, 0.01)
+    camera_rot_noise_deg: tuple[float, float, float] = (1.0, 1.0, 1.0)
+
+    # Depth-image noise pipeline (5 stages, applied in raw meters BEFORE preprocess).
+    # Master switch + numerical defaults are the team's "medium" preset.
+    use_depth_aug: bool = False
+    depth_aug_gaussian_std_m: float = 0.002
+    depth_aug_correlated_std_m: float = 0.003
+    depth_aug_correlated_kernel_size: int = 5
+    depth_aug_dropout_prob: float = 0.003
+    depth_aug_randu_prob: float = 0.003
+    depth_aug_randu_min_m: float = 0.50
+    depth_aug_randu_max_m: float = 1.30
+    depth_aug_stick_prob: float = 0.00025
+    depth_aug_max_sticks_per_image: int = 8
+    depth_aug_stick_max_len_px: int = 18
+    depth_aug_stick_max_width_px: int = 3
+
 
 # ----------------------------------------------------------------------------
 # action

@@ -339,6 +339,10 @@ def reset_env_state(env, env_ids: torch.Tensor) -> None:
         n, 3, device=env.device
     ).uniform_(lo, hi)
 
+    # Camera pose randomization (no-op when cfg.student_obs.use_camera_pose_rand is False).
+    from .scene_utils import _apply_camera_pose_rand_at_reset
+    _apply_camera_pose_rand_at_reset(env, env_ids)
+
 
 __all__ = [
     "allocate_state_buffers",
