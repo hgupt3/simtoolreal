@@ -12,3 +12,5 @@ timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rat
 2026-05-13T09:40:57-04:00	ed8c0dd	nf_n512_mb2048_me16_lr3e-4	512	2048	16	3e-4	128	0.8359	3582.0	discard	me=16 + mb=2048: 0.84 < mb=2048 me=8 best 0.96; me=16 still loses with larger MB
 2026-05-13T10:48:49-04:00	2d917d0	nf_n512_mb2048_me10_lr3e-4	512	2048	10	3e-4	128	0.9062	3599.4	discard	me=10 (40 grad steps): 0.91 < me=8 best 0.96; me=8 is sweet spot
 2026-05-13T10:48:49-04:00	4f86b09	nf_n512_mb2048_me8_lr4e-4	512	2048	8	4e-4	128	1.1562	3596.0	keep	lr=4e-4 at mb=2048: 1.156 vs lr=3e-4 0.961 = +20% relative; new best
+2026-05-13T11:56:59-04:00	07672d6	nf_n512_mb2048_me8_lr5e-4	512	2048	8	5e-4	128	1.1250	3599.9	discard	lr=5e-4 vmax 1.125 < lr=4e-4 best 1.156
+2026-05-13T11:56:59-04:00	0c1eed1	nf_n512_mb2048_me8_lr8e-4	512	2048	8	8e-4	128	0.9609	3597.2	discard	lr=8e-4 vmax 0.961 << lr=4e-4 best 1.156; LR bell curve peaks at 4e-4
