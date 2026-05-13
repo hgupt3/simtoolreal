@@ -96,7 +96,7 @@ All four are pre-exposed as bash variables at the top of `baseline.sub` with the
 3. `#SBATCH --mem` scales roughly linearly with `NUM_ENVS`. Reference points: 100 GB @ 512 envs; 400 GB @ 4096 envs. Bump it before submitting larger runs; drop for smaller ones.
 4. The following overrides MUST remain in every variant (else the run is invalid — discard immediately if you forgot):
    - `agent.params.config.lr_schedule=identity` (adaptive scheduler crushes LR to 1e-6 for BC; this fix is non-negotiable);
-   - `USE_OBS_DELAY=False`, `USE_ACTION_DELAY=False` (the non-fixed-init testbed has delays OFF — they're not part of this study);
+   - `USE_OBS_DELAY=True`, `USE_ACTION_DELAY=True`, `USE_CAMERA_DELAY=True` (all max=3); delays are part of the testbed and are not under tuning;
    - all `RESET_POSITION_NOISE_*`, `RESET_DOF_POS_NOISE_*`, `RESET_DOF_VEL_NOISE`, `TABLE_RESET_Z_RANGE` knobs unchanged from baseline (these define the "non-fixed-init" task; tuning them changes the task).
    - `WANDB_PROJECT=dagger_nonfixed_autoresearch`, `WANDB_GROUP=bc_only_det` (so all variants plot together).
 5. `EXPERIMENT_TAG` must be unique vs. every prior row in `results.tsv`. Suggested format: `nf_n${NUM_ENVS}_mb${MINIBATCH_SIZE}_me${MINI_EPOCHS}_lr${LR}`.
@@ -255,7 +255,7 @@ A `keep` advances the "current best" pointer (highest `max_successes` across all
 - [ ] `NUM_ENVS % EXPL_BLOCK == 0`.
 - [ ] `#SBATCH --mem` appropriate for `NUM_ENVS` (≥ ~100 GB per 512 envs; scale linearly).
 - [ ] `agent.params.config.lr_schedule=identity` line is present.
-- [ ] `USE_OBS_DELAY=False`, `USE_ACTION_DELAY=False`.
+- [ ] `USE_OBS_DELAY=True`, `USE_ACTION_DELAY=True`, `USE_CAMERA_DELAY=True`; `OBS_DELAY_MAX=3`, `ACTION_DELAY_MAX=3`, `CAMERA_DELAY_MAX=3`.
 - [ ] All reset-noise vars unchanged from baseline:
       `RESET_POSITION_NOISE_X=0.1`, `Y=0.1`, `Z=0.02`,
       `RESET_DOF_POS_NOISE_ARM=0.1`, `FINGERS=0.1`,

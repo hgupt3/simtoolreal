@@ -73,8 +73,12 @@ RETRACT_REWARD_SCALE=1.0
 RETRACT_DISTANCE_THRESHOLD=0.1
 RETRACT_SUCCESS_TOLERANCE=0.005
 
-USE_OBS_DELAY=False
-USE_ACTION_DELAY=False
+USE_OBS_DELAY=True
+OBS_DELAY_MAX=3
+USE_ACTION_DELAY=True
+ACTION_DELAY_MAX=3
+USE_CAMERA_DELAY=True
+CAMERA_DELAY_MAX=3
 USE_OBJECT_STATE_DELAY_NOISE=False
 OBJECT_STATE_XYZ_NOISE_STD=0.01
 OBJECT_STATE_ROTATION_NOISE_DEG=5.0
@@ -132,6 +136,9 @@ echo "minibatch_size:   $MINIBATCH_SIZE"
 echo "mini_epochs:      $MINI_EPOCHS"
 echo "learning_rate:    $LR"
 echo "critic:           $CRITIC"
+echo "obs_delay:        $USE_OBS_DELAY (max=$OBS_DELAY_MAX)"
+echo "action_delay:     $USE_ACTION_DELAY (max=$ACTION_DELAY_MAX)"
+echo "camera_delay:     $USE_CAMERA_DELAY (max=$CAMERA_DELAY_MAX)"
 echo ""
 
 GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
@@ -205,7 +212,11 @@ python -u isaacsimenvs/dagger/train.py \
     env.domain_randomization.force_scale=$FORCE_SCALE \
     env.domain_randomization.torque_scale=$TORQUE_SCALE \
     env.domain_randomization.use_obs_delay=$USE_OBS_DELAY \
+    env.domain_randomization.obs_delay_max=$OBS_DELAY_MAX \
     env.domain_randomization.use_action_delay=$USE_ACTION_DELAY \
+    env.domain_randomization.action_delay_max=$ACTION_DELAY_MAX \
+    env.student_obs.use_camera_delay=$USE_CAMERA_DELAY \
+    env.student_obs.camera_delay_max=$CAMERA_DELAY_MAX \
     env.domain_randomization.use_object_state_delay_noise=$USE_OBJECT_STATE_DELAY_NOISE \
     env.domain_randomization.object_state_xyz_noise_std=$OBJECT_STATE_XYZ_NOISE_STD \
     env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
