@@ -378,9 +378,13 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         self._step = 0
         self._capture_index = 0
         self._frames: list[dict[str, Any]] | None = []
-        # Per-capture buffer of (C, H, W) student-camera frames (numpy, [0, 1] floats).
-        # Stays empty when the env doesn't expose `get_student_obs` or doesn't return an "image" key.
+        # Per-capture buffers of (C, H, W) student-camera frames (numpy, [0, 1] floats).
+        # _depth_frames is the policy's actual input (noise-on path).
+        # _depth_frames_clean is the same view without depth augmentation,
+        # useful for A/B-comparing the noise pipeline on the same camera pose.
+        # Both stay empty when the env doesn't expose `get_student_obs`.
         self._depth_frames: list = []
+        self._depth_frames_clean: list = []
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         print(
@@ -397,12 +401,16 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         if self._frames is None and self.capture_interval > 0 and self._step % self.capture_interval == 0:
             self._frames = []
             self._depth_frames = []
+            self._depth_frames_clean = []
 
         if self._frames is not None:
             self._frames.append(capture_pose_viewer_frame(self.env.unwrapped, self.env_id))
             depth_frame = self._capture_student_image()
             if depth_frame is not None:
                 self._depth_frames.append(depth_frame)
+            clean_frame = self._capture_student_image_clean()
+            if clean_frame is not None:
+                self._depth_frames_clean.append(clean_frame)
             if len(self._frames) >= self.capture_len:
                 self._finalize_capture()
 
@@ -428,6 +436,36 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         if image is None:
             return None
         return image[self.env_id].detach().cpu().numpy()
+
+    def _capture_student_image_clean(self):
+        """Same env_id slice as the noisy capture, but pre-noise.
+
+        Reads the raw-meters depth stashed by `scene_utils.read_student_camera_image`
+        before `_apply_depth_noise` and normalizes it the same way
+        `_preprocess_student_depth` with mode='window_normalize' would.
+
+        Returns a (1, H, W) numpy array in [0, 1], or `None` when the env
+        hasn't run a depth read yet (e.g., first call) or doesn't have a
+        student camera.
+        """
+        import numpy as np
+
+        inner = self.env.unwrapped
+        raw = getattr(inner, "_last_student_depth_raw_m", None)
+        if raw is None:
+            return None
+        cfg = getattr(inner.cfg, "student_obs", None)
+        if cfg is None:
+            return None
+        near = float(cfg.depth_min_m)
+        far = float(cfg.depth_max_m)
+        if far <= near:
+            return None
+        # raw is (B, 1, H, W) raw meters. Slice the env we care about.
+        d = raw[self.env_id].detach().cpu().numpy().astype(np.float32)
+        d = np.nan_to_num(d, nan=far, posinf=far, neginf=near)
+        d = (d - near) / (far - near)
+        return np.clip(d, 0.0, 1.0)
 
     def close(self) -> None:
         if self._frames:
@@ -461,6 +499,7 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         self._capture_index += 1
         self._frames = None
         self._depth_frames = []
+        self._depth_frames_clean = []
 
     def _log_wandb(self, html_text: str) -> None:
         try:
@@ -477,20 +516,26 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         except Exception as exc:
             print(f"[pose_viewer] WandB log failed: {exc}", flush=True)
 
-        if not self._depth_frames:
+        if not self._depth_frames and not self._depth_frames_clean:
             return
-        try:
-            import numpy as np
 
-            video = np.stack(self._depth_frames, axis=0)            # (T, C, H, W) float in [0, 1]
+        import numpy as np
+
+        def _to_uint8_grayscale_rgb(frames: list) -> np.ndarray:
+            video = np.stack(frames, axis=0)                        # (T, C, H, W) float in [0, 1]
             video = (np.clip(video, 0.0, 1.0) * 255.0).astype(np.uint8)
-            # wandb.Video tiles single-channel 4-D arrays into a grid; replicate
-            # to 3-channel grayscale-RGB so it's interpreted as a single video.
             if video.shape[1] == 1:
-                video = np.repeat(video, 3, axis=1)                 # (T, 3, H, W)
-            depth_key = f"{self.wandb_key}_depth"
-            wandb.log({depth_key: wandb.Video(video, fps=30, format="mp4")})
-            print(f"[pose_viewer] logged WandB Video key={depth_key} "
-                  f"shape={video.shape} dtype={video.dtype}", flush=True)
-        except Exception as exc:
-            print(f"[pose_viewer] WandB depth video log failed: {exc}", flush=True)
+                video = np.repeat(video, 3, axis=1)                 # (T, 3, H, W) for wandb.Video single-video tiling
+            return video
+
+        for label, frames in (("depth", self._depth_frames), ("depth_clean", self._depth_frames_clean)):
+            if not frames:
+                continue
+            try:
+                video = _to_uint8_grayscale_rgb(frames)
+                key = f"{self.wandb_key}_{label}"
+                wandb.log({key: wandb.Video(video, fps=30, format="mp4")})
+                print(f"[pose_viewer] logged WandB Video key={key} "
+                      f"shape={video.shape} dtype={video.dtype}", flush=True)
+            except Exception as exc:
+                print(f"[pose_viewer] WandB {label} video log failed: {exc}", flush=True)
