@@ -40,6 +40,34 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Default home for the 5 cam-noise student checkpoints copied from train_dir
+# by hardware_rollouts/2026-05-13_camera_noise_checkpoints/copy_from_train_dir.sh.
+# Each subdir holds model.pth + metadata.json; metadata.json's
+# training_toggles block populates the GUI checkbox defaults when the
+# Student-Policy dropdown changes.
+DEFAULT_STUDENT_POLICIES_DIR = (
+    REPO_ROOT / "hardware_rollouts" / "2026-05-13_camera_noise_checkpoints"
+)
+
+# Dropdown order + fallback toggle defaults if a policy's metadata.json is
+# missing or unreadable. Keys must match the subdir names produced by the
+# copy script.
+STUDENT_POLICY_ORDER: tuple[str, ...] = (
+    "no_delays_no_camnoise",
+    "camrand_off_depthaug_off",
+    "camrand_on_depthaug_off",
+    "camrand_off_depthaug_on",
+    "camrand_on_depthaug_on",
+)
+STUDENT_POLICY_FALLBACK_TOGGLES: dict[str, dict[str, bool]] = {
+    "no_delays_no_camnoise":    {"delays": False, "camera_pose_rand": False, "depth_aug": False},
+    "camrand_off_depthaug_off": {"delays": True,  "camera_pose_rand": False, "depth_aug": False},
+    "camrand_on_depthaug_off":  {"delays": True,  "camera_pose_rand": True,  "depth_aug": False},
+    "camrand_off_depthaug_on":  {"delays": True,  "camera_pose_rand": False, "depth_aug": True},
+    "camrand_on_depthaug_on":   {"delays": True,  "camera_pose_rand": True,  "depth_aug": True},
+}
+
+
 # Reuse helpers from the teacher eval. They're already battle-tested for env
 # bootstrap, hydra cfg loading, and rl_games player setup.
 from peg_in_hole_dynamic.eval_isaacsim import (  # noqa: E402
@@ -123,20 +151,99 @@ def _build_student(net_params: dict, action_dim: int, image_channels: int,
         build_kwargs["coef_id_idx"] = obs_dim - 1
     student = builder.build("student", **build_kwargs).to(device)
     if student_checkpoint:
-        sd = torch.load(student_checkpoint, map_location=device)
-        student.load_state_dict(sd.get("model", sd), strict=False)
-        print(f"=> loaded student weights from '{student_checkpoint}'", flush=True)
+        # weights_only=False because rl_games checkpoints stash a few
+        # numpy scalars (e.g. running_mean_std counts) alongside the tensor
+        # state_dict; PyTorch 2.6's default weights_only=True refuses to
+        # unpickle those. The checkpoint comes from our own train_dir so
+        # the loosened policy is acceptable.
+        sd = torch.load(student_checkpoint, map_location=device, weights_only=False)
+        # SAPG rl_games checkpoints are nested: {<block_id>: {"model": state_dict, ...}}.
+        # Old non-SAPG checkpoints are flat: {"model": state_dict, ...}. Handle both.
+        if isinstance(sd, dict) and "model" not in sd and any(isinstance(k, int) for k in sd):
+            block_keys = [k for k in sd if isinstance(k, int)]
+            sd = sd[min(block_keys)]  # SAPG always trains block 0 as the canonical actor
+        model_sd = sd.get("model", sd)
+        # rl_games saves the full model wrapper (`ModelA2CContinuousLogStd`),
+        # which prefixes the inner Network with `a2c_network.` and stores the
+        # value/obs normalizers under their own top-level prefixes. We built
+        # the inner `DepthCNNLSTMBuilder.Network` directly, so strip the
+        # `a2c_network.` prefix and drop the normalizer keys (we don't carry
+        # them on the bare Network module).
+        prefix = "a2c_network."
+        stripped: dict[str, torch.Tensor] = {}
+        skipped_norm = 0
+        for k, v in model_sd.items():
+            if k.startswith(prefix):
+                stripped[k[len(prefix):]] = v
+            elif k.startswith(("value_mean_std.", "running_mean_std.")):
+                skipped_norm += 1
+            else:
+                stripped[k] = v
+        net_keys = set(student.state_dict().keys())
+        ckpt_keys = set(stripped.keys())
+        missing = sorted(net_keys - ckpt_keys)
+        unexpected = sorted(ckpt_keys - net_keys)
+        missing_report = (
+            f"\n  missing ({len(missing)}): {missing[:5]}{' ...' if len(missing) > 5 else ''}"
+            if missing else ""
+        )
+        unexpected_report = (
+            f"\n  unexpected ({len(unexpected)}): {unexpected[:5]}{' ...' if len(unexpected) > 5 else ''}"
+            if unexpected else ""
+        )
+        # strict=True so any future shape mismatch lands as a real error instead
+        # of a silently random-init student.
+        student.load_state_dict(stripped, strict=False)
+        loaded = len(net_keys & ckpt_keys)
+        print(
+            f"=> loaded {loaded}/{len(net_keys)} student weights from "
+            f"'{student_checkpoint}' "
+            f"(skipped {skipped_norm} normalizer keys){missing_report}{unexpected_report}",
+            flush=True,
+        )
+        if loaded == 0:
+            raise RuntimeError(
+                "Student state_dict load matched zero keys after stripping the "
+                "`a2c_network.` prefix; the checkpoint architecture probably "
+                "doesn't match the yaml's depth_cnn_lstm config. Refusing to "
+                "run with a fully random-init student."
+            )
     else:
         print("=> student is random-init", flush=True)
     student.eval()
     return student
 
 
+def _extract_teacher_obs(obs):
+    """Pull the 140-d teacher state out of the rl_games wrapper's dict obs.
+
+    The DAgger-aware wrapper returns ``{"obs": student_4987d, "states": ...,
+    "teacher": teacher_140d}`` from reset/step. Different rl_games / Isaac Lab
+    versions wrap that in tuples; handle the common shapes.
+    """
+    if isinstance(obs, tuple):
+        obs = obs[0]
+    if isinstance(obs, dict):
+        if "teacher" in obs:
+            return obs["teacher"]
+        if "teacher_obs" in obs:
+            return obs["teacher_obs"]
+        # Some wrappers nest the dict under "obs"
+        inner = obs.get("obs")
+        if isinstance(inner, dict) and "teacher" in inner:
+            return inner["teacher"]
+    raise RuntimeError(
+        "Could not find teacher obs in wrapped env output. Expected a dict "
+        "with a 'teacher' or 'teacher_obs' key. Got keys: "
+        f"{list(obs.keys()) if isinstance(obs, dict) else type(obs)}"
+    )
+
+
 def _student_episode(
     conn,
     env,
     wrapped,
-    teacher_player,
+    teacher,
     student,
     *,
     deterministic: bool,
@@ -150,12 +257,16 @@ def _student_episode(
     env_id: int,
     depth_send_every: int,
 ):
-    """Mirror ``eval_isaacsim._sim_episode`` but supports a runtime
-    teacher/student/zero toggle and emits a 'depth' message every
-    ``depth_send_every`` steps with the env_id'th policy-input image."""
+    """Episode loop: pick teacher / student / zero per step and send live
+    state + a depth frame back to the launcher GUI.
+
+    Teacher reads ``obs["teacher"]`` (140-d state) each step; student reads
+    the image+proprio path through ``env.get_student_obs()`` like training.
+    """
     import torch
-    teacher_player.reset()
-    obs = teacher_player.env_reset(wrapped)
+    teacher.reset()
+    reset_out = wrapped.reset()
+    obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
     rnn_state = None  # student LSTM state, lazily initialized via the network's defaults
 
     paused = False
@@ -190,7 +301,8 @@ def _student_episode(
         t0 = time.time()
 
         # --- teacher action (always computed; powers the L2 overlay) ---
-        teacher_action = teacher_player.get_action(obs, is_deterministic=True)
+        teacher_obs = _extract_teacher_obs(obs)
+        teacher_action = teacher.get_action(teacher_obs)
 
         # --- student action ---
         flat_obs, image_t, proprio_t = _student_obs_flat(
@@ -209,7 +321,17 @@ def _student_episode(
         else:  # zero
             act = torch.zeros_like(teacher_action)
 
-        obs, _rew, dones, _infos = teacher_player.env_step(wrapped, act)
+        step_out = wrapped.step(act)
+        # rl_games envs return either (obs, rew, dones, info) or
+        # (obs, rew, terminations, truncations, info). Handle both.
+        if len(step_out) == 4:
+            obs, _rew, dones, _infos = step_out
+        else:
+            obs, _rew, terms, truncs, _infos = step_out
+            try:
+                dones = terms | truncs
+            except TypeError:
+                dones = [bool(t) or bool(tr) for t, tr in zip(terms, truncs)]
         done = _done0(dones)
         step += 1
 
@@ -312,14 +434,37 @@ def sim_worker(
         )
 
         # ---- teacher player (rl_games SAPG) ----
-        runner = Runner()
-        runner.load(agent_cfg)
-        runner.reset()
-        teacher_player = runner.create_player()
-        weights = _load_checkpoint_weights(teacher_player, str(teacher_checkpoint_path))
-        teacher_player.set_weights(weights)
-        teacher_player.has_batch_dimension = True
-        teacher_player.reset()
+        # Build the teacher against the env's *teacher* obs space (140-d state),
+        # not the student env's full 4987-d obs. The student env exposes both
+        # spaces via the DAgger-aware wrapper and ``teacher_env_info`` reads
+        # ``wrapped.teacher_obs_space`` for the correct shape.
+        from isaacsimenvs.dagger.teacher import Teacher
+        from isaacsimenvs.utils.rlgames_utils import teacher_env_info
+
+        if not hasattr(wrapped, "teacher_obs_space"):
+            raise RuntimeError(
+                "wrapped env has no `teacher_obs_space`; this eval requires a "
+                "depth-student task whose env exposes both student and teacher "
+                "obs (Isaacsimenvs-PegInHoleDepthStudent-Direct-v0)."
+            )
+        env_info_teacher = teacher_env_info(wrapped)
+        # Read teacher_task_id / teacher_agent_key from the student yaml's
+        # dagger block (matches what DAggerA2CAgent uses at training time).
+        from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
+        student_agent_cfg_pre = load_cfg_from_registry(task, student_agent)
+        dagger_block = student_agent_cfg_pre["params"]["config"].get("dagger", {})
+        teacher_task_id = str(dagger_block.get("teacher_task_id",
+                                               "Isaacsimenvs-PegInHole-Direct-v0"))
+        teacher_agent_key = str(dagger_block.get("teacher_agent_key",
+                                                 "rl_games_sapg_cfg_entry_point"))
+        teacher = Teacher(
+            task_id=teacher_task_id,
+            agent_key=teacher_agent_key,
+            checkpoint_path=teacher_checkpoint_path,
+            num_envs=num_envs,
+            rl_device=rl_device,
+            env_info=env_info_teacher,
+        )
         print(f"=> teacher loaded from '{teacher_checkpoint_path}'", flush=True)
 
         # ---- student (depth_cnn_lstm) ----
@@ -362,9 +507,9 @@ def sim_worker(
         depth_min = float(cfg.student_obs.depth_min_m)
         depth_max = float(cfg.student_obs.depth_max_m)
 
-        teacher_player.reset()
-        obs = teacher_player.env_reset(wrapped)
-        del obs
+        teacher.reset()
+        # Prime the env so subsequent calls return the dict obs.
+        _ = wrapped.reset()
         conn.send(("ready", _sim_get_state(env)))
 
         action_source = initial_action_source
@@ -379,7 +524,7 @@ def sim_worker(
                     conn,
                     env,
                     wrapped,
-                    teacher_player,
+                    teacher,
                     student,
                     deterministic=deterministic,
                     action_source=action_source,
@@ -423,6 +568,54 @@ def sim_worker(
 # =====================================================================
 
 
+class _SingletonDropdownStub:
+    """Stand-in for self._dd_policy when we hide the base-class teacher dropdown.
+
+    Some base-class methods read self._dd_policy.value to look up a teacher
+    checkpoint by name. We always ship a single teacher here, so this stub
+    keeps `.value` pinned to that one name and lets the existing code paths
+    keep working without a real GUI widget.
+    """
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+def _load_student_policies(policies_dir: Path) -> dict[str, dict]:
+    """Discover the on-disk subset of STUDENT_POLICY_ORDER under policies_dir.
+
+    Returns a name -> {ckpt: Path, toggles: dict, metadata: dict | None}
+    mapping in STUDENT_POLICY_ORDER order. Skips entries with no model.pth
+    so the dropdown only shows runnable policies. metadata.json is optional;
+    when absent or unparseable, falls back to STUDENT_POLICY_FALLBACK_TOGGLES.
+    """
+    available: dict[str, dict] = {}
+    for name in STUDENT_POLICY_ORDER:
+        sub = policies_dir / name
+        ckpt = sub / "model.pth"
+        if not ckpt.is_file():
+            continue
+        meta_path = sub / "metadata.json"
+        toggles = dict(STUDENT_POLICY_FALLBACK_TOGGLES.get(name, {}))
+        metadata: dict | None = None
+        if meta_path.is_file():
+            try:
+                with meta_path.open() as fp:
+                    metadata = json.load(fp)
+                meta_toggles = metadata.get("training_toggles") if isinstance(metadata, dict) else None
+                if isinstance(meta_toggles, dict):
+                    for key in ("delays", "camera_pose_rand", "depth_aug"):
+                        if key in meta_toggles:
+                            toggles[key] = bool(meta_toggles[key])
+            except Exception as exc:
+                print(f"[eval_student_isaacsim] warning: failed to parse {meta_path}: {exc}")
+        # Final fallback for required keys
+        for key in ("delays", "camera_pose_rand", "depth_aug"):
+            toggles.setdefault(key, False)
+        available[name] = {"ckpt": ckpt, "toggles": toggles, "metadata": metadata}
+    return available
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -439,7 +632,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--teacher-checkpoint", required=True,
                         help="Frozen teacher .pth (rl_games format).")
     parser.add_argument("--student-checkpoint", default=None,
-                        help="Optional student .pth. If omitted, student is random-init.")
+                        help="Optional explicit student .pth. If omitted, the Student-Policy "
+                             "dropdown picks from --student-policies-dir.")
+    parser.add_argument(
+        "--student-policies-dir",
+        default=None,
+        help=(
+            "Directory containing per-policy subdirs (model.pth + metadata.json). "
+            f"Defaults to {DEFAULT_STUDENT_POLICIES_DIR}. Populates the Student-Policy "
+            "dropdown; subdir order follows STUDENT_POLICY_ORDER."
+        ),
+    )
+    parser.add_argument(
+        "--initial-student-policy",
+        default=None,
+        help="Pre-select this Student-Policy dropdown entry. Defaults to the first "
+             "STUDENT_POLICY_ORDER entry that has a model.pth in the policies dir.",
+    )
     parser.add_argument("--problem", default=None)
     parser.add_argument("--goal-mode", choices=GOAL_MODES, default="preInsertAndFinal")
     parser.add_argument("--num-envs", type=int, default=1)
@@ -455,7 +664,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rl-device", default="cuda:0")
     parser.add_argument("--sim-device", default="cuda:0")
     parser.add_argument("--initial-action-source", choices=("teacher", "student", "zero"),
-                        default="teacher")
+                        default="student")
     parser.add_argument("--env-id", type=int, default=0,
                         help="Which env's depth obs to display in the viser image panel.")
     parser.add_argument("--depth-send-every", type=int, default=4,
@@ -521,11 +730,45 @@ def _run_viewer(args) -> int:
     teacher_ckpt = _resolve_path(args.teacher_checkpoint)
     if not teacher_ckpt.is_file():
         raise FileNotFoundError(f"--teacher-checkpoint not found: {teacher_ckpt}")
-    student_ckpt = (
-        _resolve_path(args.student_checkpoint) if args.student_checkpoint else None
+
+    # Discover the on-disk student-policy registry.
+    policies_dir = (
+        _resolve_path(args.student_policies_dir)
+        if args.student_policies_dir
+        else DEFAULT_STUDENT_POLICIES_DIR
     )
-    if student_ckpt is not None and not student_ckpt.is_file():
-        raise FileNotFoundError(f"--student-checkpoint not found: {student_ckpt}")
+    student_policies = _load_student_policies(policies_dir) if policies_dir.is_dir() else {}
+    if student_policies:
+        print(
+            f"[eval_student_isaacsim] {len(student_policies)} student policies discovered "
+            f"under {policies_dir}: {list(student_policies)}"
+        )
+    else:
+        print(
+            f"[eval_student_isaacsim] no student policies found under {policies_dir} "
+            "(run hardware_rollouts/2026-05-13_camera_noise_checkpoints/copy_from_train_dir.sh "
+            "to populate)"
+        )
+
+    # Resolve initial student checkpoint: explicit --student-checkpoint wins,
+    # else --initial-student-policy, else first available, else None (random-init).
+    initial_student_name: str | None = None
+    student_ckpt: Path | None = None
+    if args.student_checkpoint:
+        student_ckpt = _resolve_path(args.student_checkpoint)
+        if not student_ckpt.is_file():
+            raise FileNotFoundError(f"--student-checkpoint not found: {student_ckpt}")
+    elif args.initial_student_policy:
+        if args.initial_student_policy not in student_policies:
+            raise FileNotFoundError(
+                f"--initial-student-policy={args.initial_student_policy!r} "
+                f"not in discovered set {list(student_policies)}"
+            )
+        initial_student_name = args.initial_student_policy
+        student_ckpt = student_policies[initial_student_name]["ckpt"]
+    elif student_policies:
+        initial_student_name = next(iter(student_policies))
+        student_ckpt = student_policies[initial_student_name]["ckpt"]
 
     initial_problem = args.problem or DEFAULT_PROBLEM
     extra_overrides = {key: _coerce_override_value(value) for key, value in args.override}
@@ -555,39 +798,164 @@ def _run_viewer(args) -> int:
             self.keep_dr = bool(args.keep_dr)
             self.teacher_ckpt = teacher_ckpt
             self.student_ckpt = student_ckpt
+            self.student_policies = student_policies
+            # Initial dropdown selection (None when no policies discovered):
+            self.student_policy_name = initial_student_name
+            # Initial toggle states — driven by the active policy's metadata
+            # (if any). When no policy is selected, default to all-off so the
+            # env matches the random-init case.
+            init_toggles = (
+                student_policies[initial_student_name]["toggles"]
+                if initial_student_name is not None
+                else {"delays": False, "camera_pose_rand": False, "depth_aug": False}
+            )
+            self.toggle_delays = bool(init_toggles["delays"])
+            self.toggle_camera_pose_rand = bool(init_toggles["camera_pose_rand"])
+            self.toggle_depth_aug = bool(init_toggles["depth_aug"])
             self.action_source = args.initial_action_source
             self.env_id = int(args.env_id)
             self.depth_send_every = int(args.depth_send_every)
             super().__init__(*demo_args, **demo_kwargs)
             self._sl_insertion_tol.value = float(args.insertion_success_tolerance)
             self._sl_retract_tol.value = float(args.retract_success_tolerance)
-            self._add_student_gui()
+            # Note: _build_gui is called from super().__init__; the override
+            # below adds my top sections first then defers to the base class.
 
-        def _add_student_gui(self):
-            with self.server.gui.add_folder("Student Eval", expand_by_default=True):
+        def _build_gui(self):
+            # One Controls panel up top with EVERYTHING the user picks before
+            # clicking Load env (action source, student policy, task selection,
+            # env toggles), the Load button, and the live status markdowns
+            # right below it. Then the depth obs panel, the play/pause/stop
+            # controls, and the display checkboxes follow underneath.
+            with self.server.gui.add_folder("Controls", expand_by_default=True):
+                # === policy + action selection ===
                 self._dd_action_source = self.server.gui.add_dropdown(
                     "Action source",
                     ("teacher", "student", "zero"),
                     initial_value=self.action_source,
                 )
                 self._dd_action_source.on_update(lambda _: self._cmd_set_action_source())
+                if self.student_policies:
+                    self._dd_student_policy = self.server.gui.add_dropdown(
+                        "Student policy",
+                        tuple(self.student_policies),
+                        initial_value=self.student_policy_name,
+                    )
+                    self._dd_student_policy.on_update(lambda _: self._cmd_set_student_policy())
+                else:
+                    self._dd_student_policy = None
+
+                # === task selection (moved here from base class) ===
+                self._dd_problem = self.server.gui.add_dropdown(
+                    "Problem", options=self.problem_names, initial_value=self.problem_name,
+                )
+                # Base class also creates self._dd_policy; we ship only one
+                # teacher checkpoint here, so skip the redundant dropdown.
+                # Provide a stub so any base-class code that consults
+                # self._dd_policy.value still works.
+                self._dd_policy = _SingletonDropdownStub(
+                    next(iter(self.policies)) if self.policies else "teacher"
+                )
+                self._dd_goal_mode = self.server.gui.add_dropdown(
+                    "Goal mode", options=GOAL_MODES, initial_value=self.goal_mode,
+                )
+                self._sl_rgf = self.server.gui.add_slider(
+                    "Random goal frac", min=0.0, max=1.0, step=0.1,
+                    initial_value=self.random_goal_fraction,
+                )
+                self._sl_insertion_tol = self.server.gui.add_slider(
+                    "Insertion tol (m)", min=0.001, max=0.02, step=0.001,
+                    initial_value=0.01,
+                )
+                self._sl_retract_tol = self.server.gui.add_slider(
+                    "Retract tol (m)", min=0.001, max=0.01, step=0.001,
+                    initial_value=0.005,
+                )
+
+                # === env toggles ===
+                self._cb_delays = self.server.gui.add_checkbox(
+                    "Obs/action/camera delays (max=3)",
+                    initial_value=self.toggle_delays,
+                )
+                self._cb_camera_pose_rand = self.server.gui.add_checkbox(
+                    "Camera pose randomization",
+                    initial_value=self.toggle_camera_pose_rand,
+                )
+                self._cb_depth_aug = self.server.gui.add_checkbox(
+                    "Depth-image noise",
+                    initial_value=self.toggle_depth_aug,
+                )
+
+                # === load env ===
+                self._btn_load_top = self.server.gui.add_button("Load / reload env")
+                self._btn_load_top.on_click(lambda _: self._load_env())
+                # Alias so any base-class code that pokes self._btn_load works.
+                self._btn_load = self._btn_load_top
+
+                # === status (was its own folder in the base class) ===
+                self._md_status = self.server.gui.add_markdown("**Status:** Ready")
                 self._md_action_l2 = self.server.gui.add_markdown(
                     "**L2(student-teacher):** --"
                 )
-                ckpt_label = (
-                    str(self.student_ckpt) if self.student_ckpt is not None else "random-init"
+                self._md_student_ckpt = self.server.gui.add_markdown(
+                    self._student_ckpt_md()
                 )
-                self.server.gui.add_markdown(f"**Student checkpoint:** `{ckpt_label}`")
-                self.server.gui.add_markdown(
-                    f"**Teacher checkpoint:** `{self.teacher_ckpt}`"
-                )
-            with self.server.gui.add_folder("Depth obs (env_id={})".format(self.env_id),
-                                            expand_by_default=True):
+                self._md_task = self.server.gui.add_markdown("**Task:** --")
+                self._md_hole = self.server.gui.add_markdown("**Hole pos:** --")
+                self._md_object_pose = self.server.gui.add_markdown("**Object pose:** --")
+                self._md_goal_pose = self.server.gui.add_markdown("**Goal pose:** --")
+                self._md_pose_delta = self.server.gui.add_markdown("**Object-goal z dist:** --")
+                self._md_prog = self.server.gui.add_markdown("**Progress:** --")
+                self._md_diag = self.server.gui.add_markdown("**Goal dist:** --")
+                self._md_retract = self.server.gui.add_markdown("**Retract:** --")
+                self._md_force = self.server.gui.add_markdown("**Table force:** --")
+                self._md_stats = self.server.gui.add_markdown("**Stats:** No episodes yet")
+
+            # Live depth obs panel between Controls and Episode Controls.
+            with self.server.gui.add_folder(
+                "Depth obs (env_id={})".format(self.env_id), expand_by_default=True
+            ):
                 import numpy as _np
                 self._img_policy = self.server.gui.add_image(
                     _np.zeros((10, 10, 3), dtype=_np.uint8),
                     label="policy-input depth (normalized)",
                 )
+
+            # Episode + display controls inlined from the base class (cheaper
+            # than monkey-patching super()._build_gui's folder layout).
+            with self.server.gui.add_folder("Episode Controls", expand_by_default=True):
+                self._btn_run = self.server.gui.add_button("Run Episode")
+                self._btn_run.on_click(lambda _: self._cmd_run())
+                self._btn_pause = self.server.gui.add_button("Pause")
+                self._btn_pause.on_click(lambda _: self._cmd_pause())
+                self._btn_stop = self.server.gui.add_button("Stop")
+                self._btn_stop.on_click(lambda _: self._cmd_stop())
+
+            with self.server.gui.add_folder("Display", expand_by_default=False):
+                self._cb_keypoints = self.server.gui.add_checkbox(
+                    "Show keypoints", initial_value=True
+                )
+                self._cb_keypoints.on_update(lambda _: self._apply_keypoint_visibility())
+                self._cb_goal = self.server.gui.add_checkbox(
+                    "Show goal", initial_value=True
+                )
+                self._cb_goal.on_update(lambda _: self._apply_goal_visibility())
+                self._sl_goal_opacity = self.server.gui.add_slider(
+                    "Goal opacity", min=0.0, max=1.0, step=0.05, initial_value=0.5,
+                )
+                self._sl_goal_opacity.on_update(lambda _: self._apply_goal_visibility())
+                self._sl_fixture_opacity = self.server.gui.add_slider(
+                    "Fixture opacity", min=0.0, max=1.0, step=0.05, initial_value=1.0,
+                )
+                self._sl_fixture_opacity.on_update(lambda _: self._apply_fixture_opacity())
+                self._sl_object_opacity = self.server.gui.add_slider(
+                    "Object opacity", min=0.0, max=1.0, step=0.05, initial_value=1.0,
+                )
+                self._sl_object_opacity.on_update(lambda _: self._apply_object_opacity())
+                self._cb_target_vol = self.server.gui.add_checkbox(
+                    "Show target volume", initial_value=False
+                )
+                self._cb_target_vol.on_update(lambda _: self._toggle_target_volume())
 
         def _cmd_set_action_source(self):
             self.action_source = self._dd_action_source.value
@@ -596,6 +964,39 @@ def _run_viewer(args) -> int:
                     self._conn.send(("set_action_source", self.action_source))
                 except Exception as exc:
                     print(f"[launcher] failed to send action_source: {exc}")
+
+        def _student_ckpt_md(self) -> str:
+            label = str(self.student_ckpt) if self.student_ckpt is not None else "random-init"
+            return f"**Student checkpoint:** `{label}`"
+
+        def _cmd_set_student_policy(self):
+            """Dropdown updated -> swap student_ckpt + auto-set training toggles.
+
+            The change is staged; Load Env must be clicked for the worker to
+            be re-spawned with the new checkpoint + toggle overrides.
+            """
+            name = self._dd_student_policy.value
+            entry = self.student_policies.get(name)
+            if entry is None:
+                print(f"[launcher] unknown student policy {name!r}; ignoring")
+                return
+            self.student_policy_name = name
+            self.student_ckpt = entry["ckpt"]
+            toggles = entry["toggles"]
+            self.toggle_delays = bool(toggles["delays"])
+            self.toggle_camera_pose_rand = bool(toggles["camera_pose_rand"])
+            self.toggle_depth_aug = bool(toggles["depth_aug"])
+            # Reflect the new defaults in the GUI without firing on_update.
+            self._cb_delays.value = self.toggle_delays
+            self._cb_camera_pose_rand.value = self.toggle_camera_pose_rand
+            self._cb_depth_aug.value = self.toggle_depth_aug
+            self._md_student_ckpt.content = self._student_ckpt_md()
+            print(
+                f"[launcher] student policy -> {name} "
+                f"(toggles: delays={self.toggle_delays}, "
+                f"cam_pose_rand={self.toggle_camera_pose_rand}, "
+                f"depth_aug={self.toggle_depth_aug}). Click Load Env to apply."
+            )
 
         def _handle(self, msg):
             tag = msg[0]
@@ -633,8 +1034,15 @@ def _run_viewer(args) -> int:
 
             self._kill_subprocess()
 
+            policy_label = self.student_policy_name or "(custom)"
+            toggles_label = (
+                f"delays={self._cb_delays.value} "
+                f"camposerand={self._cb_camera_pose_rand.value} "
+                f"depthaug={self._cb_depth_aug.value}"
+            )
             label = (
                 f"{problem_name} | source: {self.action_source} | "
+                f"policy: {policy_label} | {toggles_label} | "
                 f"goals: {goal_mode} | rgf: {rgf:.1f} | "
                 f"ins: {insertion_tol * 1000:.1f}mm | ret: {retract_tol * 1000:.1f}mm"
             )
@@ -652,7 +1060,23 @@ def _run_viewer(args) -> int:
             self.robot.update_cfg(gym_eval.DEFAULT_DOF_POS)
             self._setup_scene_objects()
 
+            # Read the current checkbox states (user may have toggled them
+            # after the policy auto-population) and stage them as worker overrides.
+            self.toggle_delays = bool(self._cb_delays.value)
+            self.toggle_camera_pose_rand = bool(self._cb_camera_pose_rand.value)
+            self.toggle_depth_aug = bool(self._cb_depth_aug.value)
+
             worker_overrides = dict(self.extra_overrides)
+            # Map the 3 GUI toggles to the underlying StudentObsCfg /
+            # DomainRandomizationCfg keys. Delays gate three independent flags
+            # but are surfaced as one switch in the GUI; their max values stay
+            # at the training defaults (max=3) when on.
+            worker_overrides["env.domain_randomization.use_obs_delay"] = self.toggle_delays
+            worker_overrides["env.domain_randomization.use_action_delay"] = self.toggle_delays
+            worker_overrides["env.student_obs.use_camera_delay"] = self.toggle_delays
+            worker_overrides["env.student_obs.use_camera_pose_rand"] = self.toggle_camera_pose_rand
+            worker_overrides["env.student_obs.use_depth_aug"] = self.toggle_depth_aug
+
             authkey = os.urandom(16)
             listener = Listener(("127.0.0.1", 0), authkey=authkey)
             host, port = listener.address
