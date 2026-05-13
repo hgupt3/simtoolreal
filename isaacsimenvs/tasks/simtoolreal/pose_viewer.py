@@ -438,34 +438,21 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         return image[self.env_id].detach().cpu().numpy()
 
     def _capture_student_image_clean(self):
-        """Same env_id slice as the noisy capture, but pre-noise.
+        """Same env_id slice as the noisy capture, but with depth noise bypassed.
 
-        Reads the raw-meters depth stashed by `scene_utils.read_student_camera_image`
-        before `_apply_depth_noise` and normalizes it the same way
-        `_preprocess_student_depth` with mode='window_normalize' would.
+        Reads the post-preprocess, post-crop tensor stashed by
+        `scene_utils.read_student_camera_image` so the two videos differ
+        ONLY in whether `_apply_depth_noise` was applied. When
+        `use_depth_aug=False` this equals the noisy capture.
 
         Returns a (1, H, W) numpy array in [0, 1], or `None` when the env
-        hasn't run a depth read yet (e.g., first call) or doesn't have a
-        student camera.
+        hasn't run a depth read yet.
         """
-        import numpy as np
-
         inner = self.env.unwrapped
-        raw = getattr(inner, "_last_student_depth_raw_m", None)
-        if raw is None:
+        clean = getattr(inner, "_last_student_image_clean", None)
+        if clean is None:
             return None
-        cfg = getattr(inner.cfg, "student_obs", None)
-        if cfg is None:
-            return None
-        near = float(cfg.depth_min_m)
-        far = float(cfg.depth_max_m)
-        if far <= near:
-            return None
-        # raw is (B, 1, H, W) raw meters. Slice the env we care about.
-        d = raw[self.env_id].detach().cpu().numpy().astype(np.float32)
-        d = np.nan_to_num(d, nan=far, posinf=far, neginf=near)
-        d = (d - near) / (far - near)
-        return np.clip(d, 0.0, 1.0)
+        return clean[self.env_id].detach().cpu().numpy()
 
     def close(self) -> None:
         if self._frames:
