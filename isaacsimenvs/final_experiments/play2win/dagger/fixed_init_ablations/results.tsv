@@ -1,1 +1,2 @@
 timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rate	expl_block_size	time_to_target_s	status	description
+2026-05-13T00:12:23-04:00	2fe0c76	baseline	512	2048	4	1e-4	128	3179.3	keep	measured baseline on this hardware
