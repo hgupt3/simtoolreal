@@ -8,3 +8,5 @@ timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rat
 2026-05-13T07:30:03-04:00	c20a9ba	nf_n512_mb1024_me8_lr5e-4	512	1024	8	5e-4	128	0.6250	3596.8	discard	lr=5e-4 vmax 0.625 < me8 0.719; lr=3e-4 is the sweet spot
 2026-05-13T08:37:43-04:00	4852668	nf_n512_mb2048_me8_lr3e-4	512	2048	8	3e-4	128	0.9609	3597.1	keep	mb=2048 (4 minibatches/epoch): 0.961 vs me8 0.719 = +34% relative; new best; still rising at budget end
 2026-05-13T08:37:43-04:00	7070f3d	nf_n512_mb1024_me8_lr2e-4	512	1024	8	2e-4	128	0.3047	3599.9	discard	lr=2e-4 vmax 0.305 << me8 0.719
+2026-05-13T09:40:57-04:00	b7568ab	nf_n512_mb4096_me8_lr3e-4	512	4096	8	3e-4	128	0.8516	3588.0	discard	mb=4096 (16 grad steps): 0.85 < mb=2048 best 0.96; too few updates
+2026-05-13T09:40:57-04:00	ed8c0dd	nf_n512_mb2048_me16_lr3e-4	512	2048	16	3e-4	128	0.8359	3582.0	discard	me=16 + mb=2048: 0.84 < mb=2048 me=8 best 0.96; me=16 still loses with larger MB
