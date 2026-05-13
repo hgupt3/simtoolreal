@@ -378,6 +378,9 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
         self._step = 0
         self._capture_index = 0
         self._frames: list[dict[str, Any]] | None = []
+        # Per-capture buffer of (C, H, W) student-camera frames (numpy, [0, 1] floats).
+        # Stays empty when the env doesn't expose `get_student_obs` or doesn't return an "image" key.
+        self._depth_frames: list = []
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         print(
@@ -393,13 +396,38 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
 
         if self._frames is None and self.capture_interval > 0 and self._step % self.capture_interval == 0:
             self._frames = []
+            self._depth_frames = []
 
         if self._frames is not None:
             self._frames.append(capture_pose_viewer_frame(self.env.unwrapped, self.env_id))
+            depth_frame = self._capture_student_image()
+            if depth_frame is not None:
+                self._depth_frames.append(depth_frame)
             if len(self._frames) >= self.capture_len:
                 self._finalize_capture()
 
         return result
+
+    def _capture_student_image(self):
+        """Pull the env_id slice of the student's input image, if the env exposes one.
+
+        Returns a (C, H, W) numpy array in [0, 1] (depth after env-side
+        ``window_normalize`` preproc), or ``None`` when student_obs isn't
+        configured. Called once per pose-viewer-captured step, so cost is
+        capped at one extra `get_student_obs()` per (capture_len * frequency).
+        """
+        inner = self.env.unwrapped
+        if not hasattr(inner, "get_student_obs"):
+            return None
+        try:
+            student_obs = inner.get_student_obs()
+        except Exception as exc:
+            print(f"[pose_viewer] get_student_obs failed: {exc}", flush=True)
+            return None
+        image = student_obs.get("image") if isinstance(student_obs, dict) else None
+        if image is None:
+            return None
+        return image[self.env_id].detach().cpu().numpy()
 
     def close(self) -> None:
         if self._frames:
@@ -432,6 +460,7 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
 
         self._capture_index += 1
         self._frames = None
+        self._depth_frames = []
 
     def _log_wandb(self, html_text: str) -> None:
         try:
@@ -447,3 +476,21 @@ class SimToolRealPoseViewerWrapper(gym.Wrapper):
             print(f"[pose_viewer] logged WandB Html key={self.wandb_key} step={self._step}", flush=True)
         except Exception as exc:
             print(f"[pose_viewer] WandB log failed: {exc}", flush=True)
+
+        if not self._depth_frames:
+            return
+        try:
+            import numpy as np
+
+            video = np.stack(self._depth_frames, axis=0)            # (T, C, H, W) float in [0, 1]
+            video = (np.clip(video, 0.0, 1.0) * 255.0).astype(np.uint8)
+            # wandb.Video tiles single-channel 4-D arrays into a grid; replicate
+            # to 3-channel grayscale-RGB so it's interpreted as a single video.
+            if video.shape[1] == 1:
+                video = np.repeat(video, 3, axis=1)                 # (T, 3, H, W)
+            depth_key = f"{self.wandb_key}_depth"
+            wandb.log({depth_key: wandb.Video(video, fps=30, format="mp4")})
+            print(f"[pose_viewer] logged WandB Video key={depth_key} "
+                  f"shape={video.shape} dtype={video.dtype}", flush=True)
+        except Exception as exc:
+            print(f"[pose_viewer] WandB depth video log failed: {exc}", flush=True)

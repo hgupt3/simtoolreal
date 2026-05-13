@@ -9,8 +9,8 @@ from pathlib import Path
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import Articulation, RigidObject
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+from isaaclab.assets import Articulation, RigidObject, RigidObjectCfg
+from isaaclab.sim.spawners.from_files import GroundPlaneCfg, UsdFileCfg, spawn_ground_plane
 
 from isaacsimenvs.tasks.simtoolreal.utils.scene_utils import (
     _bake_usd,
@@ -18,7 +18,6 @@ from isaacsimenvs.tasks.simtoolreal.utils.scene_utils import (
     _log_scene_step,
     _materialize_env_prims,
     _robot_joint_drive_cfg,
-    build_rigid_object_cfg,
     build_robot_articulation_usd_cfg,
     hide_goal_viz_for_student_camera,
     setup_student_camera,
@@ -33,6 +32,20 @@ def _asset_path(path: str | Path) -> str:
     if not asset_path.is_absolute():
         asset_path = REPO_ROOT / asset_path
     return str(asset_path)
+
+
+def _pih_rigid_object_cfg(prim_path: str, usd_path: str) -> RigidObjectCfg:
+    """Single-USD RigidObject spawn using `UsdFileCfg` (not `MultiUsdFileCfg`).
+
+    Why bypass `MultiUsdFileCfg` even though our list has just one entry:
+    `MultiUsdFileCfg` sets the global carb flag
+    `/isaaclab/spawn/multi_assets=True`, which triggers IsaacLab's
+    "varying assets" warning under `replicate_physics=True` and may take a
+    slower clone path under the hood. `UsdFileCfg` keeps the regex
+    prim_path (so the Articulation/RigidObject discovers all envs) but
+    avoids the multi-asset carb branch.
+    """
+    return RigidObjectCfg(prim_path=prim_path, spawn=UsdFileCfg(usd_path=usd_path))
 
 
 def setup_scene(env) -> None:
@@ -134,19 +147,17 @@ def setup_scene(env) -> None:
 
     _materialize_env_prims(env)
 
+    # Use UsdFileCfg (single USD path) instead of MultiUsdFileCfg.
+    # peg_in_hole is a single-geometry task (every env uses the same peg + hole +
+    # table), so the multi-asset carb path is pure overhead — and it triggers
+    # the noisy "Varying assets ... however replicate_physics is enabled"
+    # warning under `replicate_physics=True`. The regex prim_path is kept so
+    # Articulation / RigidObject discover all envs after clone.
     env.robot = Articulation(build_robot_articulation_usd_cfg(robot_usd_path))
-    env.table = RigidObject(
-        build_rigid_object_cfg("/World/envs/env_.*/Table", [table_usd_path])
-    )
-    env.hole = RigidObject(
-        build_rigid_object_cfg("/World/envs/env_.*/Hole", [hole_usd_path])
-    )
-    env.object = RigidObject(
-        build_rigid_object_cfg("/World/envs/env_.*/Object", [object_usd_path])
-    )
-    env.goal_viz = RigidObject(
-        build_rigid_object_cfg("/World/envs/env_.*/GoalViz", [goalviz_usd_path])
-    )
+    env.table = RigidObject(_pih_rigid_object_cfg("/World/envs/env_.*/Table", table_usd_path))
+    env.hole = RigidObject(_pih_rigid_object_cfg("/World/envs/env_.*/Hole", hole_usd_path))
+    env.object = RigidObject(_pih_rigid_object_cfg("/World/envs/env_.*/Object", object_usd_path))
+    env.goal_viz = RigidObject(_pih_rigid_object_cfg("/World/envs/env_.*/GoalViz", goalviz_usd_path))
     _log_scene_step(setup_t0, "spawned robot/table/hole/object/goalviz")
 
     spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
@@ -170,6 +181,17 @@ def setup_scene(env) -> None:
     hide_goal_viz_for_student_camera(env)
     setup_student_camera(env)
     _log_scene_step(setup_t0, "registered assets with scene")
+
+    # When replicate_physics=True, InteractiveScene.__init__ leaves
+    # `_default_env_origins=None` and expects `clone_environments()` to
+    # populate it later. That auto-call only fires inside
+    # `_add_entities_from_cfg` (config-driven scenes). Our scene is
+    # manually built, so we call it ourselves here. With
+    # replicate_physics=False this is a no-op for env_origins (already
+    # set in __init__).
+    if env.scene._default_env_origins is None:
+        env.scene.clone_environments(copy_from_source=False)
+        _log_scene_step(setup_t0, "cloned environments (replicate_physics=True path)")
 
 
 __all__ = ["setup_scene"]

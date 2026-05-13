@@ -37,6 +37,8 @@ gym.register(
         "env_cfg_yaml_entry_point": str(_CFG_DIR / "task" / "PegInHoleDepthStudent.yaml"),
         "rl_games_cfg_entry_point": str(_CFG_DIR / "train" / "SimToolRealPPO.yaml"),
         "rl_games_sapg_cfg_entry_point": str(_CFG_DIR / "train" / "SimToolRealSAPG.yaml"),
+        "rl_games_dagger_sapg_cfg_entry_point": str(_CFG_DIR / "train" / "PegInHoleDepthStudentSAPG.yaml"),
+        "rl_games_dagger_ppo_cfg_entry_point": str(_CFG_DIR / "train" / "PegInHoleDepthStudentPPO.yaml"),
         "distill_cfg_entry_point": str(_CFG_DIR / "train" / "PegInHoleDepthDistill.yaml"),
     },
 )

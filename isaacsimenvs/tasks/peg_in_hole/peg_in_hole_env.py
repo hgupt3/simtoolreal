@@ -67,6 +67,48 @@ class PegInHoleEnv(SimToolRealEnv):
 
         super().__init__(cfg, render_mode, **kwargs)
 
+        # When student_obs is enabled, the env exposes three obs groups via
+        # `_get_observations`: "policy" = student obs (image+proprio, what
+        # the depth-CNN reads), "critic" = state_list (privileged), and
+        # "teacher_obs" = obs_list (proprio + object_state, noisy — what the
+        # frozen state-MLP teacher reads). The default RlGamesVecEnvWrapper
+        # drops keys it doesn't know; use DAggerRlGamesVecEnvWrapper from
+        # `isaacsimenvs.utils.rlgames_utils` to pass "teacher_obs" through to
+        # the agent as `self.obs["teacher"]`.
+        student_cfg = getattr(cfg, "student_obs", None)
+        if student_cfg is not None and student_cfg.enabled and student_cfg.image_enabled:
+            from gymnasium import spaces
+            import numpy as _np
+            from isaacsimenvs.tasks.simtoolreal.utils.obs_utils import _student_proprio_dict
+
+            image_numel = (
+                int(student_cfg.image_input_height)
+                * int(student_cfg.image_input_width)
+                * (1 if student_cfg.image_modality.lower() == "depth" else 3)
+            )
+            proprio_sample = _student_proprio_dict(self)
+            proprio_dim = sum(
+                int(proprio_sample[field].reshape(self.num_envs, -1).shape[-1])
+                for field in student_cfg.proprio_list
+            )
+            student_dim = image_numel + proprio_dim
+            actor_dim = int(cfg.observation_space)        # original obs_list dim (teacher actor input)
+            critic_dim = int(cfg.state_space)             # state_list dim (asymmetric critic input)
+
+            cfg.observation_space = student_dim
+            box = lambda d: spaces.Box(low=-_np.inf, high=_np.inf, shape=(d,))
+            self.observation_space = spaces.Dict({
+                "policy": box(student_dim),
+                "critic": box(critic_dim),
+                "teacher_obs": box(actor_dim),
+            })
+            self.single_observation_space = spaces.Dict({
+                "policy": box(student_dim),
+                "critic": box(critic_dim),
+                "teacher_obs": box(actor_dim),
+            })
+            self._teacher_actor_obs_dim = actor_dim
+
         insert_poses = torch.as_tensor(
             self._pih_insert_pose_sequence, dtype=torch.float32, device=self.device
         )
@@ -590,6 +632,33 @@ class PegInHoleEnv(SimToolRealEnv):
             )
             clip = self.cfg.obs.clamp_abs_observations
             obs["policy"] = policy.clamp(-clip, clip)
+
+        # Depth-distillation contract: when student_obs is enabled, the env
+        # exposes THREE obs groups (consumed by different parts of the dagger
+        # pipeline):
+        #   "policy"      = flattened student obs [image_flat, proprio] →
+        #                   read by the depth-CNN student network
+        #   "critic"      = state_list (privileged) → read by the asymmetric
+        #                   central-value critic
+        #   "teacher_obs" = obs_list (proprio + object state, noisy, what the
+        #                   frozen state-MLP teacher trained on) → read by
+        #                   DAggerA2CAgent for teacher labeling. The
+        #                   DAggerRlGamesVecEnvWrapper passes this through as
+        #                   `self.obs["teacher"]` in the agent.
+        # SAPG appends 1 block-id column to "obs" and "states" only
+        # (a2c_common.py:602-604) — "teacher" is left untouched, and our
+        # `Teacher.get_action()` re-appends the block-id internally.
+        student_cfg = getattr(self.cfg, "student_obs", None)
+        if student_cfg is not None and student_cfg.enabled:
+            student = self.get_student_obs()
+            image_flat = student["image"].reshape(self.num_envs, -1)
+            proprio = student["proprio"].reshape(self.num_envs, -1)
+            student_flat = torch.cat([image_flat, proprio], dim=-1)
+            obs = {
+                "policy": student_flat,
+                "critic": obs["critic"],
+                "teacher_obs": obs["policy"],
+            }
         return obs
 
 
