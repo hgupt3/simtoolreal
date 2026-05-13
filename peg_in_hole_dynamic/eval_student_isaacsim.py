@@ -67,6 +67,30 @@ STUDENT_POLICY_FALLBACK_TOGGLES: dict[str, dict[str, bool]] = {
     "camrand_on_depthaug_on":   {"delays": True,  "camera_pose_rand": True,  "depth_aug": True},
 }
 
+# Table domain-randomization dropdown choices. Values map labels -> (override
+# value). xy is the per-axis half-width in meters; yaw is the half-width in
+# degrees; scale is (range_x, range_y) feeding the MultiUsd variant baker.
+TABLE_XY_CHOICES: dict[str, tuple[float, float]] = {
+    "off":   (0.0, 0.0),
+    "1 cm":  (0.01, 0.01),
+    "3 cm":  (0.03, 0.03),
+    "5 cm":  (0.05, 0.05),
+}
+TABLE_YAW_CHOICES: dict[str, float] = {
+    "off":   0.0,
+    "2 deg": 2.0,
+    "5 deg": 5.0,
+    "10 deg": 10.0,
+}
+TABLE_SCALE_CHOICES: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
+    "off":    ((1.0, 1.0), (1.0, 1.0)),
+    "+/- 5%":  ((0.95, 1.05), (0.95, 1.05)),
+    "+/- 15%": ((0.85, 1.15), (0.85, 1.15)),
+    "+/- 25%": ((0.75, 1.25), (0.75, 1.25)),
+}
+# Number of pre-baked USD variants when scale is on. Round-robined per env.
+TABLE_SCALE_N_VARIANTS_DEFAULT = 10
+
 
 # Reuse helpers from the teacher eval. They're already battle-tested for env
 # bootstrap, hydra cfg loading, and rl_games player setup.
@@ -268,6 +292,15 @@ def _student_episode(
     reset_out = wrapped.reset()
     obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
     rnn_state = None  # student LSTM state, lazily initialized via the network's defaults
+    # Send the new env_id table pose so viser tracks the sampled xy/yaw at
+    # every episode start. Cheap (one cpu transfer of 7 floats).
+    try:
+        origin = env.scene.env_origins[int(env_id)]
+        pos = (env.table.data.root_pos_w[int(env_id)] - origin).cpu().tolist()
+        quat = env.table.data.root_quat_w[int(env_id)].cpu().tolist()
+        conn.send(("table_pose", *pos, *quat))
+    except Exception as exc:
+        print(f"[worker] table_pose report (per-episode) failed: {exc!r}", flush=True)
 
     paused = False
     step = 0
@@ -511,6 +544,25 @@ def sim_worker(
         # Prime the env so subsequent calls return the dict obs.
         _ = wrapped.reset()
         conn.send(("ready", _sim_get_state(env)))
+        # Report the actual (sx, sy) for the displayed env so viser can resize
+        # its static table mesh to match. Round-robin assignment: env_id maps
+        # to variant_idx = env_id % len(variants). Trivial scale -> (1, 1).
+        try:
+            variant_scales = getattr(env, "_table_variant_scales", [(1.0, 1.0)])
+            sx, sy = variant_scales[int(env_id) % max(len(variant_scales), 1)]
+            conn.send(("table_scale", float(sx), float(sy)))
+        except Exception as exc:
+            print(f"[worker] table_scale report failed: {exc!r}", flush=True)
+        try:
+            # Report env_id's actual table pose (env-local frame) so viser can
+            # move its /table frame to the sampled xy + yaw. Updated again at
+            # each reset (see "reset_done" handler in _student_episode).
+            origin = env.scene.env_origins[int(env_id)]
+            pos = (env.table.data.root_pos_w[int(env_id)] - origin).cpu().tolist()
+            quat = env.table.data.root_quat_w[int(env_id)].cpu().tolist()
+            conn.send(("table_pose", *pos, *quat))
+        except Exception as exc:
+            print(f"[worker] table_pose report failed: {exc!r}", flush=True)
 
         action_source = initial_action_source
         while True:
@@ -812,6 +864,11 @@ def _run_viewer(args) -> int:
             self.toggle_delays = bool(init_toggles["delays"])
             self.toggle_camera_pose_rand = bool(init_toggles["camera_pose_rand"])
             self.toggle_depth_aug = bool(init_toggles["depth_aug"])
+            # Table-DR dropdown choices — default to off, user picks via GUI.
+            # Not auto-populated from policy metadata (no training_toggles yet).
+            self.table_xy_choice = "off"
+            self.table_yaw_choice = "off"
+            self.table_scale_choice = "off"
             self.action_source = args.initial_action_source
             self.env_id = int(args.env_id)
             self.depth_send_every = int(args.depth_send_every)
@@ -884,6 +941,23 @@ def _run_viewer(args) -> int:
                 self._cb_depth_aug = self.server.gui.add_checkbox(
                     "Depth-image noise",
                     initial_value=self.toggle_depth_aug,
+                )
+
+                # === table DR ===
+                self._dd_table_xy = self.server.gui.add_dropdown(
+                    "Table xy noise",
+                    options=tuple(TABLE_XY_CHOICES.keys()),
+                    initial_value=self.table_xy_choice,
+                )
+                self._dd_table_yaw = self.server.gui.add_dropdown(
+                    "Table yaw noise",
+                    options=tuple(TABLE_YAW_CHOICES.keys()),
+                    initial_value=self.table_yaw_choice,
+                )
+                self._dd_table_scale = self.server.gui.add_dropdown(
+                    "Table size scale",
+                    options=tuple(TABLE_SCALE_CHOICES.keys()),
+                    initial_value=self.table_scale_choice,
                 )
 
                 # === load env ===
@@ -1065,6 +1139,9 @@ def _run_viewer(args) -> int:
             self.toggle_delays = bool(self._cb_delays.value)
             self.toggle_camera_pose_rand = bool(self._cb_camera_pose_rand.value)
             self.toggle_depth_aug = bool(self._cb_depth_aug.value)
+            self.table_xy_choice = str(self._dd_table_xy.value)
+            self.table_yaw_choice = str(self._dd_table_yaw.value)
+            self.table_scale_choice = str(self._dd_table_scale.value)
 
             worker_overrides = dict(self.extra_overrides)
             # Map the 3 GUI toggles to the underlying StudentObsCfg /
@@ -1076,6 +1153,21 @@ def _run_viewer(args) -> int:
             worker_overrides["env.student_obs.use_camera_delay"] = self.toggle_delays
             worker_overrides["env.student_obs.use_camera_pose_rand"] = self.toggle_camera_pose_rand
             worker_overrides["env.student_obs.use_depth_aug"] = self.toggle_depth_aug
+            # Table-DR knobs. xy/yaw are reset-time; scale is USD-time (baked
+            # at scene init by the worker -- the Load env spawn picks them up).
+            xy_range = TABLE_XY_CHOICES[self.table_xy_choice]
+            yaw_deg = TABLE_YAW_CHOICES[self.table_yaw_choice]
+            scale_x, scale_y = TABLE_SCALE_CHOICES[self.table_scale_choice]
+            n_variants = (TABLE_SCALE_N_VARIANTS_DEFAULT
+                          if self.table_scale_choice != "off" else 1)
+            worker_overrides["env.reset.table_reset_xy_range_m"] = list(xy_range)
+            worker_overrides["env.reset.table_reset_yaw_range_deg"] = float(yaw_deg)
+            worker_overrides["env.assets.table_scale_range_x"] = list(scale_x)
+            worker_overrides["env.assets.table_scale_range_y"] = list(scale_y)
+            worker_overrides["env.assets.table_scale_num_variants"] = int(n_variants)
+            # Resize the viser /table/wood mesh to the max-extent envelope so the
+            # static viz roughly matches the largest scaled variant in the sim.
+            self._update_table_viz(scale_x_range=scale_x, scale_y_range=scale_y)
 
             authkey = os.urandom(16)
             listener = Listener(("127.0.0.1", 0), authkey=authkey)

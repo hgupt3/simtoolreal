@@ -822,6 +822,60 @@ def _apply_urdf_sdf_collision_markers(
         )
 
 
+def _generate_scaled_table_urdfs(
+    base_urdf_path: str,
+    num_variants: int,
+    scale_range_x: tuple[float, float],
+    scale_range_y: tuple[float, float],
+    out_dir: Path,
+    seed: int = 0,
+) -> tuple[list[str], list[tuple[float, float]]]:
+    """Write `num_variants` scaled copies of a single-box table URDF.
+
+    Each variant samples (sx, sy) independently from the configured ranges
+    (Z scale held at 1.0 so the table surface height matches what the policy
+    was trained on). The base URDF must have a single `<box size="X Y Z"/>`
+    in both the `<visual>` and `<collision>` blocks (matches the bundled
+    `assets/urdf/table_narrow.urdf`).
+
+    Returns the list of written URDF paths, in deterministic order.
+    """
+    import re
+    import numpy as np
+
+    base_text = Path(base_urdf_path).read_text()
+    match = re.search(r'<box\s+size="([\d.\-+eE\s]+)"\s*/>', base_text)
+    if match is None:
+        raise ValueError(
+            f"table URDF {base_urdf_path!r} has no <box size=\"...\"/> element; "
+            "scaling helper only supports the simple single-box table."
+        )
+    base_dims = tuple(float(v) for v in match.group(1).split())
+    if len(base_dims) != 3:
+        raise ValueError(
+            f"expected 3-element <box size>, got {base_dims!r} from {base_urdf_path}"
+        )
+
+    rng = np.random.default_rng(seed)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+    scales: list[tuple[float, float]] = []
+    for i in range(int(num_variants)):
+        sx = float(rng.uniform(*scale_range_x))
+        sy = float(rng.uniform(*scale_range_y))
+        new_size = f"{base_dims[0] * sx:.6f} {base_dims[1] * sy:.6f} {base_dims[2]:.6f}"
+        new_text = re.sub(
+            r'<box\s+size="[\d.\-+eE\s]+"\s*/>',
+            f'<box size="{new_size}"/>',
+            base_text,
+        )
+        path = out_dir / f"table_variant_{i:03d}.urdf"
+        path.write_text(new_text)
+        paths.append(str(path))
+        scales.append((sx, sy))
+    return paths, scales
+
+
 def _convert_urdf_to_usd(
     asset_path: str,
     usd_work_dir: Path,
@@ -1094,13 +1148,57 @@ def setup_scene(env) -> None:
         ),
         apply_physx_articulation=True,
     )
-    table_usd_path = _bake_usd(
-        _convert_urdf_to_usd(assets_cfg.table_urdf, usd_work_dir, fix_base=False),
-        bake_root, "table",
-        props=dict(
-            kinematic_enabled=True, disable_gravity=True, articulation_enabled=False,
-        ),
-    )
+    # Table USD(s). When table_scale_range_x/y are non-trivial and
+    # table_scale_num_variants > 1, pre-bake N scaled URDF variants and pass
+    # them as a list to RigidObject — Isaac Lab's MultiUsdFileCfg cycles
+    # through the list, giving each env one of the variants. Z scale is held
+    # at 1.0 so the table surface height matches the policy's expectation.
+    scale_range_x = tuple(float(v) for v in getattr(assets_cfg, "table_scale_range_x", (1.0, 1.0)))
+    scale_range_y = tuple(float(v) for v in getattr(assets_cfg, "table_scale_range_y", (1.0, 1.0)))
+    n_table_variants = int(getattr(assets_cfg, "table_scale_num_variants", 1))
+    table_scale_is_trivial = (
+        scale_range_x == (1.0, 1.0) and scale_range_y == (1.0, 1.0)
+    ) or n_table_variants <= 1
+    if table_scale_is_trivial:
+        table_usd_paths = [_bake_usd(
+            _convert_urdf_to_usd(assets_cfg.table_urdf, usd_work_dir, fix_base=False),
+            bake_root, "table",
+            props=dict(
+                kinematic_enabled=True, disable_gravity=True, articulation_enabled=False,
+            ),
+        )]
+        # Single (sx, sy) = (1.0, 1.0) for downstream consumers (eval viz).
+        env._table_variant_scales = [(1.0, 1.0)]
+    else:
+        variant_urdf_dir = Path(env._tmp_asset_dir) / "table_variants"
+        variant_urdf_paths, variant_scales = _generate_scaled_table_urdfs(
+            base_urdf_path=assets_cfg.table_urdf,
+            num_variants=n_table_variants,
+            scale_range_x=scale_range_x,
+            scale_range_y=scale_range_y,
+            out_dir=variant_urdf_dir,
+            # Deterministic across runs so the on-disk variants are stable.
+            # The env-level seed governs which variant lands in which env via
+            # Isaac Lab's round-robin spawn ordering.
+            seed=0,
+        )
+        env._table_variant_scales = list(variant_scales)
+        table_usd_paths = [
+            _bake_usd(
+                _convert_urdf_to_usd(p, usd_work_dir, fix_base=False),
+                bake_root, f"table_variant_{idx:03d}",
+                props=dict(
+                    kinematic_enabled=True, disable_gravity=True, articulation_enabled=False,
+                ),
+            )
+            for idx, p in enumerate(variant_urdf_paths)
+        ]
+        # variant_scales already stashed above for downstream consumers.
+        _log_scene_step(
+            setup_t0,
+            f"baked {len(table_usd_paths)} scaled table USD variants "
+            f"x_range={scale_range_x} y_range={scale_range_y}",
+        )
     _log_scene_step(setup_t0, "resolved baked USDs")
 
     # 3. Pre-create env roots so regex spawns resolve to every env.
@@ -1108,7 +1206,7 @@ def setup_scene(env) -> None:
 
     # 4. Spawn assets.
     env.robot = Articulation(build_robot_articulation_usd_cfg(robot_usd_path))
-    env.table = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/Table", [table_usd_path]))
+    env.table = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/Table", table_usd_paths))
     env.object = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/Object", object_usd_paths))
     env.goal_viz = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/GoalViz", goalviz_usd_paths))
     _log_scene_step(setup_t0, "spawned robot/table/object/goalviz")

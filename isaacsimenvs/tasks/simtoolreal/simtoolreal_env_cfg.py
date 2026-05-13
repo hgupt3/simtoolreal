@@ -58,6 +58,16 @@ class AssetsCfg:
         "assets/urdf/kuka_sharpa_description/iiwa14_left_sharpa_adjusted_restricted.urdf"
     )
     table_urdf: str = "assets/urdf/table_narrow.urdf"
+    # Per-env scale ranges applied to the table mesh at scene-build time.
+    # Sampled independently per env: sx ~ U(table_scale_range_x), sy ~ U(table_scale_range_y).
+    # Z is held at 1.0 so the table surface height stays at table_reset_z (which the
+    # policy was trained to expect). Default (1, 1) means no scaling (legacy behavior).
+    table_scale_range_x: tuple[float, float] = (1.0, 1.0)
+    table_scale_range_y: tuple[float, float] = (1.0, 1.0)
+    # Number of pre-baked USD variants spanning the scale range. Per env Isaac Lab
+    # round-robins across this list at scene build, so each env's table has a
+    # different XY footprint drawn from the configured ranges.
+    table_scale_num_variants: int = 1
 
     object_name: str = "handle_head_primitives"
     handle_head_types: tuple[str, ...] = (
@@ -273,6 +283,12 @@ class ResetCfg:
     table_reset_z: float = 0.38
     table_reset_z_range: float = 0.01
     table_object_z_offset: float = 0.25
+    # Per-env XY position noise applied at reset (uniform half-widths in m).
+    # Default (0, 0) keeps the table centered on the env origin (legacy behavior).
+    table_reset_xy_range_m: tuple[float, float] = (0.0, 0.0)
+    # Per-env yaw noise applied at reset (uniform half-width in degrees about z).
+    # Default 0.0 preserves the identity quat (legacy behavior).
+    table_reset_yaw_range_deg: float = 0.0
 
     # Goal sampling
     goal_sampling_type: str = "delta"  # "delta" | "absolute"

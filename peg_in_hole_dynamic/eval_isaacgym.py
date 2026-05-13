@@ -617,14 +617,64 @@ class PegDynamicDemo:
         )
         self.robot.update_cfg(DEFAULT_DOF_POS)
 
-        self.server.scene.add_frame(
-            "/table", position=(0, 0, TABLE_Z), wxyz=(1, 0, 0, 0), show_axes=False,
+        self._table_frame_default_pos = (0.0, 0.0, TABLE_Z)
+        self._table_frame_default_wxyz = (1.0, 0.0, 0.0, 0.0)
+        self._table_frame = self.server.scene.add_frame(
+            "/table",
+            position=self._table_frame_default_pos,
+            wxyz=self._table_frame_default_wxyz,
+            show_axes=False,
         )
-        self.server.scene.add_box(
+        # Base table dims = the URDF box (X, Y, Z) before any scale variants.
+        # Stored so subclasses can re-issue the box with scaled dimensions.
+        self._table_base_dims: tuple[float, float, float] = (0.475, 0.4, 0.3)
+        self._table_wood = self.server.scene.add_box(
             "/table/wood", color=(180, 130, 70),
-            dimensions=(0.475, 0.4, 0.3), position=(0, 0, 0),
+            dimensions=self._table_base_dims, position=(0, 0, 0),
             side="double", opacity=0.9,
         )
+
+    def _update_table_viz(
+        self,
+        scale_x_range: tuple[float, float] = (1.0, 1.0),
+        scale_y_range: tuple[float, float] = (1.0, 1.0),
+    ) -> None:
+        """Re-issue ``/table/wood`` sized to the max-extent of the scale range.
+
+        Per-env scale variants are baked at scene-init in the sim worker; viser
+        can only show one mesh, so we draw the largest box the scale dropdown
+        permits as an envelope. Identity scale (default) reproduces the
+        original mesh exactly.
+        """
+        sx = max(scale_x_range)
+        sy = max(scale_y_range)
+        bx, by, bz = self._table_base_dims
+        try:
+            self._table_wood.remove()
+        except Exception:
+            pass
+        self._table_wood = self.server.scene.add_box(
+            "/table/wood", color=(180, 130, 70),
+            dimensions=(bx * sx, by * sy, bz), position=(0, 0, 0),
+            side="double", opacity=0.9,
+        )
+
+    def _update_table_pose(
+        self,
+        pos_local: tuple[float, float, float],
+        quat_wxyz: tuple[float, float, float, float],
+    ) -> None:
+        """Move the ``/table`` frame to the displayed env's actual table pose.
+
+        ``pos_local`` is the env-local position (world - env_origin). The
+        TABLE_Z offset is already baked into the URDF box visual position
+        (z=0.15), so the frame z should be the table's actual world z minus
+        the box-half-height inherent in ``_table_base_dims[2] / 2``; in
+        practice the sim publishes ``root_pos_w`` at the center of the box,
+        and viser's frame is the box parent — we use the published z as-is.
+        """
+        self._table_frame.position = tuple(float(v) for v in pos_local)
+        self._table_frame.wxyz = tuple(float(v) for v in quat_wxyz)
 
     def _clear_dynamic(self):
         for h in reversed(self._dyn):
@@ -968,6 +1018,24 @@ class PegDynamicDemo:
             self._env_ready = True
             self._md_status.content = "**Status:** Ready -- click **Run Episode**"
             print("[launcher] Environment ready")
+
+        elif tag == "table_scale":
+            # Worker reports the actual (sx, sy) of the displayed env's table.
+            sx, sy = float(msg[1]), float(msg[2])
+            self._update_table_viz(
+                scale_x_range=(sx, sx), scale_y_range=(sy, sy),
+            )
+            print(f"[launcher] table_scale received: sx={sx:.3f} sy={sy:.3f}")
+
+        elif tag == "table_pose":
+            # Worker reports env_id's env-local table pose (after reset).
+            px, py, pz = float(msg[1]), float(msg[2]), float(msg[3])
+            qw, qx, qy, qz = (float(msg[4]), float(msg[5]),
+                              float(msg[6]), float(msg[7]))
+            self._update_table_pose((px, py, pz), (qw, qx, qy, qz))
+            print(f"[launcher] table_pose received: "
+                  f"pos=({px:.3f},{py:.3f},{pz:.3f}) "
+                  f"quat=({qw:.3f},{qx:.3f},{qy:.3f},{qz:.3f})")
 
         elif tag == "state":
             state, successes, max_succ, step = msg[1], msg[2], msg[3], msg[4]

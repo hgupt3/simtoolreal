@@ -197,7 +197,13 @@ def _randomize_robot_dof_state(env, env_ids: torch.Tensor) -> None:
 
 
 def _reset_table_pose(env, env_ids: torch.Tensor) -> None:
-    """Randomize the table's surface height per env and write the new pose."""
+    """Randomize the table's pose per env and write the new transform.
+
+    Z position is required (the policy uses `_table_z_per_env` to set the
+    object init height). XY position and yaw are gated on
+    `table_reset_xy_range_m` / `table_reset_yaw_range_deg` — default ranges
+    are zero so this is a no-op for runs that don't opt in.
+    """
     cfg = env.cfg.reset
     n = env_ids.numel()
     env_origins = env.scene.env_origins[env_ids]
@@ -210,9 +216,30 @@ def _reset_table_pose(env, env_ids: torch.Tensor) -> None:
 
     pos_local = torch.zeros(n, 3, device=env.device)
     pos_local[:, 2] = table_z
-    quat = torch.tensor(
-        [1.0, 0.0, 0.0, 0.0], device=env.device, dtype=torch.float32
-    ).unsqueeze(0).expand(n, -1)
+
+    # XY position noise — per-env independent uniform half-widths.
+    xy_range = tuple(float(v) for v in cfg.table_reset_xy_range_m)
+    if xy_range[0] > 0.0 or xy_range[1] > 0.0:
+        rx = torch.empty(n, device=env.device).uniform_(-xy_range[0], xy_range[0])
+        ry = torch.empty(n, device=env.device).uniform_(-xy_range[1], xy_range[1])
+        pos_local[:, 0] = rx
+        pos_local[:, 1] = ry
+
+    # Yaw noise — sample uniform [-r, r] degrees, build a z-axis rotation quat.
+    yaw_range_deg = float(cfg.table_reset_yaw_range_deg)
+    if yaw_range_deg > 0.0:
+        yaw_rad = (
+            torch.empty(n, device=env.device).uniform_(-1.0, 1.0)
+            * yaw_range_deg * (torch.pi / 180.0)
+        )
+        half = yaw_rad * 0.5
+        w = torch.cos(half)
+        z = torch.sin(half)
+        quat = torch.stack([w, torch.zeros_like(w), torch.zeros_like(w), z], dim=-1)
+    else:
+        quat = torch.tensor(
+            [1.0, 0.0, 0.0, 0.0], device=env.device, dtype=torch.float32
+        ).unsqueeze(0).expand(n, -1)
 
     pose = torch.cat([pos_local + env_origins, quat], dim=-1)
     env.table.write_root_pose_to_sim(pose, env_ids=env_ids)

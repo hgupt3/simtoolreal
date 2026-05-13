@@ -1,0 +1,307 @@
+{
+  "policy_name": "camrand_on_depthaug_on",
+  "student_checkpoint": "/share/portal/kk837/depthbasedRL/hardware_rollouts/2026-05-13_camera_noise_checkpoints/camrand_on_depthaug_on/model.pth",
+  "teacher_checkpoint": "/share/portal/kk837/depthbasedRL/train_dir/isaacsimenvs/play2win_peg_insertion/lpeg_tol0p5mm_finetune_rgf0_2026-05-11_16-50-01/0_lpeg_tol0p5mm_finetune_rgf0_2026-05-11_16-50-01/best/model.pth",
+  "num_envs": 10,
+  "seed": 42,
+  "max_steps_per_episode": 600,
+  "table_scale_x": [
+    1.0,
+    1.0
+  ],
+  "table_scale_y": [
+    1.0,
+    1.0
+  ],
+  "table_scale_num_variants": 1,
+  "results": [
+    {
+      "name": "baseline",
+      "toggles": {
+        "delays": false,
+        "cam": false,
+        "depth": false,
+        "xy_m": 0.0,
+        "yaw_deg": 0.0
+      },
+      "mean_succ": 0.0,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "delays",
+      "toggles": {
+        "delays": true,
+        "cam": false,
+        "depth": false,
+        "xy_m": 0.0,
+        "yaw_deg": 0.0
+      },
+      "mean_succ": 0.20000000298023224,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "cam_pose_rand",
+      "toggles": {
+        "delays": false,
+        "cam": true,
+        "depth": false,
+        "xy_m": 0.0,
+        "yaw_deg": 0.0
+      },
+      "mean_succ": 0.10000000149011612,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "depth_aug",
+      "toggles": {
+        "delays": false,
+        "cam": false,
+        "depth": true,
+        "xy_m": 0.0,
+        "yaw_deg": 0.0
+      },
+      "mean_succ": 0.10000000149011612,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "table_xy_3cm",
+      "toggles": {
+        "delays": false,
+        "cam": false,
+        "depth": false,
+        "xy_m": 0.03,
+        "yaw_deg": 0.0
+      },
+      "mean_succ": 0.10000000149011612,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "table_yaw_5deg",
+      "toggles": {
+        "delays": false,
+        "cam": false,
+        "depth": false,
+        "xy_m": 0.0,
+        "yaw_deg": 5.0
+      },
+      "mean_succ": 0.0,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "table_xy_yaw",
+      "toggles": {
+        "delays": false,
+        "cam": false,
+        "depth": false,
+        "xy_m": 0.03,
+        "yaw_deg": 5.0
+      },
+      "mean_succ": 0.10000000149011612,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_goals": 1.0
+    },
+    {
+      "name": "all_realistic",
+      "toggles": {
+        "delays": true,
+        "cam": true,
+        "depth": true,
+        "xy_m": 0.03,
+        "yaw_deg": 5.0
+      },
+      "mean_succ": 0.0,
+      "succ_rate_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_succ_per_env": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max_goals": 1.0
+    }
+  ]
+}
