@@ -4,3 +4,5 @@ timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rat
 2026-05-13T01:03:43-04:00	449114c	lpeg_v_n512_mb2048_me8_lr1e-4	512	2048	8	1e-4	128	1754.9	keep	MINI_EPOCHS 4 -> 8; 45% faster than baseline; new best
 2026-05-13T01:35:40-04:00	2cc4f39	lpeg_v_n512_mb2048_me8_lr3e-4	512	2048	8	3e-4	128	1557.5	keep	combine me8 + lr3e-4; 51% faster than baseline; new best
 2026-05-13T01:57:50-04:00	a7e766c	lpeg_v_n512_mb2048_me16_lr1e-4	512	2048	16	1e-4	128	2491.1	discard	me=16 slower than me=8; mini_epochs has saturated
+2026-05-13T02:24:38-04:00	7a1493c	lpeg_v_n512_mb2048_me8_lr1e-3	512	2048	8	1e-3	128	0	discard	LR=1e-3 oscillating, vmax 1.48 stalled at +2744s; LR too high
+2026-05-13T02:24:38-04:00	877b77e	lpeg_v_n256_mb1024_me8_lr3e-4	256	1024	8	3e-4	64	1409.8	keep	NUM_ENVS halved to 256; 56% faster than baseline; new best
