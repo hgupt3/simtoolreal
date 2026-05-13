@@ -14,3 +14,5 @@ timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rat
 2026-05-13T10:48:49-04:00	4f86b09	nf_n512_mb2048_me8_lr4e-4	512	2048	8	4e-4	128	1.1562	3596.0	keep	lr=4e-4 at mb=2048: 1.156 vs lr=3e-4 0.961 = +20% relative; new best
 2026-05-13T11:56:59-04:00	07672d6	nf_n512_mb2048_me8_lr5e-4	512	2048	8	5e-4	128	1.1250	3599.9	discard	lr=5e-4 vmax 1.125 < lr=4e-4 best 1.156
 2026-05-13T11:56:59-04:00	0c1eed1	nf_n512_mb2048_me8_lr8e-4	512	2048	8	8e-4	128	0.9609	3597.2	discard	lr=8e-4 vmax 0.961 << lr=4e-4 best 1.156; LR bell curve peaks at 4e-4
+2026-05-13T12:59:59-04:00	ffead1c	nf_n1024_mb2048_me8_lr4e-4	1024	2048	8	4e-4	256	0.7930	3457.2	discard	n=1024 + lr=4e-4: 0.79 < lr=4e-4 best 1.16; n=1024 doesn't help even at higher LR
+2026-05-13T12:59:59-04:00	d5f067a	nf_n512_mb1024_me8_lr4e-4	512	1024	8	4e-4	128	0.6484	3584.8	discard	mb=1024 + lr=4e-4: 0.65 < lr=4e-4 best 1.16; smaller MB hurts at any LR
