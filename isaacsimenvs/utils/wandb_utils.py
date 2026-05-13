@@ -45,9 +45,14 @@ class WandbAlgoObserver(AlgoObserver):
     def before_init(self, base_name, config, experiment_name):
         import wandb
 
+        # rl_games' `experiment_name` is derived from `agent_cfg.params.config.name`
+        # (yaml-side, pinned and prefixed with `0_` to satisfy its policy_idx parsing).
+        # The CLI `--wandb_name` value lives on `self.cfg.wandb_name` — prefer that
+        # if set so per-run sub-file `EXPERIMENT_NAME`s actually show up in wandb.
+        chosen = getattr(self.cfg, "wandb_name", "") or experiment_name
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        wandb_unique_id = f"{experiment_name}_{timestamp}"
-        display_name = f"{experiment_name}_{timestamp}"
+        wandb_unique_id = f"{chosen}_{timestamp}"
+        display_name = f"{chosen}_{timestamp}"
         print(f"[Wandb] unique id: {wandb_unique_id}")
 
         cfg = self.cfg

@@ -223,6 +223,7 @@ wandb/
 distillation_runs/
 slurm_logs/
 rollout_videos/
+outputs/
 
 # Isaac Gym (proprietary, not redistributable)
 isaacgym
