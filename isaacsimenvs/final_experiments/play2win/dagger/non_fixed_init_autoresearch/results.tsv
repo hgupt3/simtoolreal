@@ -4,3 +4,5 @@ timestamp	commit	experiment_tag	num_envs	minibatch_size	mini_epochs	learning_rat
 2026-05-13T05:18:39-04:00	baf8d77	nf_n512_mb1024_me8_lr3e-4	512	1024	8	3e-4	128	0.7188	3598.6	keep	me=8 + lr=3e-4; 8.4x baseline; new best; still rising at budget end
 2026-05-13T06:21:58-04:00	5a7d8ce	nf_n256_mb512_me8_lr3e-4	256	512	8	3e-4	64	0.3906	3588.5	discard	n=256 hurt: vmax 0.39 << me8 best 0.72; need more envs for this task
 2026-05-13T06:21:58-04:00	d7c16cd	nf_n512_mb1024_me16_lr3e-4	512	1024	16	3e-4	128	0.1797	3580.3	discard	me=16 vmax 0.18 << me8 best 0.72; too much off-policy fitting
+2026-05-13T07:30:03-04:00	f9a5d9e	nf_n1024_mb2048_me8_lr3e-4	1024	2048	8	3e-4	256	0.7266	3598.2	keep	n=1024: 0.727 marginal new best (+1% vs me8 0.719); 2x mem cost
+2026-05-13T07:30:03-04:00	c20a9ba	nf_n512_mb1024_me8_lr5e-4	512	1024	8	5e-4	128	0.6250	3596.8	discard	lr=5e-4 vmax 0.625 < me8 0.719; lr=3e-4 is the sweet spot
