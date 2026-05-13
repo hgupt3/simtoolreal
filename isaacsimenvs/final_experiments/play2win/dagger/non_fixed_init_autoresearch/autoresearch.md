@@ -260,6 +260,7 @@ A `keep` advances the "current best" pointer (highest `max_successes` across all
       `RESET_POSITION_NOISE_X=0.1`, `Y=0.1`, `Z=0.02`,
       `RESET_DOF_POS_NOISE_ARM=0.1`, `FINGERS=0.1`,
       `RESET_DOF_VEL_NOISE=0.5`, `TABLE_RESET_Z_RANGE=0.01`.
+- [ ] `GOAL_XY_OBS_NOISE=0.0` (goal noise OFF for both teacher and student observations).
 - [ ] `LAMBDA_D_START=1.0`, `LAMBDA_D_FLOOR=1.0` (pure BC).
 - [ ] `WANDB_PROJECT="dagger_nonfixed_autoresearch"`, `WANDB_GROUP="bc_only_det"`.
 - [ ] `EXPERIMENT_TAG` is unique vs. every prior row in `results.tsv`.
