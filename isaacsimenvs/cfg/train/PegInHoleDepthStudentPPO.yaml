@@ -1,0 +1,118 @@
+# PegInHoleDepthStudent rl_games train cfg — plain PPO + DAgger.
+# Same DAggerA2CAgent class as the SAPG variant; SAPG knobs disabled.
+# `has_block_id: False` because no intr_reward_coef_embd channel is appended.
+
+params:
+  seed: 42
+
+  env:
+    clip_observations: 10.0
+    clip_actions: 1.0
+
+  algo:
+    name: dagger_ppo
+
+  model:
+    name: continuous_a2c_logstd
+
+  network:
+    name: depth_cnn_lstm
+    space:
+      continuous:
+        mu_activation: None
+        sigma_activation: None
+        mu_init:
+          name: default
+        sigma_init:
+          name: const_initializer
+          val: 0
+        fixed_sigma: fixed
+    image_hw: [70, 70]
+    image_channels: 1
+    proprio_dim: 87           # joint_pos(29) + joint_vel(29) + prev_action_targets(29). Verify via env at smoke time.
+    has_block_id: False
+    symmetric_critic: False   # toggled by --critic
+    cnn_channels: [32, 64, 128, 128]
+    cnn_feat_dim: 256
+    proprio_hidden: [128, 64]
+    lstm_hidden: 1024
+    lstm_layers: 1
+    head_hidden: 256
+    log_sigma_init: -1.0
+
+  load_checkpoint: False
+  load_path: ''
+
+  config:
+    name: 0_lpeg_tol0p5mm_ppo_dagger
+    full_experiment_name: ${.name}
+    env_name: rlgpu
+    device: 'cuda:0'
+    device_name: 'cuda:0'
+    multi_gpu: False
+    ppo: True
+    mixed_precision: True
+    normalize_input: True
+    normalize_value: True
+    value_bootstrap: True
+    normalize_advantage: True
+    reward_shaper:
+      scale_value: 0.01
+    num_actors: ${....env.scene.num_envs}
+    gamma: 0.99
+    tau: 0.95
+    learning_rate: 1e-4
+    lr_schedule: adaptive
+    schedule_type: standard
+    kl_threshold: 0.016
+    score_to_win: 1000000
+    max_epochs: 1000000
+    save_best_after: 100
+    save_frequency: 3000
+    print_stats: True
+    grad_norm: 1.0
+    entropy_coef: 0.0
+    truncate_grads: True
+    e_clip: 0.1
+    minibatch_size: 16384
+    mini_epochs: 2
+    critic_coef: 4.0
+    clip_value: True
+    horizon_length: 16
+    seq_length: 16
+    bounds_loss_coef: 0.0001
+
+    central_value_config:
+      minibatch_size: 16384
+      mini_epochs: 2
+      learning_rate: 1e-4
+      kl_threshold: 0.016
+      clip_value: True
+      normalize_input: True
+      truncate_grads: True
+      network:
+        name: actor_critic
+        central_value: True
+        mlp:
+          units: [1024, 1024, 512, 512]
+          activation: elu
+          d2rl: False
+          initializer:
+            name: default
+          regularizer:
+            name: None
+
+    # === DAgger ===
+    dagger:
+      teacher_run_dir: ???
+      teacher_checkpoint: null
+      teacher_task_id: Isaacsimenvs-PegInHole-Direct-v0
+      teacher_agent_key: rl_games_sapg_cfg_entry_point
+      lambda_d_start: 1.0
+      lambda_d_floor: 0.1
+      lambda_d_decay_frac: 0.5
+
+    player:
+      deterministic: False
+      games_num: 100000
+      print_stats: False
