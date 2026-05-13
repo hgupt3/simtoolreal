@@ -68,8 +68,15 @@ def _one_leg_screw_insert_waypoints(final_pose, turns):
 
 
 def _one_leg_dense_insert_waypoints(final_pose):
-    """Return lead-in + two-turn screw waypoints + final assembled pose."""
+    """Lead-in + screw waypoints every 180° (0.5 turn step) + final."""
     return _one_leg_screw_insert_waypoints(final_pose, turns=(2.0, 1.5, 1.0, 0.5))
+
+
+def _one_leg_super_dense_insert_waypoints(final_pose):
+    """Lead-in + screw waypoints every 90° (0.25 turn step) + final."""
+    return _one_leg_screw_insert_waypoints(
+        final_pose, turns=(2.0, 1.75, 1.5, 1.25, 1.0, 0.75, 0.5, 0.25)
+    )
 
 
 def _one_leg_semi_dense_insert_waypoints(final_pose):
@@ -160,12 +167,14 @@ def _register_one_leg() -> None:
         qx, qy, qz, qw,
     )
     dense_waypoints = _one_leg_dense_insert_waypoints(final_pose)
+    super_dense_waypoints = _one_leg_super_dense_insert_waypoints(final_pose)
     semi_dense_waypoints = _one_leg_semi_dense_insert_waypoints(final_pose)
     sparse_waypoints = (dense_waypoints[0], dense_waypoints[-1])
 
     base_name = "furniture_bench.one_leg"
     for variant_name, insert_poses in (
         (base_name, dense_waypoints),
+        (f"{base_name}_super_dense", super_dense_waypoints),
         (f"{base_name}_dense", dense_waypoints),
         (f"{base_name}_semi_dense", semi_dense_waypoints),
         (f"{base_name}_sparse", sparse_waypoints),
@@ -188,6 +197,7 @@ def _register_one_leg() -> None:
         hybrid_recv_rel = hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix()
         for variant_name, insert_poses in (
             (hybrid_base_name, dense_waypoints),
+            (f"{hybrid_base_name}_super_dense", super_dense_waypoints),
             (f"{hybrid_base_name}_dense", dense_waypoints),
             (f"{hybrid_base_name}_semi_dense", semi_dense_waypoints),
             (f"{hybrid_base_name}_sparse", sparse_waypoints),
@@ -287,6 +297,9 @@ def _register_bulb_screw() -> None:
         qx, qy, qz, qw,
     )
     dense_waypoints      = _bulb_screw_waypoints(final_pose, turns=(2.0, 1.5, 1.0, 0.5))
+    super_dense_waypoints = _bulb_screw_waypoints(
+        final_pose, turns=(2.0, 1.75, 1.5, 1.25, 1.0, 0.75, 0.5, 0.25)
+    )
     semi_dense_waypoints = _bulb_screw_waypoints(final_pose, turns=(1.0, 0.5))
     sparse_waypoints     = (dense_waypoints[0], dense_waypoints[-1])
 
@@ -294,6 +307,7 @@ def _register_bulb_screw() -> None:
     recv_rel = hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix()
     for variant_name, insert_poses in (
         (base_name, dense_waypoints),
+        (f"{base_name}_super_dense", super_dense_waypoints),
         (f"{base_name}_dense", dense_waypoints),
         (f"{base_name}_semi_dense", semi_dense_waypoints),
         (f"{base_name}_sparse", sparse_waypoints),

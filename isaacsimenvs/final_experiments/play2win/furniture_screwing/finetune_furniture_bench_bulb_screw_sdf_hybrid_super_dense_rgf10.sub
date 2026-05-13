@@ -3,7 +3,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=12
 #SBATCH --get-user-env
-#SBATCH --mem=200000
+#SBATCH --mem=100000
 #SBATCH -t 12-00:00:00
 #SBATCH --partition=portal
 #SBATCH --exclude=portal-compute-01
@@ -18,7 +18,7 @@
 
 TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
 AGENT_KEY="rl_games_sapg_cfg_entry_point"
-PROBLEM="furniture_bench.bulb_screw_sdf_hybrid_dense"
+PROBLEM="furniture_bench.bulb_screw_sdf_hybrid_super_dense"
 GOAL_MODE="preInsertAndFinal"
 CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
 
@@ -68,7 +68,7 @@ FORCE_CONSECUTIVE_NEAR_GOAL=True
 
 WANDB_PROJECT="isaacsimenvs"
 WANDB_GROUP="play2win_furniture_screwing"
-EXPERIMENT_TAG="furniture_bench_bulb_screw_sdf_hybrid_dense_finetune_rgf10"
+EXPERIMENT_TAG="furniture_bench_bulb_screw_sdf_hybrid_super_dense_finetune_rgf10"
 
 CAPTURE_VIEWER_LEN=600
 CAPTURE_VIEWER_INTERVAL=6000
