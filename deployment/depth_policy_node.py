@@ -791,6 +791,7 @@ class DepthPolicyNode:
             targets = np.clip(targets, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np)
 
             # Safety net (3 independent layers, see _safety_filter docstring).
+            policy_targets_pre_safety = targets.copy()
             targets, halted = self._safety_filter(
                 policy_targets=targets, prev_targets=self.prev_targets, q=q,
                 step_idx=n_steps,
@@ -798,10 +799,27 @@ class DepthPolicyNode:
             if halted:
                 # Hard halt: publish current q (no motion) and stop the loop.
                 self._publish_targets(np.clip(q, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np))
+                dev = targets - q
+                top = np.argsort(-np.abs(dev))[:5]   # 5 worst-offending joints
+
+                def name(i: int) -> str:
+                    return (IIWA_JOINT_NAMES[i] if i < N_ARM
+                            else SHARPA_JOINT_NAMES[i - N_ARM])
+
+                lines = "\n".join(
+                    f"  joint[{i}] {name(i):20s}  q={q[i]:+.4f}  "
+                    f"prev_target={self.prev_targets[i]:+.4f}  "
+                    f"target_after_safety={targets[i]:+.4f}  "
+                    f"policy_target_pre={policy_targets_pre_safety[i]:+.4f}  "
+                    f"mu={mu[i]:+.4f}"
+                    for i in top
+                )
                 rospy.logfatal(
                     "[depth-policy][SAFETY] commanded target deviated > "
                     f"{self.max_joint_deviation_rad:.3f} rad from current q. "
-                    "Publishing q (no motion) and exiting. Investigate before retry."
+                    f"step={n_steps}. Top 5 deviating joints:\n{lines}\n"
+                    "Publishing q (no motion) and exiting. Investigate "
+                    "before retry."
                 )
                 return
 
@@ -817,10 +835,17 @@ class DepthPolicyNode:
             now = time.perf_counter()
             if now - t_last_report >= 2.0:
                 step_ms = (now - t_start) * 1000.0
+                dev = targets - q
+                worst = int(np.argmax(np.abs(dev)))
+                worst_name = (IIWA_JOINT_NAMES[worst] if worst < N_ARM
+                              else SHARPA_JOINT_NAMES[worst - N_ARM])
                 rospy.loginfo(
                     f"[depth-policy] step={n_steps} zed_age_ms={age_s * 1000:.1f} "
                     f"loop_ms={step_ms:.1f} (target={self.control_dt * 1000:.1f}ms) "
-                    f"frame_id={frame_id}"
+                    f"frame_id={frame_id} | "
+                    f"max|mu|={float(np.abs(mu).max()):+.3f}@"
+                    f"{int(np.argmax(np.abs(mu)))} "
+                    f"max|tgt-q|={float(np.abs(dev).max()):+.3f}@{worst_name}"
                 )
                 t_last_report = now
 
