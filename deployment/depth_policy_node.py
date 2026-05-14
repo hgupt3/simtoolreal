@@ -88,6 +88,19 @@ IIWA_JOINT_NAMES = [f"iiwa_joint_{i + 1}" for i in range(N_ARM)]
 SHARPA_JOINT_NAMES = [f"joint_{i}.0" for i in range(N_HAND)]
 
 
+def _normalize_joint_pos_to_unit(q_rad: np.ndarray) -> np.ndarray:
+    """Map joint positions (rad, canonical order) to [-1, 1] via joint limits.
+
+    Mirrors training's ``_canonical_joint_obs`` in
+    ``isaacsimenvs/tasks/simtoolreal/utils/obs_utils.py``:
+        joint_pos = 2 * (raw - lower) / (upper - lower) - 1
+    `joint_vel` and `prev_action_targets` are NOT normalized at training -- only
+    `joint_pos` is. So this fn is for `q` only.
+    """
+    rng = np.maximum(Q_UPPER_LIMITS_np - Q_LOWER_LIMITS_np, 1e-6)
+    return (2.0 * (q_rad - Q_LOWER_LIMITS_np) / rng - 1.0).astype(np.float32)
+
+
 # ============================================================
 # Action mapping helpers (mirrors compute_joint_pos_targets in
 # isaacgymenvs/utils/observation_action_utils_sharpa.py).
@@ -637,7 +650,7 @@ class DepthPolicyNode:
                 rate.sleep()
                 continue
             proprio = np.concatenate(
-                [q.astype(np.float32),
+                [_normalize_joint_pos_to_unit(q),
                  qd.astype(np.float32),
                  self.prev_targets.astype(np.float32)]
             )
@@ -674,7 +687,7 @@ class DepthPolicyNode:
                 continue
 
             proprio = np.concatenate(
-                [q.astype(np.float32),
+                [_normalize_joint_pos_to_unit(q),
                  qd.astype(np.float32),
                  self.prev_targets.astype(np.float32)]
             )
