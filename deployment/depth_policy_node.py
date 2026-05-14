@@ -172,6 +172,33 @@ def _load_agent_yaml(path: Path) -> dict:
     )
 
 
+def _register_depth_cnn_lstm_builder() -> None:
+    """Register ``depth_cnn_lstm`` with rl_games' NETWORK_REGISTRY.
+
+    Loaded via importlib so we don't trigger ``isaacsimenvs/__init__.py``,
+    which transitively pulls in ``isaacsimenvs.tasks`` -> isaaclab. That keeps
+    the deployment venv lean (only torch + rl_games + the leaf builder file)
+    so it can coexist with the ROS / ZED conda env in the lab.
+    """
+    from rl_games.algos_torch import model_builder
+
+    if "depth_cnn_lstm" in model_builder.NETWORK_REGISTRY:
+        return
+    import importlib.util as _ilu
+
+    module_path = (
+        REPO_ROOT / "isaacsimenvs" / "dagger" / "networks" / "depth_cnn_lstm.py"
+    )
+    spec = _ilu.spec_from_file_location("depth_cnn_lstm", str(module_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"Failed to load depth_cnn_lstm builder from {module_path}"
+        )
+    module = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    model_builder.register_network("depth_cnn_lstm", module.DepthCNNLSTMBuilder)
+
+
 def _build_student(
     net_params: dict,
     obs_dim: int,
@@ -180,9 +207,7 @@ def _build_student(
     device: torch.device,
 ):
     """Construct + load a depth_cnn_lstm student. Returns the net (eval mode)."""
-    # Register the builder. The import has the side effect of adding
-    # ``depth_cnn_lstm`` to rl_games' NETWORK_REGISTRY.
-    import isaacsimenvs.dagger.networks as _net_pkg  # noqa: F401
+    _register_depth_cnn_lstm_builder()
     from rl_games.algos_torch import model_builder
 
     builder = model_builder.NETWORK_REGISTRY["depth_cnn_lstm"]()
