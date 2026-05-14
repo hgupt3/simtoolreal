@@ -193,14 +193,17 @@ class StudentObsCfg:
     focal_length: float = 24.0
     horizontal_aperture: float = 33.19737869997174
     # USD PinholeCamera aperture offsets shift the principal point without
-    # changing FOV or image dimensions. cy = image_height/2 + offset_px,
-    # where offset_px = (vertical_aperture_offset / vertical_aperture) * H.
-    # Default 0 keeps cx, cy at the geometric image center; set non-zero to
-    # match a real camera whose principal point isn't perfectly centered
-    # (e.g. ZED HD1080 on serial 15107 needs vertical_aperture_offset~0.44
-    # cm to land cy at 47.13 in a 160x90 retrieve).
-    horizontal_aperture_offset: float = 0.0
-    vertical_aperture_offset: float = 0.0
+    # changing FOV or image dimensions.  Defaults are set so the implied
+    # intrinsics match the ZED HD1080 calibration on lab serial 15107
+    # (fx=fy=115.67, cx=80.02, cy=47.13 at the 160x90 retrieve resolution).
+    # If you ever switch cameras or move to a centered-aperture sensor, set
+    # both offsets to 0.0 to recover the geometric-center default.
+    #   horizontal_offset_cm = (cx - W/2) * focal_length / fx
+    #     = (80.02 - 80) * 24 / 115.67   ~= 0.0035 cm  (sub-pixel)
+    #   vertical_offset_cm   = (cy - H/2) * focal_length / fy
+    #     = (47.13 - 45) * 24 / 115.67   ~= 0.4418 cm
+    horizontal_aperture_offset: float = 0.0035
+    vertical_aperture_offset: float = 0.4418
     focus_distance: float = 400.0
     clipping_range: tuple[float, float] = (0.1, 5.0)
 

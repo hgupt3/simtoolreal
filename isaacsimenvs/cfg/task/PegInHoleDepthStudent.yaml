@@ -101,6 +101,11 @@ student_obs:
   camera_quat_wxyz: [-0.5314110448277682, 0.833810802683381, -0.14035163049226862, 0.051606846267884886]
   focal_length: 24.0
   horizontal_aperture: 33.19737869997174
+  # Principal-point offsets match the real ZED HD1080 calibration on lab
+  # serial 15107 (cx=80.02, cy=47.13 at 160x90 retrieve). Set to 0.0 to
+  # recover the geometric-center default.
+  horizontal_aperture_offset: 0.0035
+  vertical_aperture_offset: 0.4418
   focus_distance: 400.0
   clipping_range: [0.1, 5.0]
 

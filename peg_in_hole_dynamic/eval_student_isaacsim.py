@@ -91,6 +91,22 @@ TABLE_SCALE_CHOICES: dict[str, tuple[tuple[float, float], tuple[float, float]]] 
 # Number of pre-baked USD variants when scale is on. Round-robined per env.
 TABLE_SCALE_N_VARIANTS_DEFAULT = 10
 
+# Camera principal-point dropdown. Sim's PinholeCameraCfg always renders with
+# the optical axis at the geometric image center (cy=45 in a 90-row image);
+# the real ZED HD1080 on serial 15107 has cy=47.13 at 160x90 retrieve. The
+# vertical_aperture_offset shifts cy without changing FOV or image dims, so
+# the 70x70 policy input stays valid under either setting.
+# offset_cm = (cy_target - height/2) * focal_length / fx
+#           = (47.13 - 45) * 24 / 115.67  ~=  0.442 cm
+CAMERA_CY_CHOICES: dict[str, float] = {
+    # Matches the real ZED HD1080 calibration on lab serial 15107
+    # (cy=47.13 in a 160x90 retrieve). This is now also the cfg/yaml default.
+    "match real ZED (cy=47.13)":      0.4418,
+    # Forces back to the geometric image center (cy=45). Use for pre-cal
+    # checkpoints or when comparing against a different camera.
+    "override to image center (cy=45)": 0.0,
+}
+
 # Init-pose dropdown. Values mirror the training-side fixed-init subs in
 # isaacsimenvs/final_experiments/play2win/dagger/fixed_init_ablations/*.sub
 # (FIXED_START_POSE / HOLE_*_RANGE / RESET_* / TABLE_RESET_Z_RANGE).
@@ -921,6 +937,14 @@ def _run_viewer(args) -> int:
             self.table_yaw_choice = "off"
             self.table_scale_choice = "off"
             self.init_choice = "random"
+            # Camera cy dropdown initial value. Default = match real ZED
+            # (also the cfg/yaml default). The --match-real-cy CLI flag is
+            # accepted for back-compat but redundant.
+            self.camera_cy_choice = (
+                "override to image center (cy=45)"
+                if not bool(getattr(args, "match_real_cy", True))
+                else "match real ZED (cy=47.13)"
+            )
             self.action_source = args.initial_action_source
             self.env_id = int(args.env_id)
             self.depth_send_every = int(args.depth_send_every)
@@ -1015,6 +1039,11 @@ def _run_viewer(args) -> int:
                     "Init pose",
                     options=tuple(INIT_CHOICES.keys()),
                     initial_value=self.init_choice,
+                )
+                self._dd_camera_cy = self.server.gui.add_dropdown(
+                    "Camera cy (principal point)",
+                    options=tuple(CAMERA_CY_CHOICES.keys()),
+                    initial_value=self.camera_cy_choice,
                 )
 
                 # === load env ===
@@ -1214,14 +1243,15 @@ def _run_viewer(args) -> int:
             self.init_choice = str(self._dd_init.value)
 
             worker_overrides = dict(self.extra_overrides)
-            # Match the real ZED's principal point (cy=47.13 @ 160x90 retrieve)
-            # via PinholeCameraCfg.vertical_aperture_offset. Shifts cy by
-            # 2.13 px without changing FOV or image dims; image stays 160x90,
-            # V-FOV stays 42.6 deg, policy input stays 70x70. Offset value:
-            # 2.13 px * (vertical_aperture / image_height)
-            # = 2.13 * (33.197 * 90/160) / 90 = 2.13 * 0.20748 ~= 0.442 cm.
-            if self.match_real_cy:
-                worker_overrides["env.student_obs.vertical_aperture_offset"] = 0.442
+            # Camera cy dropdown -> PinholeCameraCfg.vertical_aperture_offset
+            # (cm). 0 = sim default optical-axis-at-image-center; 0.442 cm
+            # shifts cy to 47.13 to match the real ZED HD1080 calibration.
+            # Doesn't change FOV or image dims, so the trained 70x70 student
+            # is unaffected.
+            self.camera_cy_choice = str(self._dd_camera_cy.value)
+            worker_overrides["env.student_obs.vertical_aperture_offset"] = float(
+                CAMERA_CY_CHOICES[self.camera_cy_choice]
+            )
             # Map the 3 GUI toggles to the underlying StudentObsCfg /
             # DomainRandomizationCfg keys. Delays gate three independent flags
             # but are surfaced as one switch in the GUI; their max values stay
