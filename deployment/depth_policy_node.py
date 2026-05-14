@@ -428,6 +428,7 @@ class DepthPolicyNode:
         hand_moving_average: float,
         arm_moving_average: float,
         hand_dof_speed_scale: float,
+        warmup_steps: int,
     ) -> None:
         import rospy  # local import so --benchmark can run without ROS
         from sensor_msgs.msg import JointState
@@ -517,6 +518,7 @@ class DepthPolicyNode:
 
         # --- per-step state ---
         self.control_dt = 1.0 / float(control_hz)
+        self.warmup_steps = int(max(0, warmup_steps))
         self.hand_moving_average = float(hand_moving_average)
         self.arm_moving_average = float(arm_moving_average)
         self.hand_dof_speed_scale = float(hand_dof_speed_scale)
@@ -605,7 +607,52 @@ class DepthPolicyNode:
         except RuntimeError as exc:
             rospy.logerr(f"[depth-policy] ZED never produced a frame: {exc}")
             return
-        rospy.loginfo("[depth-policy] streaming -- press Ctrl-C to stop.")
+
+        # ---------------------------------------------------------------
+        # Warmup: run the policy on real obs N times to warm the LSTM /
+        # CUDA kernels / publisher path, but publish the CURRENT joint
+        # state as the target so the robot doesn't move. Reset student
+        # LSTM state at the end so the first "real" episode starts
+        # from h0.
+        # Mirrors deployment/rl_policy_node.py:_wait_and_warmup().
+        # ---------------------------------------------------------------
+        rospy.loginfo(
+            f"[depth-policy] warmup: {self.warmup_steps} steps @ "
+            f"{1.0 / self.control_dt:.0f} Hz (publishing current q, no motion)."
+        )
+        for step in range(int(self.warmup_steps)):
+            if rospy.is_shutdown():
+                return
+            js = self._read_joint_state()
+            if js is None:
+                rate.sleep()
+                continue
+            q, qd = js
+            try:
+                depth, _frame_id, _age_s = self.zed.get_latest(timeout_s=0.05)
+            except RuntimeError as exc:
+                rospy.logwarn_throttle(
+                    0.5, f"[depth-policy][warmup] zed stale: {exc}"
+                )
+                rate.sleep()
+                continue
+            proprio = np.concatenate(
+                [q.astype(np.float32),
+                 qd.astype(np.float32),
+                 self.prev_targets.astype(np.float32)]
+            )
+            # Forward pass (warms LSTM + CUDA kernels). Discard the action.
+            _ = self.student.act(depth, proprio)
+            # Hold position: publish the current joint state, clipped.
+            hold = np.clip(q, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np)
+            self._publish_targets(hold)
+            self.prev_targets = hold
+            rate.sleep()
+        # Reset RNN so episode start is from a clean LSTM state.
+        if hasattr(self.student, "reset"):
+            self.student.reset()
+        rospy.loginfo("[depth-policy] warmup complete; streaming policy "
+                      "actions -- press Ctrl-C to stop.")
 
         n_steps = 0
         t_last_report = time.perf_counter()
@@ -686,6 +733,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", type=str, default="cuda:0",
                    help="Inference device. Use cpu if CUDA isn't available.")
     p.add_argument("--control-hz", type=float, default=60.0)
+    p.add_argument("--warmup-steps", type=int, default=100,
+                   help="At startup, run this many policy forward passes "
+                        "while publishing the current joint pose (no motion) "
+                        "to warm CUDA kernels + LSTM + publisher. The student "
+                        "LSTM state is reset after warmup so the live episode "
+                        "begins from h0. Set to 0 to skip.")
 
     p.add_argument("--hand-moving-average", type=float, default=0.1)
     p.add_argument("--arm-moving-average", type=float, default=0.1)
@@ -739,6 +792,7 @@ def main() -> int:
         hand_moving_average=args.hand_moving_average,
         arm_moving_average=args.arm_moving_average,
         hand_dof_speed_scale=args.hand_dof_speed_scale,
+        warmup_steps=args.warmup_steps,
     )
     node.run()
     return 0
