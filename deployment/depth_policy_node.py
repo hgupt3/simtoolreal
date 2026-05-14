@@ -650,8 +650,14 @@ class DepthPolicyNode:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", type=str, required=True)
-    p.add_argument("--config", type=str, required=True,
-                   help="rl_games agent yaml (e.g. .hydra/config.yaml).")
+    p.add_argument(
+        "--config", type=str,
+        default=str(REPO_ROOT / "isaacsimenvs" / "cfg" / "train"
+                    / "PegInHoleDepthStudentSAPG.yaml"),
+        help="rl_games agent yaml. Defaults to the in-repo training yaml; "
+             "override if deploying a checkpoint trained with a different "
+             "config (e.g. a .hydra/config.yaml from a specific run).",
+    )
     p.add_argument("--device", type=str, default="cuda:0",
                    help="Inference device. Use cpu if CUDA isn't available.")
     p.add_argument("--control-hz", type=float, default=60.0)
