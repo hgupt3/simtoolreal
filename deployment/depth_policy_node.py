@@ -446,6 +446,11 @@ class DepthPolicyNode:
         arm_moving_average: float,
         hand_dof_speed_scale: float,
         warmup_steps: int,
+        max_arm_delta_rad: float,
+        max_hand_delta_rad: float,
+        soft_start_steps: int,
+        max_joint_deviation_rad: float,
+        dry_run: bool,
     ) -> None:
         import rospy  # local import so --benchmark can run without ROS
         from sensor_msgs.msg import JointState
@@ -536,6 +541,13 @@ class DepthPolicyNode:
         # --- per-step state ---
         self.control_dt = 1.0 / float(control_hz)
         self.warmup_steps = int(max(0, warmup_steps))
+        # Safety knobs.  Each layer is independent of the others; setting any
+        # of them to <=0 disables that layer.  See _safety_filter().
+        self.max_arm_delta_rad = float(max_arm_delta_rad)
+        self.max_hand_delta_rad = float(max_hand_delta_rad)
+        self.soft_start_steps = int(max(0, soft_start_steps))
+        self.max_joint_deviation_rad = float(max_joint_deviation_rad)
+        self.dry_run = bool(dry_run)
         self.hand_moving_average = float(hand_moving_average)
         self.arm_moving_average = float(arm_moving_average)
         self.hand_dof_speed_scale = float(hand_dof_speed_scale)
@@ -586,6 +598,69 @@ class DepthPolicyNode:
              np.asarray(sharpa.velocity, dtype=np.float64) if sharpa.velocity else np.zeros(N_HAND)]
         )
         return q, qd
+
+    def _safety_filter(
+        self,
+        *,
+        policy_targets: np.ndarray,
+        prev_targets: np.ndarray,
+        q: np.ndarray,
+        step_idx: int,
+    ) -> tuple[np.ndarray, bool]:
+        """Three independent safety layers applied to the policy's target.
+
+        Returns ``(filtered_target, halted)``. If ``halted`` is True the caller
+        should publish ``q`` (no motion) and exit -- a sanity violation was
+        detected and we'd rather stop than guess.
+
+        Layers (in order):
+
+        1. Per-step delta cap. Hard-limits how far each joint target can move
+           between consecutive publishes:
+             ``|targets[i] - prev_targets[i]| <= max_arm_delta_rad`` for arm,
+             ``... <= max_hand_delta_rad`` for hand.
+           Each layer is disabled when its cap <= 0.
+           Goal: even with a wildly OOD policy output, the robot crawls
+           rather than jerks.
+
+        2. Soft-start blend. For the first ``soft_start_steps`` policy steps
+           after warmup, linearly interpolate the policy target toward the
+           current joint pose ``q``: at step 0 we publish ~q (no motion), at
+           step ``soft_start_steps - 1`` we publish ~policy. Gives an operator
+           window to e-stop if the policy starts to misbehave at handoff.
+
+        3. Hard deviation halt. If, after the above filters, any commanded
+           target is more than ``max_joint_deviation_rad`` from the current
+           joint pose, return ``halted=True``. Prevents the policy from
+           commanding a far-away pose if something has gone *very* wrong.
+        """
+        target = policy_targets.copy()
+
+        # Layer 1: per-step delta cap.
+        if self.max_arm_delta_rad > 0.0:
+            cap = self.max_arm_delta_rad
+            d = target[:N_ARM] - prev_targets[:N_ARM]
+            d = np.clip(d, -cap, cap)
+            target[:N_ARM] = prev_targets[:N_ARM] + d
+        if self.max_hand_delta_rad > 0.0:
+            cap = self.max_hand_delta_rad
+            d = target[N_ARM:] - prev_targets[N_ARM:]
+            d = np.clip(d, -cap, cap)
+            target[N_ARM:] = prev_targets[N_ARM:] + d
+
+        # Layer 2: soft start (linear blend toward current q for first N steps).
+        if self.soft_start_steps > 0 and step_idx < self.soft_start_steps:
+            # alpha in [0, 1): 0 at step_idx=0 -> hold q; ~1 near end of ramp.
+            alpha = float(step_idx) / float(self.soft_start_steps)
+            target = (1.0 - alpha) * q + alpha * target
+
+        # Layer 3: hard deviation halt.
+        if self.max_joint_deviation_rad > 0.0:
+            dev = np.max(np.abs(target - q))
+            if dev > self.max_joint_deviation_rad:
+                return target, True
+
+        return target, False
 
     def _publish_targets(self, targets: np.ndarray) -> None:
         assert targets.shape == (N_ACTIONS,)
@@ -714,7 +789,28 @@ class DepthPolicyNode:
                 dt=self.control_dt,
             )[0]
             targets = np.clip(targets, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np)
-            self._publish_targets(targets)
+
+            # Safety net (3 independent layers, see _safety_filter docstring).
+            targets, halted = self._safety_filter(
+                policy_targets=targets, prev_targets=self.prev_targets, q=q,
+                step_idx=n_steps,
+            )
+            if halted:
+                # Hard halt: publish current q (no motion) and stop the loop.
+                self._publish_targets(np.clip(q, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np))
+                rospy.logfatal(
+                    "[depth-policy][SAFETY] commanded target deviated > "
+                    f"{self.max_joint_deviation_rad:.3f} rad from current q. "
+                    "Publishing q (no motion) and exiting. Investigate before retry."
+                )
+                return
+
+            if self.dry_run:
+                rospy.logwarn_throttle(
+                    2.0, "[depth-policy][dry-run] computed but NOT publishing /joint_cmd."
+                )
+            else:
+                self._publish_targets(targets)
             self.prev_targets = targets
 
             n_steps += 1
@@ -760,6 +856,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hand-moving-average", type=float, default=0.1)
     p.add_argument("--arm-moving-average", type=float, default=0.1)
     p.add_argument("--hand-dof-speed-scale", type=float, default=1.5)
+
+    # === SAFETY LAYERS (defaults are CONSERVATIVE; loosen once you trust the
+    # checkpoint).  Pass 0.0 (or 0) to disable any single layer. ===
+    p.add_argument(
+        "--max-arm-delta-rad", type=float, default=0.005,
+        help="[SAFETY] Per-step cap on |delta| for each of the 7 arm joints "
+             "(rad). 0.005 rad/step at 60Hz = 0.3 rad/s (~17 deg/s); a sane "
+             "policy at training-time moves at <= 0.0025 rad/step. Set to "
+             "0.0 to disable.",
+    )
+    p.add_argument(
+        "--max-hand-delta-rad", type=float, default=0.02,
+        help="[SAFETY] Per-step cap on |delta| for each of the 22 hand "
+             "joints (rad). 0.02 rad/step at 60Hz = 1.2 rad/s. Set to 0.0 to "
+             "disable.",
+    )
+    p.add_argument(
+        "--soft-start-steps", type=int, default=60,
+        help="[SAFETY] Linearly blend policy output toward current q for "
+             "the first N steps after warmup. 60 steps @ 60Hz = 1 s soft "
+             "start. Gives you a window to E-stop. Set to 0 to disable.",
+    )
+    p.add_argument(
+        "--max-joint-deviation-rad", type=float, default=0.5,
+        help="[SAFETY] Hard halt: if commanded target deviates more than "
+             "this many radians from current q on any joint, stop the loop "
+             "and exit. Set to 0.0 to disable.",
+    )
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help="[SAFETY] Compute targets + run safety filters but do NOT "
+             "publish to /iiwa/joint_cmd or /sharpa/joint_cmd. Use for the "
+             "first lab-test of a new checkpoint to watch loop_ms + delta "
+             "stats without moving the robot.",
+    )
 
     p.add_argument("--zed-serial", type=str, default=None)
     p.add_argument("--zed-resolution", type=str, default=None)
@@ -810,6 +941,11 @@ def main() -> int:
         arm_moving_average=args.arm_moving_average,
         hand_dof_speed_scale=args.hand_dof_speed_scale,
         warmup_steps=args.warmup_steps,
+        max_arm_delta_rad=args.max_arm_delta_rad,
+        max_hand_delta_rad=args.max_hand_delta_rad,
+        soft_start_steps=args.soft_start_steps,
+        max_joint_deviation_rad=args.max_joint_deviation_rad,
+        dry_run=args.dry_run,
     )
     node.run()
     return 0
