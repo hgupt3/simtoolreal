@@ -91,6 +91,47 @@ TABLE_SCALE_CHOICES: dict[str, tuple[tuple[float, float], tuple[float, float]]] 
 # Number of pre-baked USD variants when scale is on. Round-robined per env.
 TABLE_SCALE_N_VARIANTS_DEFAULT = 10
 
+# Init-pose dropdown. Values mirror the training-side fixed-init subs in
+# isaacsimenvs/final_experiments/play2win/dagger/fixed_init_ablations/*.sub
+# (FIXED_START_POSE / HOLE_*_RANGE / RESET_* / TABLE_RESET_Z_RANGE).
+#
+#   - "random": task-yaml defaults => object xy + hole xy + robot joints +
+#     table z all sampled per-env at reset.
+#   - "fixed":  every reset-time randomness clamped to a single point so the
+#     env reproduces the canonical scene the fixed-init policies trained on.
+_INIT_RESET_NOISE_DEFAULTS = dict(
+    reset_position_noise_x=0.1,
+    reset_position_noise_y=0.1,
+    reset_position_noise_z=0.02,
+    reset_dof_pos_random_interval_arm=0.1,
+    reset_dof_pos_random_interval_fingers=0.1,
+    reset_dof_vel_random_interval=0.5,
+    table_reset_z_range=0.01,
+)
+_INIT_RESET_NOISE_FIXED = dict(
+    reset_position_noise_x=0.0,
+    reset_position_noise_y=0.0,
+    reset_position_noise_z=0.0,
+    reset_dof_pos_random_interval_arm=0.0,
+    reset_dof_pos_random_interval_fingers=0.0,
+    reset_dof_vel_random_interval=0.0,
+    table_reset_z_range=0.0,
+)
+INIT_CHOICES: dict[str, dict] = {
+    "random": {
+        "fixed_start_pose": None,
+        "hole_x_range": [-0.1875, 0.1875],
+        "hole_y_range": [-0.10, 0.10],
+        "reset_noise": _INIT_RESET_NOISE_DEFAULTS,
+    },
+    "fixed": {
+        "fixed_start_pose": [-0.10, 0.0, 0.63, 1.0, 0.0, 0.0, 0.0],
+        "hole_x_range": [0.10, 0.10],
+        "hole_y_range": [0.0, 0.0],
+        "reset_noise": _INIT_RESET_NOISE_FIXED,
+    },
+}
+
 
 # Reuse helpers from the teacher eval. They're already battle-tested for env
 # bootstrap, hydra cfg loading, and rl_games player setup.
@@ -869,6 +910,7 @@ def _run_viewer(args) -> int:
             self.table_xy_choice = "off"
             self.table_yaw_choice = "off"
             self.table_scale_choice = "off"
+            self.init_choice = "random"
             self.action_source = args.initial_action_source
             self.env_id = int(args.env_id)
             self.depth_send_every = int(args.depth_send_every)
@@ -958,6 +1000,11 @@ def _run_viewer(args) -> int:
                     "Table size scale",
                     options=tuple(TABLE_SCALE_CHOICES.keys()),
                     initial_value=self.table_scale_choice,
+                )
+                self._dd_init = self.server.gui.add_dropdown(
+                    "Init pose",
+                    options=tuple(INIT_CHOICES.keys()),
+                    initial_value=self.init_choice,
                 )
 
                 # === load env ===
@@ -1142,6 +1189,7 @@ def _run_viewer(args) -> int:
             self.table_xy_choice = str(self._dd_table_xy.value)
             self.table_yaw_choice = str(self._dd_table_yaw.value)
             self.table_scale_choice = str(self._dd_table_scale.value)
+            self.init_choice = str(self._dd_init.value)
 
             worker_overrides = dict(self.extra_overrides)
             # Map the 3 GUI toggles to the underlying StudentObsCfg /
@@ -1165,6 +1213,15 @@ def _run_viewer(args) -> int:
             worker_overrides["env.assets.table_scale_range_x"] = list(scale_x)
             worker_overrides["env.assets.table_scale_range_y"] = list(scale_y)
             worker_overrides["env.assets.table_scale_num_variants"] = int(n_variants)
+            # Init pose: "random" leaves all reset-time randomness at task-yaml
+            # defaults; "fixed" pins peg, hole, robot joints, and table z to
+            # the canonical fixed-init point used by the training subs.
+            init_params = INIT_CHOICES[self.init_choice]
+            worker_overrides["env.reset.fixed_start_pose"] = init_params["fixed_start_pose"]
+            worker_overrides["env.peg_in_hole.hole_x_range"] = list(init_params["hole_x_range"])
+            worker_overrides["env.peg_in_hole.hole_y_range"] = list(init_params["hole_y_range"])
+            for noise_key, noise_val in init_params["reset_noise"].items():
+                worker_overrides[f"env.reset.{noise_key}"] = float(noise_val)
             # Resize the viser /table/wood mesh to the max-extent envelope so the
             # static viz roughly matches the largest scaled variant in the sim.
             self._update_table_viz(scale_x_range=scale_x, scale_y_range=scale_y)
