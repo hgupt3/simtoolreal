@@ -821,15 +821,19 @@ class DepthPolicyNode:
                 continue
 
             mu_raw, mu = self.student.act_with_pre_clamp(depth, proprio)
-            # WARN whenever the [-1, 1] mu clamp fires (means the network is
-            # saturating beyond what training expected).
-            mu_clamp_mask = np.abs(mu_raw) > 1.0
-            if mu_clamp_mask.any():
+            # Note: |mu| > 1 is *normal* (the mu_head is a Linear with no
+            # activation, training also clips to [-1, 1] via clip_actions),
+            # so only warn when the saturation is EXTREME -- magnitude > 5
+            # suggests the network is producing values far outside what
+            # training-time gradient flow would have shaped.
+            mu_extreme_mask = np.abs(mu_raw) > 5.0
+            if mu_extreme_mask.any():
                 worst_i = int(np.argmax(np.abs(mu_raw)))
                 rospy.logwarn_throttle(
-                    1.0,
-                    f"[depth-policy][CLIP mu] {int(mu_clamp_mask.sum())}/29 "
-                    f"actions saturated; worst joint={worst_i} "
+                    2.0,
+                    f"[depth-policy][CLIP mu EXTREME] "
+                    f"{int(mu_extreme_mask.sum())}/29 actions with "
+                    f"|raw_mu|>5; worst joint={worst_i} "
                     f"raw_mu={mu_raw[worst_i]:+.3f}",
                 )
             targets_pre_action_clip = compute_joint_pos_targets(
