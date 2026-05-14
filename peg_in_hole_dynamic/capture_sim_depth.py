@@ -24,6 +24,22 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+# Real-robot home pose used by deployment/home_robot.py. Robot is driven here
+# at the start of every real-world session, so the sim depth must be captured
+# with the robot at the same joint state for the comparison to be fair.
+# Order = canonical (concat[iiwa_joint_1..7, joint_0.0..21.0]).
+HOME_JOINT_POS_IIWA = np.array([
+    -1.571,
+    1.571 - np.deg2rad(10),
+    0.0,
+    1.376 + np.deg2rad(10),
+    0.0,
+    1.485,
+    1.308,
+], dtype=np.float64)
+HOME_JOINT_POS_SHARPA = np.zeros(22, dtype=np.float64)
+HOME_JOINT_POS_CANON = np.concatenate([HOME_JOINT_POS_IIWA, HOME_JOINT_POS_SHARPA])
+
 # NOTE: peg z=0.541 (resting on the real-world table top the user measured)
 # rather than the training fixed_start_pose z=0.63 (hovering ~0.10 m above).
 # This is for a snap-image comparison test only.
@@ -129,6 +145,33 @@ def main() -> int:
     env.reset()
     _reseed(args.seed)
     env.reset()
+
+    # Override the sim robot pose to the lab's HOME_JOINT_POS so the depth we
+    # save matches the pose the real robot is driven to before the policy
+    # starts. env.robot expects joint pos in LAB order; HOME_JOINT_POS_CANON
+    # is in canonical order (concat[iiwa1..7, joint_0.0..21.0]), so reorder
+    # via env._perm_canon_to_lab before writing.
+    import torch
+
+    home_canon = torch.tensor(
+        HOME_JOINT_POS_CANON, device=env.device, dtype=torch.float32
+    )
+    home_lab = home_canon[env._perm_canon_to_lab]
+    n_env = int(env.num_envs)
+    pos_lab = home_lab.unsqueeze(0).expand(n_env, -1).contiguous()
+    vel_lab = torch.zeros_like(pos_lab)
+    env_ids = torch.arange(n_env, device=env.device, dtype=torch.long)
+    env.robot.write_joint_state_to_sim(pos_lab, vel_lab, env_ids=env_ids)
+    # Seed prev/cur targets so proprio's prev_action_targets reflects home.
+    if hasattr(env, "_prev_targets"):
+        env._prev_targets[env_ids] = pos_lab
+    if hasattr(env, "_cur_targets"):
+        env._cur_targets[env_ids] = pos_lab
+
+    # One zero-action step so the camera renders the home-pose scene.
+    zero_action = torch.zeros(n_env, int(env.action_space.shape[-1]),
+                              device=env.device)
+    env.step(zero_action)
 
     obs = env.get_student_obs()
     image = obs["image"]  # (N, C, H, W) float32, already preprocessed
