@@ -179,10 +179,48 @@ def main() -> int:
           f"min={float(image.min()):.3f} mean={float(image.mean()):.3f} "
           f"max={float(image.max()):.3f}", flush=True)
 
-    frame = image[0, 0].detach().float().cpu().numpy()
     out_dir = Path(args.out_dir).resolve()
+
+    # 1) Policy-preprocessed 70x70 depth (the same thing the student sees).
+    frame = image[0, 0].detach().float().cpu().numpy()
     png = _save_frame(out_dir, args.name, frame)
     print(f"=> saved {png}  shape={frame.shape}", flush=True)
+
+    # 2) Raw uncropped 160x90 depth (in meters) straight from the sim sensor,
+    #    before _apply_depth_noise / _crop_student_image / _preprocess_student_depth.
+    #    Mirrors what capture_real_first_depth.py saves as <name>_raw.{npz,png}.
+    try:
+        cam_out = env.student_camera.data.output
+        raw_depth_t = cam_out.get("distance_to_image_plane")
+        if raw_depth_t is None:
+            print("=> raw depth output unavailable (skipping raw dump).", flush=True)
+        else:
+            # Shapes: (N, H, W) or (N, H, W, 1).
+            if raw_depth_t.dim() == 4 and raw_depth_t.shape[-1] == 1:
+                raw_depth_t = raw_depth_t.squeeze(-1)
+            raw_depth = raw_depth_t[0].detach().float().cpu().numpy()
+            raw_name = f"{args.name}_raw"
+            raw_npz = out_dir / f"{raw_name}.npz"
+            raw_png = out_dir / f"{raw_name}.png"
+            np.savez_compressed(raw_npz, depth_m=raw_depth)
+            # Use a wide visualization window so both near and far structure is visible.
+            from PIL import Image
+
+            vis_near, vis_far = 0.30, 1.50
+            valid = np.isfinite(raw_depth)
+            safe = np.where(valid, raw_depth, vis_far)
+            norm = (safe - vis_near) / max(vis_far - vis_near, 1e-6)
+            img = (np.clip(norm, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+            Image.fromarray(img).save(raw_png)
+            print(
+                f"=> saved {raw_png}  shape={raw_depth.shape} "
+                f"valid_m=[{float(raw_depth[valid].min()) if valid.any() else float('nan'):.3f}, "
+                f"{float(raw_depth[valid].max()) if valid.any() else float('nan'):.3f}] "
+                f"finite_frac={float(valid.mean()):.3f}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"=> raw depth dump failed: {exc!r}", flush=True)
 
     try:
         env.close()
