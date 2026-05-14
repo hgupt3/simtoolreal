@@ -736,7 +736,7 @@ class DepthPolicyNode:
         self.prev_targets = q_now.copy()  # start from current pose
         rospy.loginfo("[depth-policy] joint states OK, waiting for first ZED frame ...")
         try:
-            _ = self.zed.get_latest(timeout_s=2.0)
+            _ = self.zed.get_latest(timeout_s=10.0)
         except RuntimeError as exc:
             rospy.logerr(f"[depth-policy] ZED never produced a frame: {exc}")
             return
