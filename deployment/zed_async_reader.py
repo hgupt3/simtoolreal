@@ -134,7 +134,8 @@ def _preprocess_depth(
     depth_mm: np.ndarray,
     cfg: ZedReaderConfig,
 ) -> np.ndarray:
-    """ZED depth (mm, raw) -> policy depth (float32, [0,1], cropped, sized).
+    """ZED depth (mm, already at sim 160x90 via SDK resize-on-retrieve) ->
+    policy depth (float32, [0,1], cropped to 70x70).
 
     Mirrors ``_preprocess_student_depth`` (window_normalize mode) +
     ``_crop_student_image`` in scene_utils.py.
@@ -152,7 +153,9 @@ def _preprocess_depth(
         np.full_like(depth_m, DEPTH_INVALID_M),
     )
 
-    # 1. Resize ZED frame to sim camera resolution (nearest, no aspect change).
+    # 1. If the SDK couldn't resize-on-retrieve (older API), fall back to a
+    #    numpy nearest resize to sim resolution. Common case: input already
+    #    160x90 from the retrieve overload and this is a no-op.
     resized = _resize_nearest(
         depth_m, cfg.sim_camera_width, cfg.sim_camera_height
     )
@@ -192,6 +195,14 @@ def _producer_main(
     depth_mat = sl.Mat()
     runtime_parameters = sl.RuntimeParameters()
     grab_period_s = 1.0 / cfg.grab_hz if cfg.grab_hz > 0.0 else 0.0
+    # Ask the SDK to deliver depth already at the sim camera resolution.
+    # ZED scales the calibrated intrinsics linearly with the retrieve size,
+    # so the FOV stays consistent with sim (verified ~69° H, ~43° V from
+    # the lab's HD1080 intrinsics fx=fy=694.03, cx=480.1, cy=282.77).
+    retrieve_resolution = sl.Resolution(
+        int(cfg.sim_camera_width), int(cfg.sim_camera_height)
+    )
+    low_res_retrieve_failed = False
 
     try:
         init_params = sl.InitParameters(input_t=sl.InputType())
@@ -237,9 +248,28 @@ def _producer_main(
                 continue
             t_grab = time.perf_counter()
 
-            # Retrieve at the camera's native resolution (1080p by default);
-            # _preprocess_depth resizes to the sim camera res before cropping.
-            camera.retrieve_measure(depth_mat, sl.MEASURE.DEPTH)
+            # Retrieve at the sim camera resolution (default 160x90) directly,
+            # using the SDK's resize-on-retrieve overload. Older SDKs that
+            # don't accept the (mat, measure, mem, resolution) signature fall
+            # back to full-frame retrieve and let _preprocess_depth resize.
+            if low_res_retrieve_failed:
+                camera.retrieve_measure(depth_mat, sl.MEASURE.DEPTH)
+            else:
+                try:
+                    camera.retrieve_measure(
+                        depth_mat,
+                        sl.MEASURE.DEPTH,
+                        sl.MEM.CPU,
+                        retrieve_resolution,
+                    )
+                except TypeError:
+                    low_res_retrieve_failed = True
+                    print(
+                        "[zed-producer] resize-on-retrieve overload not "
+                        "available; falling back to full-frame retrieve.",
+                        flush=True,
+                    )
+                    camera.retrieve_measure(depth_mat, sl.MEASURE.DEPTH)
             t_retrieve = time.perf_counter()
 
             depth_mm = np.array(depth_mat.get_data(), copy=True)
