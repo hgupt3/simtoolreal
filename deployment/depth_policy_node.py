@@ -332,6 +332,47 @@ class DepthStudent:
         mu = torch.clamp(mu, min=-1.0, max=1.0)
         return mu.squeeze(0).cpu().numpy()
 
+    @torch.no_grad()
+    def act_with_pre_clamp(
+        self, image: np.ndarray, proprio: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Like ``act`` but also returns the pre-clamp raw mu, so callers can
+        warn when the [-1, 1] clamp actually fires (= policy saturating
+        beyond training distribution).
+
+        Returns ``(raw_mu, clamped_mu)``.
+        """
+        if image.shape != self.image_hw:
+            raise ValueError(
+                f"image shape {image.shape} != expected {self.image_hw}"
+            )
+        if proprio.shape != (self.proprio_dim,):
+            raise ValueError(
+                f"proprio shape {proprio.shape} != expected ({self.proprio_dim},)"
+            )
+        img_t = torch.from_numpy(image).to(self.device, dtype=torch.float32)
+        img_flat = img_t.reshape(1, self.image_channels * image.size)
+        prop_t = torch.from_numpy(proprio).to(
+            self.device, dtype=torch.float32
+        ).unsqueeze(0)
+        if self.has_block_id:
+            block_id = torch.zeros(1, 1, device=self.device, dtype=torch.float32)
+            flat = torch.cat([img_flat, prop_t, block_id], dim=-1)
+        else:
+            flat = torch.cat([img_flat, prop_t], dim=-1)
+        if flat.shape != (1, self.obs_dim):
+            raise RuntimeError(
+                f"built obs shape {tuple(flat.shape)} != expected (1, {self.obs_dim})"
+            )
+        mu_raw, _ls, _v, self._rnn_state = self.net(
+            {"obs": flat, "rnn_states": self._rnn_state, "seq_length": 1}
+        )
+        mu_clamped = torch.clamp(mu_raw, min=-1.0, max=1.0)
+        return (
+            mu_raw.squeeze(0).cpu().numpy(),
+            mu_clamped.squeeze(0).cpu().numpy(),
+        )
+
 
 # ============================================================
 # Task-yaml lookup so we use the same depth window / image dims as training.
@@ -779,8 +820,19 @@ class DepthPolicyNode:
                 rate.sleep()
                 continue
 
-            mu = self.student.act(depth, proprio)  # (29,) in [-1, 1]
-            targets = compute_joint_pos_targets(
+            mu_raw, mu = self.student.act_with_pre_clamp(depth, proprio)
+            # WARN whenever the [-1, 1] mu clamp fires (means the network is
+            # saturating beyond what training expected).
+            mu_clamp_mask = np.abs(mu_raw) > 1.0
+            if mu_clamp_mask.any():
+                worst_i = int(np.argmax(np.abs(mu_raw)))
+                rospy.logwarn_throttle(
+                    1.0,
+                    f"[depth-policy][CLIP mu] {int(mu_clamp_mask.sum())}/29 "
+                    f"actions saturated; worst joint={worst_i} "
+                    f"raw_mu={mu_raw[worst_i]:+.3f}",
+                )
+            targets_pre_action_clip = compute_joint_pos_targets(
                 actions=mu[None],
                 prev_targets=self.prev_targets[None],
                 hand_moving_average=self.hand_moving_average,
@@ -788,7 +840,24 @@ class DepthPolicyNode:
                 hand_dof_speed_scale=self.hand_dof_speed_scale,
                 dt=self.control_dt,
             )[0]
-            targets = np.clip(targets, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np)
+            targets = np.clip(targets_pre_action_clip,
+                              Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np)
+            # WARN if compute_joint_pos_targets produced anything outside the
+            # canonical joint limits (means the policy is asking for a pose
+            # the robot physically can't reach).
+            limit_clip_mask = np.abs(targets_pre_action_clip - targets) > 1e-6
+            if limit_clip_mask.any():
+                worst_i = int(np.argmax(np.abs(targets_pre_action_clip - targets)))
+                worst_name = (IIWA_JOINT_NAMES[worst_i] if worst_i < N_ARM
+                              else SHARPA_JOINT_NAMES[worst_i - N_ARM])
+                rospy.logwarn_throttle(
+                    1.0,
+                    f"[depth-policy][CLIP joint_limits] "
+                    f"{int(limit_clip_mask.sum())}/29 joints clipped to "
+                    f"hardware limits; worst {worst_name} "
+                    f"wanted={targets_pre_action_clip[worst_i]:+.3f} "
+                    f"clipped_to={targets[worst_i]:+.3f}",
+                )
 
             # Safety net (3 independent layers, see _safety_filter docstring).
             policy_targets_pre_safety = targets.copy()
@@ -796,6 +865,23 @@ class DepthPolicyNode:
                 policy_targets=targets, prev_targets=self.prev_targets, q=q,
                 step_idx=n_steps,
             )
+            # WARN when any safety layer altered the target.
+            diff = np.abs(targets - policy_targets_pre_safety)
+            if (diff > 1e-6).any():
+                worst_i = int(np.argmax(diff))
+                worst_name = (IIWA_JOINT_NAMES[worst_i] if worst_i < N_ARM
+                              else SHARPA_JOINT_NAMES[worst_i - N_ARM])
+                section = "arm" if worst_i < N_ARM else "hand"
+                rospy.logwarn_throttle(
+                    1.0,
+                    f"[depth-policy][CLIP safety] {section} target reshaped "
+                    f"by safety filter; worst {worst_name} "
+                    f"policy={policy_targets_pre_safety[worst_i]:+.3f} "
+                    f"published={targets[worst_i]:+.3f} "
+                    f"(delta_cap arm={self.max_arm_delta_rad:.3f} "
+                    f"hand={self.max_hand_delta_rad:.3f}; soft_start step "
+                    f"{n_steps}/{self.soft_start_steps})",
+                )
             if halted:
                 # Hard halt: publish current q (no motion) and stop the loop.
                 self._publish_targets(np.clip(q, Q_LOWER_LIMITS_np, Q_UPPER_LIMITS_np))
