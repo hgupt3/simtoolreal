@@ -1125,7 +1125,19 @@ def _run_viewer(args) -> int:
                 policy_rgb = msg[1]
                 l2 = float(msg[2])
                 src = msg[3] if len(msg) > 3 else self.action_source
-                self._img_policy.image = policy_rgb
+                # Upscale the 70x70 policy depth to a viser-friendly tile.
+                # viser sizes the GUI image to the data array's HxW, so we
+                # repeat-pixel-upsample by integer factor for a crisp view.
+                import numpy as _np
+                upscale = 6  # 70*6 = 420 px square in the GUI
+                if policy_rgb.ndim == 3 and upscale > 1:
+                    policy_rgb_big = _np.repeat(
+                        _np.repeat(policy_rgb, upscale, axis=0),
+                        upscale, axis=1,
+                    )
+                else:
+                    policy_rgb_big = policy_rgb
+                self._img_policy.image = policy_rgb_big
                 self._md_action_l2.content = (
                     f"**L2(student−teacher):** {l2:.4f} &nbsp;|&nbsp; "
                     f"**Active source:** {src}"
