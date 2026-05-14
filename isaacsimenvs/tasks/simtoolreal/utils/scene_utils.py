@@ -264,6 +264,12 @@ def setup_student_camera(env) -> None:
             focal_length=float(cfg.focal_length),
             focus_distance=float(cfg.focus_distance),
             horizontal_aperture=float(cfg.horizontal_aperture),
+            horizontal_aperture_offset=float(
+                getattr(cfg, "horizontal_aperture_offset", 0.0)
+            ),
+            vertical_aperture_offset=float(
+                getattr(cfg, "vertical_aperture_offset", 0.0)
+            ),
             clipping_range=tuple(float(x) for x in cfg.clipping_range),
         ),
         offset=camera_cfg_cls.OffsetCfg(

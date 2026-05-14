@@ -150,13 +150,14 @@ def main() -> int:
     # WARNING: this only matches FOV for visualisation; do not use this 94
     # render path for policy inference (student was trained on 160x90).
     if args.match_real_cy:
-        # Render at 160x94 so the optical axis lands at y=47 (= 94/2).
-        # Crop window stays y=[0,70) -> 70 input rows, optical axis row 47.
-        # image_input_height must remain 70 to match the crop output.
-        cfg.student_obs.image_height = 94
-        print("=> NOTE: image_height bumped 90 -> 94 so the y=[0,70) crop "
-              "puts the optical axis at row 47 (matches real ZED cy=47.13).",
-              flush=True)
+        # Shift the principal point via PinholeCameraCfg.vertical_aperture_offset.
+        # cleaner than rendering taller because image dims, FOV, and policy
+        # input shape (70x70) all stay identical to training.
+        # offset_cm = (2.13 px / 90 rows) * vertical_aperture_cm
+        #           = (2.13 / 90) * (33.197 * 90/160) = 2.13 * 0.20748 ~= 0.442 cm
+        cfg.student_obs.vertical_aperture_offset = 0.442
+        print("=> NOTE: vertical_aperture_offset=0.442 cm so cy lands at "
+              "47.13, matching real ZED HD1080 calibration.", flush=True)
 
     print(f"=> spawning env (problem={args.problem}, goal_mode={args.goal_mode}, "
           f"fixed_init={not args.no_fixed_init}, seed={args.seed})", flush=True)

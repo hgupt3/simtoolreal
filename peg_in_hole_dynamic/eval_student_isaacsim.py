@@ -767,6 +767,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--override", nargs=2, action="append", default=[], metavar=("KEY", "VALUE"),
         help="Extra env/agent override, e.g. --override env.reward.lifting_bonus 0.0",
     )
+    parser.add_argument(
+        "--match-real-cy", action="store_true",
+        help="Render at 160x94 so the principal point lands at row 47, "
+             "matching the real ZED's HD1080 cy=47.13. The crop window stays "
+             "y=[0,70) so the policy input remains 70x70 -- only V-FOV grows "
+             "from 42.6 deg to 44.2 deg. Adds ~2 px vertical shift to the "
+             "trained obs distribution. Use when running against the real "
+             "robot or comparing sim depth to a real ZED capture.",
+    )
 
     # Hidden worker mode args.
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -889,6 +898,7 @@ def _run_viewer(args) -> int:
             self.deterministic = bool(args.deterministic)
             self.sdf = bool(args.sdf)
             self.keep_dr = bool(args.keep_dr)
+            self.match_real_cy = bool(args.match_real_cy)
             self.teacher_ckpt = teacher_ckpt
             self.student_ckpt = student_ckpt
             self.student_policies = student_policies
@@ -1204,6 +1214,14 @@ def _run_viewer(args) -> int:
             self.init_choice = str(self._dd_init.value)
 
             worker_overrides = dict(self.extra_overrides)
+            # Match the real ZED's principal point (cy=47.13 @ 160x90 retrieve)
+            # via PinholeCameraCfg.vertical_aperture_offset. Shifts cy by
+            # 2.13 px without changing FOV or image dims; image stays 160x90,
+            # V-FOV stays 42.6 deg, policy input stays 70x70. Offset value:
+            # 2.13 px * (vertical_aperture / image_height)
+            # = 2.13 * (33.197 * 90/160) / 90 = 2.13 * 0.20748 ~= 0.442 cm.
+            if self.match_real_cy:
+                worker_overrides["env.student_obs.vertical_aperture_offset"] = 0.442
             # Map the 3 GUI toggles to the underlying StudentObsCfg /
             # DomainRandomizationCfg keys. Delays gate three independent flags
             # but are surfaced as one switch in the GUI; their max values stay
