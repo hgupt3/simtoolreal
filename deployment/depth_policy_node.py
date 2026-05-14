@@ -326,6 +326,10 @@ class DepthStudent:
         mu, _ls, _v, self._rnn_state = self.net(
             {"obs": flat, "rnn_states": self._rnn_state, "seq_length": 1}
         )
+        # rl_games applies `clip_actions: 1.0` at training time before passing
+        # actions into apply_action_pipeline. Match that here so the live
+        # arm delta-policy and hand scale-to-limits never see |mu| > 1.
+        mu = torch.clamp(mu, min=-1.0, max=1.0)
         return mu.squeeze(0).cpu().numpy()
 
 
