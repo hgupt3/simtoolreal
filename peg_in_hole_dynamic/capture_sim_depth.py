@@ -81,6 +81,13 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--name", type=str, default="sim_depth")
     p.add_argument("--no-fixed-init", action="store_true",
                    help="Skip the fixed-init overrides; use task yaml defaults.")
+    p.add_argument("--match-real-cy", action="store_true",
+                   help="Render at 160x94 so the principal point lands at "
+                        "y=47, matching the real ZED's cy=47.13 (HD1080 "
+                        "calibration). VISUALISATION ONLY -- changes V-FOV "
+                        "from 42.6 deg to 44.2 deg, so the student trained "
+                        "on 160x90 will see OOD obs if you reuse this cfg "
+                        "for inference.")
     return p.parse_args()
 
 
@@ -133,6 +140,23 @@ def main() -> int:
     cfg.student_obs.use_depth_aug = False
     cfg.domain_randomization.use_obs_delay = False
     cfg.domain_randomization.use_action_delay = False
+
+    # Match the real ZED's principal point.  HD1080 calibration on serial
+    # 15107 gave cx=80.02, cy=47.13 after scaling to 160x90.  Sim's
+    # PinholeCameraCfg always renders with optical axis at image center, so
+    # to put the principal point at y=47 we render a taller image (160x94 =
+    # cy 47 by symmetry) and keep the crop window at y=[0, 70).  Result: the
+    # 70-tall policy crop has the optical axis at row 47, matching real.
+    # WARNING: this only matches FOV for visualisation; do not use this 94
+    # render path for policy inference (student was trained on 160x90).
+    if args.match_real_cy:
+        # Render at 160x94 so the optical axis lands at y=47 (= 94/2).
+        # Crop window stays y=[0,70) -> 70 input rows, optical axis row 47.
+        # image_input_height must remain 70 to match the crop output.
+        cfg.student_obs.image_height = 94
+        print("=> NOTE: image_height bumped 90 -> 94 so the y=[0,70) crop "
+              "puts the optical axis at row 47 (matches real ZED cy=47.13).",
+              flush=True)
 
     print(f"=> spawning env (problem={args.problem}, goal_mode={args.goal_mode}, "
           f"fixed_init={not args.no_fixed_init}, seed={args.seed})", flush=True)
