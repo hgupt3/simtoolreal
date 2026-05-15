@@ -24,6 +24,17 @@ PEG_NAME_TO_OBJECT = {
         scale=rescale_by_factor((0.25, 0.03, 0.02), factor=25),
         need_vhacd=False,
     ),
+    # L-peg with PHYSICALLY-MATCHED mass + L-shape inertia (real measured
+    # 57.8 g instead of the URDF-authored 227.5 g solid-PLA assumption,
+    # and a properly summed two-box parallel-axis inertia tensor instead
+    # of the straight-bar formula). Same geometry as `lpeg`, so existing
+    # checkpoints / problem JSONs that reference the lpeg insert pose are
+    # reusable. Use to ablation-test mass-domain robustness.
+    "lpeg_matchedmass": Object(
+        urdf_path=ASSETS_DIR / "lpeg_matchedmass" / "lpeg_matchedmass.urdf",
+        scale=rescale_by_factor((0.25, 0.03, 0.02), factor=25),
+        need_vhacd=False,
+    ),
 }
 
 # FMB pegs (registered if canonical mesh + CoACD URDF exist)

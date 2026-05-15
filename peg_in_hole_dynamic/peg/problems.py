@@ -33,7 +33,16 @@ def _register_all() -> None:
             continue
         # tag is the part after "hole_" (e.g. "tol0p5mm")
         tag = hole_dir.name[len("hole_"):]
-        for prefix, object_name in (("peg", "peg"), ("Lpeg", "lpeg")):
+        # (problem-prefix, object-name) pairs. `Lpeg_matchedmass` mirrors
+        # `Lpeg` 1:1 (same geometry, same insert pose) but maps to the
+        # corrected-mass URDF — use it to ablation-test whether policies
+        # trained on the 4x-too-heavy lpeg still work at the realistic
+        # 57.8 g / L-shape-inertia parameters.
+        for prefix, object_name in (
+            ("peg", "peg"),
+            ("Lpeg", "lpeg"),
+            ("Lpeg_matchedmass", "lpeg_matchedmass"),
+        ):
             name = f"{prefix}.{tag}"
             PROBLEM_REGISTRY[name] = Problem(
                 name=name,
