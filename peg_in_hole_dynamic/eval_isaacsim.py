@@ -378,11 +378,18 @@ def _sim_get_state(env, done_pending: bool = False):
             * float(env.cfg.reward.keypoint_scale)
         )
 
-    hole_pos = (
-        env.hole_pos[env_id].detach().cpu().numpy()
-        if hasattr(env, "hole_pos")
-        else np.zeros(3, dtype=np.float32)
-    )
+    if hasattr(env, "hole_pos"):
+        hole_pos_t = env.hole_pos[env_id]
+        if hasattr(env, "hole_quat_wxyz"):
+            hole_quat_wxyz_t = env.hole_quat_wxyz[env_id]
+        else:
+            hole_quat_wxyz_t = torch.tensor(
+                [1.0, 0.0, 0.0, 0.0], device=hole_pos_t.device, dtype=hole_pos_t.dtype
+            )
+        hole_quat_xyzw_t = _wxyz_to_xyzw_np(hole_quat_wxyz_t.unsqueeze(0))[0]
+        hole_pose = torch.cat([hole_pos_t, hole_quat_xyzw_t]).detach().cpu().numpy()
+    else:
+        hole_pose = np.array([0, 0, 0, 0, 0, 0, 1], dtype=np.float32)
     is_random_goal = (
         _tensor_bool(env.is_random_goal_env[env_id])
         if hasattr(env, "is_random_goal_env")
@@ -408,7 +415,7 @@ def _sim_get_state(env, done_pending: bool = False):
         int(env.max_episode_length),                          # 12
         bool(done_pending),                                   # 13
         np.zeros(3, dtype=np.float32),                        # 14
-        hole_pos,                                             # 15
+        hole_pose,                                            # 15 (x,y,z,qx,qy,qz,qw)
         is_random_goal,                                       # 16
     )
 

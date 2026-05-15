@@ -5,7 +5,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import math
+
 import torch
+
+from isaaclab.utils.math import quat_apply, quat_from_angle_axis, quat_mul
 
 from isaacsimenvs.tasks.simtoolreal.simtoolreal_env import SimToolRealEnv
 from isaacsimenvs.tasks.simtoolreal.utils.goal_sampling import (
@@ -118,6 +122,10 @@ class PegInHoleEnv(SimToolRealEnv):
         self.hole_pos = torch.zeros(
             self.num_envs, 3, dtype=torch.float32, device=self.device
         )
+        self.hole_quat_wxyz = torch.zeros(
+            self.num_envs, 4, dtype=torch.float32, device=self.device
+        )
+        self.hole_quat_wxyz[:, 0] = 1.0  # identity default
         self.is_random_goal_env = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
         )
@@ -298,9 +306,20 @@ class PegInHoleEnv(SimToolRealEnv):
             self.hole_pos[rg_ids, 0:2] = 0.0
             self.hole_pos[rg_ids, 2] = -1.0
 
-        hole_quat = torch.tensor(
-            [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32
-        ).unsqueeze(0).expand(n, -1)
+        yaw_range_deg = float(pih_cfg.hole_yaw_range_deg)
+        if yaw_range_deg > 0.0:
+            yaw = (
+                torch.rand(n, device=self.device) * 2.0 - 1.0
+            ) * yaw_range_deg * (math.pi / 180.0)
+            z_axis = torch.tensor(
+                [0.0, 0.0, 1.0], device=self.device, dtype=torch.float32
+            ).expand(n, -1)
+            hole_quat = quat_from_angle_axis(yaw, z_axis)
+        else:
+            hole_quat = torch.tensor(
+                [1.0, 0.0, 0.0, 0.0], device=self.device, dtype=torch.float32
+            ).unsqueeze(0).expand(n, -1).contiguous()
+        self.hole_quat_wxyz[env_ids] = hole_quat
         hole_pose = torch.cat([self.hole_pos[env_ids] + env_origins, hole_quat], dim=-1)
         self.hole.write_root_pose_to_sim(hole_pose, env_ids=env_ids)
         self.hole.write_root_velocity_to_sim(
@@ -339,10 +358,13 @@ class PegInHoleEnv(SimToolRealEnv):
             subgoal_idx = (
                 self._successes[ins_ids] % self.env_max_goals[ins_ids]
             ).long()
+            hole_q = self.hole_quat_wxyz[ins_ids]
+            insert_pos = self._insert_pos_rel[subgoal_idx]
+            insert_q = self._insert_quat_wxyz[subgoal_idx]
             pos_local[insertion_mask] = (
-                self.hole_pos[ins_ids] + self._insert_pos_rel[subgoal_idx]
+                self.hole_pos[ins_ids] + quat_apply(hole_q, insert_pos)
             )
-            quat[insertion_mask] = self._insert_quat_wxyz[subgoal_idx]
+            quat[insertion_mask] = quat_mul(hole_q, insert_q)
 
         if is_random_goal.any():
             rg_ids = env_ids[is_random_goal]

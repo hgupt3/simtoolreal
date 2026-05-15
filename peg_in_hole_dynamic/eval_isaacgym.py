@@ -284,7 +284,11 @@ def _create_env(config_path, headless, device, overrides):
 def _sim_get_state(env, obs, joint_lower, joint_upper):
     obs_np = obs[0].cpu().numpy()
     joint_pos = 0.5 * (obs_np[:N_ACT] + 1.0) * (joint_upper - joint_lower) + joint_lower
-    hole_pos = env.hole_pos[0].cpu().numpy() if hasattr(env, "hole_pos") else np.zeros(3)
+    if hasattr(env, "hole_pos"):
+        hp = env.hole_pos[0].cpu().numpy()
+        hole_pose = np.concatenate([hp, np.array([0, 0, 0, 1], dtype=hp.dtype)])
+    else:
+        hole_pose = np.array([0, 0, 0, 0, 0, 0, 1], dtype=np.float32)
     is_rg = bool(env.is_random_goal_env[0].item()) if hasattr(env, "is_random_goal_env") else False
     retract_phase = bool(env.retract_phase[0].item())
     fixed_size_keypoints = bool(env.cfg["env"].get("fixedSizeKeypointReward", False))
@@ -321,7 +325,7 @@ def _sim_get_state(env, obs, joint_lower, joint_upper):
         env.table_sensor_forces_smoothed[0, :3].cpu().numpy()
         if hasattr(env, "table_sensor_forces_smoothed")
         else np.zeros(3, dtype=np.float32),                  # 14
-        hole_pos,                                            # 15
+        hole_pose,                                           # 15 (x,y,z,qx,qy,qz,qw)
         is_rg,                                               # 16
     )
 
@@ -764,15 +768,19 @@ class PegDynamicDemo:
         self._apply_fixture_opacity()
         self._apply_object_opacity()
 
-    def _update_hole_viz(self, hole_pos):
-        if self._hole_frame is not None:
-            if hole_pos[2] < 0:
-                self._hole_frame.visible = False
-            else:
-                self._hole_frame.visible = True
-                self._hole_frame.position = (
-                    float(hole_pos[0]), float(hole_pos[1]), float(hole_pos[2]),
-                )
+    def _update_hole_viz(self, hole_pose):
+        # Accept either legacy 3-vec position-only or 7-vec pose (x,y,z,qx,qy,qz,qw).
+        if self._hole_frame is None:
+            return
+        hp = np.asarray(hole_pose, dtype=np.float32).reshape(-1)
+        if hp[2] < 0:
+            self._hole_frame.visible = False
+            return
+        self._hole_frame.visible = True
+        self._hole_frame.position = (float(hp[0]), float(hp[1]), float(hp[2]))
+        if hp.shape[0] >= 7:
+            qx, qy, qz, qw = hp[3], hp[4], hp[5], hp[6]
+            self._hole_frame.wxyz = (float(qw), float(qx), float(qy), float(qz))
 
     def _setup_keypoints(self, num_keypoints):
         for kp in self._obj_keypoints + self._goal_keypoints:

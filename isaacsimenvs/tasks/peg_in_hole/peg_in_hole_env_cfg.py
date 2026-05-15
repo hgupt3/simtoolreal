@@ -32,6 +32,10 @@ class PegInHoleCfg:
 
     hole_x_range: tuple[float, float] = (-0.1875, 0.1875)
     hole_y_range: tuple[float, float] = (-0.1, 0.1)
+    # Per-episode yaw randomization about +Z applied to the hole and to the
+    # derived insertion goals. Range is symmetric: yaw ~ U(-range, +range).
+    # Default 0.0 keeps legacy behavior (identity hole quat).
+    hole_yaw_range_deg: float = 0.0
 
     goal_xy_obs_noise: float = 0.002
     random_goal_fraction: float = 0.0
