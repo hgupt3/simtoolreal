@@ -221,6 +221,37 @@ def hide_goal_viz_for_student_camera(env) -> None:
     )
 
 
+def _quat_wxyz_to_rotmat(quat_wxyz: tuple) -> torch.Tensor:
+    """Standard (w, x, y, z) -> 3x3 rotation matrix.
+
+    Column 0 of the result is the camera's local +X axis in world coords,
+    which for a ROS-convention camera ('+X = image right') is the
+    direction toward the RIGHT eye of a stereo pair.
+    """
+    w, x, y, z = (float(v) for v in quat_wxyz)
+    return torch.tensor([
+        [1 - 2 * (y * y + z * z),     2 * (x * y - w * z),         2 * (x * z + w * y)],
+        [    2 * (x * y + w * z), 1 - 2 * (x * x + z * z),         2 * (y * z - w * x)],
+        [    2 * (x * z - w * y),     2 * (y * z + w * x),     1 - 2 * (x * x + y * y)],
+    ], dtype=torch.float64)
+
+
+def _stereo_right_pose_from_left(
+    left_pos: tuple, left_quat_wxyz: tuple, baseline_m: float
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """Right-eye pose from left-eye pose + ZED-style horizontal baseline.
+
+    Rectified stereo shares orientation, so the right cam's quat is the
+    same as the left's; only the position is offset by `baseline_m` along
+    the left camera's local +X axis (image-right under ROS convention).
+    """
+    R = _quat_wxyz_to_rotmat(left_quat_wxyz)
+    delta = float(baseline_m) * R[:, 0]
+    right_pos = tuple(float(left_pos[i] + delta[i].item()) for i in range(3))
+    right_quat = tuple(float(v) for v in left_quat_wxyz)
+    return right_pos, right_quat
+
+
 def _diagnose_target_expr(expr: str) -> None:
     """Echo what `_obtain_trackable_prim_view` will see for this expr.
 
@@ -351,10 +382,10 @@ def setup_student_camera(env) -> None:
         return
 
     backend = str(cfg.camera_backend).lower()
-    if backend not in ("tiled", "standard", "raycaster"):
+    if backend not in ("tiled", "standard", "raycaster", "foundation_stereo"):
         raise ValueError(
-            "cfg.student_obs.camera_backend must be 'tiled', 'standard', or "
-            f"'raycaster', got {backend!r}."
+            "cfg.student_obs.camera_backend must be 'tiled', 'standard', "
+            f"'raycaster', or 'foundation_stereo', got {backend!r}."
         )
 
     camera_mount = str(cfg.camera_mount).lower()
@@ -399,8 +430,8 @@ def setup_student_camera(env) -> None:
         env.student_camera = camera_cls(cfg=camera_cfg)
         env.scene.sensors["student_camera"] = env.student_camera
         size_str = f"{int(cfg.image_width)}x{int(cfg.image_height)}"
-    else:
-        # backend == "raycaster": CUDA mesh raycaster, no rasterizer / Replicator.
+    elif backend == "raycaster":
+        # CUDA mesh raycaster, no rasterizer / Replicator.
         # Restricted to depth modality — RGB / semantic outputs aren't supported.
         if str(cfg.image_modality).lower() != "depth":
             raise ValueError(
@@ -490,6 +521,85 @@ def setup_student_camera(env) -> None:
             f"targets={len(raycast_targets)} "
             f"(static={len(tuple(cfg.raycast_static_prim_exprs))}, "
             f"dynamic={len(tuple(cfg.raycast_dynamic_prim_exprs))})"
+        )
+
+    elif backend == "foundation_stereo":
+        # Stereo TiledCamera pair (RGB), rendered at fs_stereo_{width,height}.
+        # Fast-FS runs inference at the same resolution to produce disparity ->
+        # depth, which the obs pipeline downsamples to (image_width, image_height)
+        # before the usual noise / crop / window-normalize chain.
+        from isaaclab.sensors import TiledCamera, TiledCameraCfg
+
+        # Stereo render must be at multiples of 32 (FS InputPadder requirement).
+        stereo_w = int(cfg.fs_stereo_width)
+        stereo_h = int(cfg.fs_stereo_height)
+        if stereo_w % 32 != 0 or stereo_h % 32 != 0:
+            raise ValueError(
+                f"camera_backend='foundation_stereo' requires "
+                f"fs_stereo_width / fs_stereo_height to be multiples of 32 "
+                f"(got {stereo_w}x{stereo_h})."
+            )
+
+        left_pos = tuple(float(x) for x in cfg.camera_pos)
+        left_quat = tuple(float(x) for x in cfg.camera_quat_wxyz)
+        right_pos, right_quat = _stereo_right_pose_from_left(
+            left_pos, left_quat, float(cfg.fs_stereo_baseline_m)
+        )
+
+        def _build_stereo_cam_cfg(prim_path: str, pos: tuple, quat: tuple) -> "TiledCameraCfg":
+            return TiledCameraCfg(
+                prim_path=prim_path,
+                update_period=0,
+                update_latest_camera_pose=True,
+                height=stereo_h,
+                width=stereo_w,
+                data_types=["rgb"],
+                spawn=sim_utils.PinholeCameraCfg(
+                    focal_length=float(cfg.focal_length),
+                    focus_distance=float(cfg.focus_distance),
+                    horizontal_aperture=float(cfg.horizontal_aperture),
+                    horizontal_aperture_offset=float(
+                        getattr(cfg, "horizontal_aperture_offset", 0.0)
+                    ),
+                    vertical_aperture_offset=float(
+                        getattr(cfg, "vertical_aperture_offset", 0.0)
+                    ),
+                    clipping_range=tuple(float(x) for x in cfg.clipping_range),
+                ),
+                offset=TiledCameraCfg.OffsetCfg(
+                    pos=pos, rot=quat, convention=str(cfg.camera_convention),
+                ),
+            )
+
+        env.student_camera_left = TiledCamera(
+            cfg=_build_stereo_cam_cfg(
+                "/World/envs/env_.*/StudentCameraLeft", left_pos, left_quat,
+            )
+        )
+        env.student_camera_right = TiledCamera(
+            cfg=_build_stereo_cam_cfg(
+                "/World/envs/env_.*/StudentCameraRight", right_pos, right_quat,
+            )
+        )
+        env.scene.sensors["student_camera_left"] = env.student_camera_left
+        env.scene.sensors["student_camera_right"] = env.student_camera_right
+        # Alias so any read paths that hit `env.student_camera` still resolve.
+        env.student_camera = env.student_camera_left
+        # The FS inference module is loaded lazily on first call to avoid
+        # paying the model-load cost when the env is constructed for tasks
+        # that don't actually consume the student image.
+        env._fs_module = None
+        print(
+            f"[foundation_stereo] stereo pair: left  pos={left_pos} quat={left_quat}\n"
+            f"[foundation_stereo]              right pos={right_pos} (baseline {cfg.fs_stereo_baseline_m:.3f} m along left +X)\n"
+            f"[foundation_stereo]              capture {stereo_w}x{stereo_h}, model_dir={cfg.fs_model_dir}, "
+            f"iters={cfg.fs_valid_iters}, max_disp={cfg.fs_max_disp}, "
+            f"engine_dir={cfg.fs_engine_dir or '(none, using PyTorch)'}",
+            flush=True,
+        )
+        size_str = (
+            f"stereo {stereo_w}x{stereo_h} -> "
+            f"{int(cfg.image_width)}x{int(cfg.image_height)} via Fast-FS"
         )
 
     _log_scene_step(
@@ -761,6 +871,64 @@ def _crop_student_image(env, image: torch.Tensor) -> torch.Tensor:
     return image[..., y0:y1, x0:x1]
 
 
+def _run_foundation_stereo(env, cfg) -> torch.Tensor:
+    """Render stereo RGB and run Fast-FS to produce depth in meters.
+
+    Lazy-loads the FS module on first call. Reads from
+    ``env.student_camera_{left,right}.data.output["rgb"]`` (shape
+    ``(B, H, W, 4)`` uint8 from Replicator), converts to ``(B, 3, H, W)``
+    float in [0, 255] for FS, runs inference, converts disparity to depth
+    via ``depth = fx_px * baseline / disparity``, and downsamples to
+    ``(image_height, image_width)`` if ``fs_downsample_to_policy_res`` is
+    set (the policy's depth-window crop pipeline runs on the result).
+    """
+    if getattr(env, "_fs_module", None) is None:
+        from isaacsimenvs.perception.fast_foundation_stereo import (
+            FastFoundationStereoModule,
+        )
+        engine_dir = str(cfg.fs_engine_dir).strip() or None
+        env._fs_module = FastFoundationStereoModule(
+            model_dir=str(cfg.fs_model_dir),
+            engine_dir=engine_dir,
+            valid_iters=int(cfg.fs_valid_iters),
+            max_disp=int(cfg.fs_max_disp),
+            device=str(env.device),
+        )
+        print(
+            f"[foundation_stereo] FS module loaded ({env._fs_module.backend})",
+            flush=True,
+        )
+
+    left_rgba = env.student_camera_left.data.output["rgb"]
+    right_rgba = env.student_camera_right.data.output["rgb"]
+    if left_rgba is None or right_rgba is None:
+        raise RuntimeError(
+            "foundation_stereo backend: one of student_camera_{left,right} "
+            "produced no RGB output."
+        )
+    # Replicator returns (B, H, W, 4) uint8 -> (B, 3, H, W) float in [0, 255].
+    left  = left_rgba[..., :3].permute(0, 3, 1, 2).float().contiguous()
+    right = right_rgba[..., :3].permute(0, 3, 1, 2).float().contiguous()
+
+    # fx in pixels at the FS-render resolution.
+    fx_px = float(cfg.fs_stereo_width) * float(cfg.focal_length) \
+            / float(cfg.horizontal_aperture)
+    depth = env._fs_module(
+        left, right,
+        fx_px=fx_px,
+        baseline_m=float(cfg.fs_stereo_baseline_m),
+    )                                              # (B, 1, H_stereo, W_stereo) in m
+
+    if bool(getattr(cfg, "fs_downsample_to_policy_res", True)):
+        depth = F.interpolate(
+            depth,
+            size=(int(cfg.image_height), int(cfg.image_width)),
+            mode="bilinear",
+            antialias=True,
+        )
+    return depth
+
+
 def read_student_camera_image(env) -> torch.Tensor:
     """Return the configured student image as ``(num_envs, channels, H, W)``."""
     cfg = getattr(env.cfg, "student_obs", None)
@@ -772,6 +940,36 @@ def read_student_camera_image(env) -> torch.Tensor:
         raise RuntimeError(
             "cfg.student_obs.image_enabled is false; no student image is available."
         )
+
+    # --- Fast-FoundationStereo path -------------------------------------------
+    # Stereo backend bypasses the regular single-camera retrieve: it renders
+    # both stereo views, runs FS inference, downsamples the depth, then
+    # re-uses the depth modality's noise / preprocess / crop chain.
+    if str(cfg.camera_backend).lower() == "foundation_stereo":
+        if str(cfg.image_modality).lower() != "depth":
+            raise ValueError(
+                f"camera_backend='foundation_stereo' requires "
+                f"image_modality='depth' (got {cfg.image_modality!r})."
+            )
+        env.sim.render()
+        dt = float(getattr(env, "physics_dt", env.cfg.sim.dt))
+        env.student_camera_left.update(dt, force_recompute=True)
+        env.student_camera_right.update(dt, force_recompute=True)
+        depth = _run_foundation_stereo(env, cfg)
+        depth_raw = depth
+        depth = _apply_depth_noise(env, depth)
+        depth_policy = _crop_student_image(
+            env, _preprocess_student_depth(env, depth)
+        )
+        env._last_student_image_noisy = depth_policy.detach()
+        if bool(getattr(env.cfg.student_obs, "use_depth_aug", False)):
+            depth_clean = _crop_student_image(
+                env, _preprocess_student_depth(env, depth_raw)
+            )
+            env._last_student_image_clean = depth_clean.detach()
+        else:
+            env._last_student_image_clean = depth_policy.detach()
+        return _validate_student_image_shape(env, depth_policy)
 
     camera = getattr(env, "student_camera", None)
     if camera is None:

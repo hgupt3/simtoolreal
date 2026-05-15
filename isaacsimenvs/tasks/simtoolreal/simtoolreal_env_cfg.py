@@ -247,6 +247,33 @@ class StudentObsCfg:
     raycast_max_distance_m: float = 10.0
     raycast_depth_clipping_behavior: str = "none"  # "max" | "zero" | "none"
 
+    # ---- Fast-FoundationStereo settings (used when camera_backend == "foundation_stereo") ----
+    # Spawns a stereo TiledCamera pair (left at `camera_pos`/`camera_quat_wxyz`,
+    # right at left + R_left @ [baseline, 0, 0]), renders RGB at
+    # `fs_stereo_width × fs_stereo_height`, runs Fast-FS inference to recover
+    # disparity, converts to metric depth, and downsamples to `image_width ×
+    # image_height` before the existing depth-noise / crop / normalize chain.
+    #
+    # See deployment/FAST_FS_SETUP.md for weight download + ONNX/engine build.
+    fs_model_dir: str = "third_party/Fast-FoundationStereo/weights/23-36-37"
+    # When set, prefer the TRT engine pair at this directory
+    # (feature_runner.engine + post_runner.engine + onnx.yaml). Otherwise the
+    # wrapper falls back to PyTorch inference on `{fs_model_dir}/model_best_bp2_serialize.pth`.
+    fs_engine_dir: str = ""
+    fs_valid_iters: int = 4
+    fs_max_disp: int = 192
+    # ZED 1 stereo baseline. Override per camera serial via SDK calibration.
+    fs_stereo_baseline_m: float = 0.120
+    # Stereo render size. Multiples of 32. 384x224 matches the team's deployment
+    # ONNX export (~3.9 ms TRT / 26 ms PyTorch on RTX 6000 Ada).
+    fs_stereo_width: int = 384
+    fs_stereo_height: int = 224
+    # If true (the default), the FS depth is downsampled to `image_width ×
+    # image_height` before _apply_depth_noise / _crop_student_image. If false,
+    # the policy-input resolution is set to the stereo resolution (only useful
+    # for sanity-check debugging).
+    fs_downsample_to_policy_res: bool = True
+
     # Camera pose randomization (sampled per env at reset, fixed during episode).
     # Master switch + numerical defaults are the team's "medium" preset.
     use_camera_pose_rand: bool = False
