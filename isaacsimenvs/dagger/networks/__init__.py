@@ -8,5 +8,7 @@ global `model_builder.NETWORK_REGISTRY`. Import once per process before
 from rl_games.algos_torch import model_builder
 
 from .depth_cnn_lstm import DepthCNNLSTMBuilder
+from .depth_cnn_mlp import DepthCNNMLPBuilder
 
 model_builder.register_network("depth_cnn_lstm", DepthCNNLSTMBuilder)
+model_builder.register_network("depth_cnn_mlp", DepthCNNMLPBuilder)

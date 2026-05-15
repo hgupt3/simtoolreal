@@ -16,7 +16,9 @@ params:
     name: continuous_a2c_logstd
 
   network:
-    name: depth_cnn_lstm
+    # Non-recurrent depth student a la "Perceptive Humanoid Parkour"
+    # (arXiv:2602.15827): 3-layer CNN + 5-layer MLP [2048, 1024, 512, 256, 128].
+    name: depth_cnn_mlp
     space:
       continuous:
         mu_activation: None
@@ -29,15 +31,14 @@ params:
         fixed_sigma: fixed
     image_hw: [70, 70]
     image_channels: 1
-    proprio_dim: 87           # joint_pos(29) + joint_vel(29) + prev_action_targets(29). Verify via env at smoke time.
+    proprio_dim: 87
     has_block_id: False
-    symmetric_critic: False   # toggled by --critic
-    cnn_channels: [32, 64, 128, 128]
-    cnn_feat_dim: 256
-    proprio_hidden: [128, 64]
-    lstm_hidden: 1024
-    lstm_layers: 1
-    head_hidden: 256
+    symmetric_critic: False
+    cnn_channels: [32, 64, 128]
+    # Project the 128-d CNN+GAP feature down to 32-d before concat with proprio,
+    # matching arXiv:2602.15827 Tab. VI's "Depth output dim: 32".
+    cnn_out_dim: 32
+    mlp_hidden: [2048, 1024, 512, 256, 128]
     log_sigma_init: -1.0
 
   load_checkpoint: False
@@ -101,6 +102,12 @@ params:
             name: default
           regularizer:
             name: None
+
+    # rl_games unconditionally calls `.startswith()` on this in a2c_common.py
+    # load_networks. SAPG sets it to "mixed_expl_learn_param"; plain PPO must
+    # still provide *some* value or rl_games crashes with AttributeError on
+    # NoneType. "none" passes the check without enabling any SAPG behavior.
+    expl_type: none
 
     # === DAgger ===
     dagger:

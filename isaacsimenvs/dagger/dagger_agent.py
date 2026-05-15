@@ -98,6 +98,21 @@ class DAggerA2CAgent(A2CAgent):
         if self.distill_loss_type not in ("mse", "nll"):
             raise ValueError(f"distill_loss must be 'mse' or 'nll', got {self.distill_loss_type!r}")
 
+        # Scalar multiplier on the BC distillation loss before the lambda_D
+        # blend. Mirrors "DAgger loss coefficient" in arXiv:2602.15827 Table VI.
+        # Effective BC weight in the combined loss is `lambda_D * distill_coef`.
+        self.distill_coef = float(cfg.get("distill_coef", 1.0))
+
+        # Skip rl_games' unconditional `train_central_value()` call for the
+        # first N epochs. With an asymmetric critic the central_value_net has
+        # its own optimizer that ignores lambda_D, so it would otherwise train
+        # from iter 0 -- contradicting arXiv:2602.15827's BC bootstrap (critic
+        # gets ramped weight via lambda_PPO = 1 - lambda_D). Set to ~10% of
+        # max_epochs to roughly match the paper's "adaptive after 1000 iters".
+        self.skip_central_value_until_epoch = int(
+            cfg.get("skip_central_value_until_epoch", 0)
+        )
+
         # If set, after the student checkpoint is loaded, the student's
         # log_sigma is overwritten with the teacher's log_sigma for the
         # specified block id. For `coef_cond` student networks, all blocks
@@ -130,22 +145,26 @@ class DAggerA2CAgent(A2CAgent):
             if cfg_max_lr is not None:
                 self.scheduler.max_lr = float(cfg_max_lr)
 
-        # During value warmup the loss is pure MSE (no PPO actor gradient),
-        # which makes the policy KL between snapshots large (~0.2-0.6 vs the
-        # default kl_threshold of 0.008). An AdaptiveScheduler would halve LR
-        # every epoch and floor it at 1e-6 well before warmup ends. So we wrap
-        # the rl_games scheduler.update to be a no-op while epoch_num <
-        # value_warmup_epochs; the adaptive logic engages from epoch_num >=
-        # value_warmup_epochs onward, when PPO clipping keeps KL bounded.
-        if self.value_warmup_epochs > 0:
-            _orig_scheduler_update = self.scheduler.update
+        # Gate the rl_games adaptive LR scheduler so it only engages once the
+        # PPO contribution is meaningful. arXiv:2602.15827 enables adaptive LR
+        # "only when lambda_PPO exceeds 0.1". We mirror that here by checking
+        # lambda_PPO = 1 - lambda_D at every scheduler update. The gate spans
+        # both the value-warmup phase (lambda_D pinned at 1.0, lambda_PPO = 0)
+        # and the early curriculum (lambda_PPO ramping 0 -> 0.1). Without this
+        # gate the AdaptiveScheduler reacts to the large KLs caused by the BC
+        # MSE term and floors LR at 1e-6 well before PPO can use it.
+        _orig_scheduler_update = self.scheduler.update
+        _adaptive_lr_lambda_ppo_threshold = float(
+            cfg.get("adaptive_lr_lambda_ppo_threshold", 0.1)
+        )
 
-            def _gated_scheduler_update(current_lr, entropy_coef, epoch, frames, kl_dist, **kwargs):
-                if self.epoch_num < self.value_warmup_epochs:
-                    return current_lr, entropy_coef
-                return _orig_scheduler_update(current_lr, entropy_coef, epoch, frames, kl_dist, **kwargs)
+        def _gated_scheduler_update(current_lr, entropy_coef, epoch, frames, kl_dist, **kwargs):
+            lam_ppo = 1.0 - self._lambda_d()
+            if lam_ppo < _adaptive_lr_lambda_ppo_threshold:
+                return current_lr, entropy_coef
+            return _orig_scheduler_update(current_lr, entropy_coef, epoch, frames, kl_dist, **kwargs)
 
-            self.scheduler.update = _gated_scheduler_update
+        self.scheduler.update = _gated_scheduler_update
 
     # ----- lenient checkpoint load (cross-critic-arch transfer) -----
 
@@ -278,6 +297,36 @@ class DAggerA2CAgent(A2CAgent):
             return self.lambda_d_floor
         frac = float(eff_epoch) / end_epoch
         return self.lambda_d_start + (self.lambda_d_floor - self.lambda_d_start) * frac
+
+    # ----- gate the unconditional asymmetric critic training -----
+
+    def train_central_value(self):
+        # rl_games trains the central_value_net every iter regardless of
+        # lambda_D. The paper's L_PPO weight on the critic is (1 - lambda_D),
+        # which is ~0 during early BC bootstrap and ramps to 0.9 by curriculum
+        # end. We mirror that here in two steps:
+        #   1. Skip entirely for the first `skip_central_value_until_epoch`
+        #      iters -- avoids burning compute when the effective weight is
+        #      near zero anyway.
+        #   2. After the skip, scale the critic optimizer LR by (1 - lambda_D)
+        #      so the post-warmup ramp matches the paper's smooth schedule.
+        if self.epoch_num < self.skip_central_value_until_epoch:
+            return None
+        lam_d = self._lambda_d()
+        scale = max(0.0, 1.0 - lam_d)
+        if scale <= 0.0:
+            return None
+        # Scale and restore. The central_value scheduler inside train_net()
+        # may further adjust self.lr; we restore from our cached `base_lr` so
+        # the next iter starts unscaled and we re-derive a fresh ramp.
+        base_lr = float(self.central_value_net.lr)
+        self.central_value_net.lr = base_lr * scale
+        self.central_value_net.update_lr(self.central_value_net.lr)
+        try:
+            return super().train_central_value()
+        finally:
+            self.central_value_net.lr = base_lr
+            self.central_value_net.update_lr(base_lr)
 
     # ----- rollout: monkey-patch env_step to record teacher labels -----
 
@@ -416,6 +465,8 @@ class DAggerA2CAgent(A2CAgent):
             # Keep `mse_loss` as an alias for the wandb scalar name `dagger/L_D`
             # so existing dashboards don't break.
             mse_loss = distill_loss
+            # Apply paper-style fixed scalar on the BC term (Table VI: 10.0).
+            distill_loss = distill_loss * self.distill_coef
 
             lam_d = self._lambda_d()
             if self.epoch_num < self.value_warmup_epochs:

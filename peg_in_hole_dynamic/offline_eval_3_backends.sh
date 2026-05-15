@@ -25,15 +25,18 @@ STUDENT_CKPT=${STUDENT_CKPT:-$REPO/hardware_rollouts/2026-05-13_camera_noise_che
 TEACHER_CKPT=${TEACHER_CKPT:-$REPO/hardware_rollouts/2026-05-06_peg_in_hole_dynamic_checkpoints/peg_tol0p5mm/model.pth}
 POLICY_NAME=${POLICY_NAME:-$STUDENT_NAME}
 
-# num_envs=500 gives ~+/-0.02 standard error on the per-cell success rate,
+# NUM_ENVS=500 gives ~+/-0.02 standard error on the per-cell success rate,
 # down from ~+/-0.15 at num_envs=10. Tiled / raycaster scale near-linearly
-# with num_envs but stay fast at this scale (~2 min per cell). The Fast-FS
-# backend's TRT engine was built with a fixed batch dim of 1, so the wrapper
-# loops B times per env step -- a single FS cell at n=500 takes ~20 min vs
-# ~2 min at n=10. Either accept the longer runtime, drop --num-envs back to
-# something smaller for FS-heavy comparisons, or rebuild the FS engine with
-# a dynamic batch dim. Override via env var:  NUM_ENVS=100 bash ...
+# with num_envs but stay fast at this scale (~2 min per cell).
+#
+# FS_NUM_ENVS is separate because the Fast-FS backend renders TWO stereo
+# TiledCameras + the Tier 1 quality preset (DLAA, DL denoiser, 16 SPP, GI,
+# reflections, shadows, AO). At n=500 with all that, Isaac Sim's render
+# product allocations alone exceed the 48 GiB GPU. Default FS_NUM_ENVS=100
+# keeps FS cells under 20 GiB while still giving ~+/-0.05 standard error.
+# Override via env vars:  NUM_ENVS=200 FS_NUM_ENVS=50 bash ...
 NUM_ENVS=${NUM_ENVS:-500}
+FS_NUM_ENVS=${FS_NUM_ENVS:-100}
 MAX_STEPS=${MAX_STEPS:-600}
 SEED=${SEED:-42}
 PROBLEM=${PROBLEM:-Lpeg.tol0p5mm}
@@ -77,6 +80,7 @@ for cell in "${CELLS[@]}"; do
   echo
   echo "[$(date +%H:%M:%S)] === $CELL_TAG  $CY_TAG ==="
   if [ "$BACKEND" = "foundation_stereo" ]; then
+    CELL_NUM_ENVS=$FS_NUM_ENVS
     "$PY" "$SCRIPT" \
       --teacher-checkpoint "$TEACHER_CKPT" \
       --student-checkpoint "$STUDENT_CKPT" \
@@ -84,7 +88,7 @@ for cell in "${CELLS[@]}"; do
       --camera-backend "$BACKEND" \
       --cy-match-real "$CY_MATCH" \
       --problem "$PROBLEM" \
-      --num-envs "$NUM_ENVS" \
+      --num-envs "$CELL_NUM_ENVS" \
       --max-steps-per-episode "$MAX_STEPS" \
       --seed "$SEED" \
       --fs-engine-dir "$FS_ENGINE_DIR" \

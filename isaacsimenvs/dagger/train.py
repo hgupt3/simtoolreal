@@ -53,6 +53,15 @@ def main() -> None:
                              "the student's μ head against teacher μ. 'nll' minimizes "
                              "expected NLL of teacher samples and trains μ_s + σ_s to "
                              "match the teacher's full Gaussian.")
+    parser.add_argument("--distill-coef", type=float, default=None,
+                        help="Scalar multiplier on the BC distillation term before the "
+                             "lambda_D blend. arXiv:2602.15827 Table VI uses 10.0.")
+    parser.add_argument("--skip-central-value-until-epoch", type=int, default=None,
+                        help="Skip rl_games' unconditional central_value_net training "
+                             "for the first N epochs. Used to delay asymmetric critic "
+                             "training during the BC bootstrap phase. arXiv:2602.15827 "
+                             "ramps the critic via lambda_PPO=1-lambda_D; this is a "
+                             "binary approximation (skip then enable).")
     parser.add_argument("--init-sigma-from-teacher-block", type=float, default=None,
                         help="If set, the student's log_sigma is overwritten with the "
                              "teacher's log_sigma for this block id AFTER the student "
@@ -187,6 +196,10 @@ def main() -> None:
             dagger_cfg["value_warmup_epochs"] = args_cli.value_warmup_epochs
         if args_cli.distill_loss is not None:
             dagger_cfg["distill_loss"] = args_cli.distill_loss
+        if args_cli.distill_coef is not None:
+            dagger_cfg["distill_coef"] = args_cli.distill_coef
+        if args_cli.skip_central_value_until_epoch is not None:
+            dagger_cfg["skip_central_value_until_epoch"] = args_cli.skip_central_value_until_epoch
         if args_cli.init_sigma_from_teacher_block is not None:
             dagger_cfg["init_sigma_from_teacher_block_id"] = args_cli.init_sigma_from_teacher_block
         if args_cli.deterministic_rollouts:

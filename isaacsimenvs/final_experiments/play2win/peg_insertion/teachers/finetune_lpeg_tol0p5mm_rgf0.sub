@@ -18,7 +18,7 @@
 
 TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
 AGENT_KEY="rl_games_sapg_cfg_entry_point"
-PROBLEM="Lpeg.tol0p5mm"
+PROBLEM="Lpeg_matchedmass.tol0p5mm"
 GOAL_MODE="preInsertAndFinal"
 CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
 
@@ -30,23 +30,27 @@ EXPL_COEF_BLOCK_SIZE=2048
 
 RANDOM_GOAL_FRACTION=0.0
 RANDOM_GOAL_MAX_SUCCESSES=5
-GOAL_XY_OBS_NOISE=0.002
+GOAL_XY_OBS_NOISE=0.0
 INSERTION_SUCCESS_TOLERANCE=0.010
 SUCCESS_TOLERANCE=0.01
 TARGET_SUCCESS_TOLERANCE=0.01
+SUCCESS_STEPS=1
+
+HOLE_YAW_RANGE_DEG=10.0
 
 ENABLE_RETRACT=True
 RETRACT_REWARD_SCALE=1.0
 RETRACT_DISTANCE_THRESHOLD=0.1
 RETRACT_SUCCESS_TOLERANCE=0.005
 
-USE_OBS_DELAY=True
-USE_ACTION_DELAY=True
-USE_OBJECT_STATE_DELAY_NOISE=True
-OBJECT_STATE_XYZ_NOISE_STD=0.01
-OBJECT_STATE_ROTATION_NOISE_DEG=5.0
-JOINT_VELOCITY_OBS_NOISE_STD=0.1
-OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
+# DR off across the board for the lpeg_final teacher.
+USE_OBS_DELAY=False
+USE_ACTION_DELAY=False
+USE_OBJECT_STATE_DELAY_NOISE=False
+OBJECT_STATE_XYZ_NOISE_STD=0.0
+OBJECT_STATE_ROTATION_NOISE_DEG=0.0
+JOINT_VELOCITY_OBS_NOISE_STD=0.0
+OBJECT_SCALE_NOISE_RANGE="[1.0,1.0]"
 
 FORCE_SCALE=0.0
 TORQUE_SCALE=0.0
@@ -63,7 +67,7 @@ LIFTING_REW_SCALE=20.0
 LIFTING_BONUS=300.0
 FORCE_CONSECUTIVE_NEAR_GOAL=True
 
-WANDB_PROJECT="isaacsimenvs"
+WANDB_PROJECT="teachers_final"
 WANDB_GROUP="play2win_peg_insertion"
 EXPERIMENT_TAG="lpeg_tol0p5mm_finetune_rgf0"
 
@@ -152,8 +156,10 @@ python -u isaacsimenvs/train.py \
     env.peg_in_hole.random_goal_fraction=$RANDOM_GOAL_FRACTION \
     env.peg_in_hole.random_goal_max_successes=$RANDOM_GOAL_MAX_SUCCESSES \
     env.peg_in_hole.insertion_success_tolerance=$INSERTION_SUCCESS_TOLERANCE \
+    env.peg_in_hole.hole_yaw_range_deg=$HOLE_YAW_RANGE_DEG \
     env.termination.success_tolerance=$SUCCESS_TOLERANCE \
     env.termination.target_success_tolerance=$TARGET_SUCCESS_TOLERANCE \
+    env.termination.success_steps=$SUCCESS_STEPS \
     env.peg_in_hole.enable_retract=$ENABLE_RETRACT \
     env.peg_in_hole.retract_reward_scale=$RETRACT_REWARD_SCALE \
     env.peg_in_hole.retract_distance_threshold=$RETRACT_DISTANCE_THRESHOLD \
