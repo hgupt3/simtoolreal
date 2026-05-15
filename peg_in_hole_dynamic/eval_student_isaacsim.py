@@ -128,11 +128,35 @@ def _resolve_v_aperture_offset(backend: str, cy_choice: str) -> float:
     return 0.4418
 
 
-# Camera-backend dropdown. The raycaster honors aperture offsets and is the
-# ONLY way to actually shift cy at eval time. It also runs ~2x faster than
-# the tiled backend at this resolution. Keep tiled as the default for now to
-# match how older checkpoints were trained.
-CAMERA_BACKEND_CHOICES: tuple[str, ...] = ("tiled", "raycaster")
+# Camera-backend dropdown.
+#   - "tiled": RTX rasterizer (Replicator). Cheapest setup, honors aperture
+#     offsets via the USD Camera schema.
+#   - "raycaster": CUDA mesh ray-caster. ~2x faster than tiled at 160x90,
+#     also honors aperture offsets natively.
+#   - "foundation_stereo": stereo TiledCamera pair (left + right) rendered
+#     at fs_stereo_{width,height}, fed to Fast-FoundationStereo to recover
+#     depth. Adds ~4 ms (TRT) per env step. Use to test policy robustness
+#     under the deployment-style depth pipeline.
+# Default is "tiled" so older checkpoints' inference behavior is unchanged.
+CAMERA_BACKEND_CHOICES: tuple[str, ...] = ("tiled", "raycaster", "foundation_stereo")
+
+# Default Fast-FS knobs used when the dropdown is set to "foundation_stereo".
+# Override via --override env.student_obs.fs_<knob>=<value> from the CLI if
+# you want to point at a different model variant / engine dir / iters.
+FS_DEFAULT_MODEL_DIR = "third_party/Fast-FoundationStereo/weights/23-36-37"
+FS_DEFAULT_STEREO_WIDTH = 384
+FS_DEFAULT_STEREO_HEIGHT = 224
+
+# Per-engine pairs (display name -> (engine_dir, valid_iters)). Build engines
+# via deployment/build_trt_engine.py from ONNX exports produced by
+# scripts/make_onnx.py.
+FS_ENGINE_CHOICES: dict[str, tuple[str, int]] = {
+    "23-36-37 @ 4 iters (fastest)":  (
+        "third_party/Fast-FoundationStereo/weights/23-36-37/onnx_384x224_iters4", 4),
+    "23-36-37 @ 8 iters (cleaner)": (
+        "third_party/Fast-FoundationStereo/weights/23-36-37/onnx_384x224_iters8", 8),
+}
+FS_DEFAULT_ENGINE_CHOICE = "23-36-37 @ 4 iters (fastest)"
 
 # Init-pose dropdown. Values mirror the training-side fixed-init subs in
 # isaacsimenvs/final_experiments/play2win/dagger/fixed_init_ablations/*.sub
@@ -984,6 +1008,9 @@ def _run_viewer(args) -> int:
             )
             # Camera backend dropdown initial value.
             self.camera_backend = str(getattr(args, "camera_backend", "tiled"))
+            # Fast-FS engine dropdown initial value (only consumed when
+            # camera_backend == "foundation_stereo").
+            self.fs_engine_choice = FS_DEFAULT_ENGINE_CHOICE
             self.action_source = args.initial_action_source
             self.env_id = int(args.env_id)
             self.depth_send_every = int(args.depth_send_every)
@@ -1088,6 +1115,11 @@ def _run_viewer(args) -> int:
                     "Camera backend",
                     options=tuple(CAMERA_BACKEND_CHOICES),
                     initial_value=self.camera_backend,
+                )
+                self._dd_fs_engine = self.server.gui.add_dropdown(
+                    "Fast-FS engine",
+                    options=tuple(FS_ENGINE_CHOICES.keys()),
+                    initial_value=self.fs_engine_choice,
                 )
 
                 # === load env ===
@@ -1290,17 +1322,58 @@ def _run_viewer(args) -> int:
             worker_overrides = dict(self.extra_overrides)
             # Camera backend dropdown -> StudentObsCfg.camera_backend.
             # 'tiled' uses the RTX rasterizer (Replicator); 'raycaster' uses
-            # MultiMeshRayCasterCamera (CUDA warp BVH). See
-            # isaacsimenvs/tasks/simtoolreal/utils/scene_utils.py.
+            # MultiMeshRayCasterCamera (CUDA warp BVH); 'foundation_stereo'
+            # uses a stereo TiledCamera pair piped through Fast-FS to recover
+            # depth (see isaacsimenvs/perception/fast_foundation_stereo.py).
             self.camera_backend = str(self._dd_camera_backend.value)
             worker_overrides["env.student_obs.camera_backend"] = self.camera_backend
             # Camera cy dropdown -> vertical_aperture_offset. Units depend on
-            # backend (cm-at-sensor for tiled — but Replicator drops it;
-            # dimensionless for raycaster). The resolver picks the right form.
+            # backend (cm-at-sensor for tiled/foundation_stereo, dimensionless
+            # for raycaster). The resolver picks the right form.
             self.camera_cy_choice = str(self._dd_camera_cy.value)
             worker_overrides["env.student_obs.vertical_aperture_offset"] = (
                 _resolve_v_aperture_offset(self.camera_backend, self.camera_cy_choice)
             )
+            # Fast-FoundationStereo settings (only consumed when backend is
+            # 'foundation_stereo'; safe no-op for the other backends since the
+            # cfg fields just sit unused). Defaults point at the 23-36-37 TRT
+            # engine built for 384x224 / 4 iters; override via
+            # --override env.student_obs.fs_<knob>=<value> at launch.
+            if self.camera_backend == "foundation_stereo":
+                self.fs_engine_choice = str(self._dd_fs_engine.value)
+                fs_engine_dir, fs_valid_iters = FS_ENGINE_CHOICES[self.fs_engine_choice]
+                worker_overrides.setdefault(
+                    "env.student_obs.fs_model_dir", FS_DEFAULT_MODEL_DIR,
+                )
+                worker_overrides.setdefault(
+                    "env.student_obs.fs_engine_dir", fs_engine_dir,
+                )
+                worker_overrides.setdefault(
+                    "env.student_obs.fs_valid_iters", fs_valid_iters,
+                )
+                worker_overrides.setdefault(
+                    "env.student_obs.fs_stereo_width", FS_DEFAULT_STEREO_WIDTH,
+                )
+                worker_overrides.setdefault(
+                    "env.student_obs.fs_stereo_height", FS_DEFAULT_STEREO_HEIGHT,
+                )
+                # Tier 1 RGB render-quality upgrade. The default sim render
+                # path (rendering_mode=performance, antialiasing=Off, 1 SPP)
+                # produces heavy speckle noise that's uncorrelated between
+                # left/right views and destroys stereo matching. Upgrade to
+                # the "quality" preset + DLAA + DL denoiser + 16 SPP so the
+                # rendered RGB is closer to Fast-FS's path-traced training
+                # distribution. ~2-5x slower per env step than performance
+                # mode, fine for n=1 interactive eval.
+                worker_overrides.setdefault("env.sim.render.rendering_mode", "quality")
+                worker_overrides.setdefault("env.sim.render.antialiasing_mode", "DLAA")
+                worker_overrides.setdefault("env.sim.render.enable_dl_denoiser", True)
+                worker_overrides.setdefault("env.sim.render.samples_per_pixel", 16)
+                worker_overrides.setdefault("env.sim.render.enable_direct_lighting", True)
+                worker_overrides.setdefault("env.sim.render.enable_reflections", True)
+                worker_overrides.setdefault("env.sim.render.enable_global_illumination", True)
+                worker_overrides.setdefault("env.sim.render.enable_shadows", True)
+                worker_overrides.setdefault("env.sim.render.enable_ambient_occlusion", True)
             # Map the 3 GUI toggles to the underlying StudentObsCfg /
             # DomainRandomizationCfg keys. Delays gate three independent flags
             # but are surfaced as one switch in the GUI; their max values stay
