@@ -1,0 +1,189 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=12
+#SBATCH --get-user-env
+#SBATCH --mem=100000
+#SBATCH -t 12-00:00:00
+#SBATCH --partition=portal
+#SBATCH --exclude=portal-compute-01
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# IsaacSim PegInHole SAPG finetune, rgf=0.10 (10% random-goal cotrain).
+# Problem: furniture_bench.bulb_screw_sdf_hybrid_dense (FurnitureBench lamp bulb-screwing, dense waypoints, SDF socket + base-box fixture, body-CoACD bulb).
+# Stricter insertion/retract success tolerances.
+# URDF <sdf> collision tags and UWLab-style PhysX settings are task defaults.
+
+TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
+AGENT_KEY="rl_games_sapg_cfg_entry_point"
+PROBLEM="furniture_bench.bulb_screw_sdf_hybrid_super_dense"
+GOAL_MODE="preInsertAndFinal"
+CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
+
+NUM_ENVS=6144            # halved after OOM at epoch 6553 (was 12288). Constraints:
+                         #   - 6 | num_envs (SAPG: 6 expl_blocks)
+                         #   - num_envs * 16 must be divisible by MINIBATCH_SIZE
+                         # 6144 = 6 × 1024 ✓.  6144 × 16 = 98304.
+MINIBATCH_SIZE=49152     # 98304 / 49152 = 2 minibatches/epoch ✓
+MAX_ITERATIONS=1000000
+SEED=0
+EXPL_COEF_BLOCK_SIZE=1024  # halved with num_envs to keep 6 blocks (6 × 1024 = 6144)
+
+RANDOM_GOAL_FRACTION=0.1
+RANDOM_GOAL_MAX_SUCCESSES=5
+GOAL_XY_OBS_NOISE=0.002
+INSERTION_SUCCESS_TOLERANCE=0.005
+SUCCESS_TOLERANCE=0.01
+TARGET_SUCCESS_TOLERANCE=0.01
+
+ENABLE_RETRACT=True
+RETRACT_REWARD_SCALE=1.0
+RETRACT_DISTANCE_THRESHOLD=0.1
+RETRACT_SUCCESS_TOLERANCE=0.002
+
+USE_OBS_DELAY=True
+USE_ACTION_DELAY=True
+USE_OBJECT_STATE_DELAY_NOISE=True
+OBJECT_STATE_XYZ_NOISE_STD=0.01
+OBJECT_STATE_ROTATION_NOISE_DEG=5.0
+JOINT_VELOCITY_OBS_NOISE_STD=0.1
+OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
+
+FORCE_SCALE=0.0
+TORQUE_SCALE=0.0
+
+RESET_POSITION_NOISE_X=0.1
+RESET_POSITION_NOISE_Y=0.1
+RESET_POSITION_NOISE_Z=0.02
+RESET_DOF_POS_NOISE_ARM=0.1
+RESET_DOF_POS_NOISE_FINGERS=0.1
+RESET_DOF_VEL_NOISE=0.5
+TABLE_RESET_Z_RANGE=0.01
+
+LIFTING_REW_SCALE=20.0
+LIFTING_BONUS=300.0
+FORCE_CONSECUTIVE_NEAR_GOAL=True
+
+WANDB_PROJECT="isaacsimenvs"
+WANDB_GROUP="play2win_furniture_screwing"
+EXPERIMENT_TAG="furniture_bench_bulb_screw_sdf_hybrid_super_dense_finetune_rgf10"
+
+CAPTURE_VIEWER_LEN=600
+CAPTURE_VIEWER_INTERVAL=6000
+CAPTURE_VIEWER_ENV_ID=0
+CAPTURE_VIEWER_WANDB_KEY="interactive_viewer"
+
+set -euo pipefail
+
+REPO_ROOT="/share/portal/kk837/depthbasedRL"
+if [ ! -f "$CHECKPOINT" ]; then
+    echo "Checkpoint not found: $CHECKPOINT" >&2
+    exit 1
+fi
+
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+EXPERIMENT_NAME="${EXPERIMENT_TAG}_${DATETIME}"
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    scontrol update JobId="$SLURM_JOB_ID" JobName="$EXPERIMENT_NAME" || true
+fi
+HYDRA_RUN_DIR="${REPO_ROOT}/train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_NAME}"
+mkdir -p "$HYDRA_RUN_DIR"
+exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
+
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo ""
+echo "Checkpoint: $CHECKPOINT"
+echo "Run dir:    $HYDRA_RUN_DIR"
+echo ""
+
+GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 30
+    done
+) &
+GPU_MONITOR_PID=$!
+
+RAM_LOG="${HYDRA_RUN_DIR}/ram_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$RAM_LOG"
+        free -m | head -2 >> "$RAM_LOG" 2>&1
+        ps -eo pid,rss,comm --sort=-rss --no-headers 2>/dev/null | head -5 >> "$RAM_LOG"
+        if [ -n "${SLURM_JOB_ID:-}" ] && command -v sstat >/dev/null 2>&1; then
+            sstat -j "$SLURM_JOB_ID" --format=MaxRSS,AveRSS --noheader 2>/dev/null >> "$RAM_LOG" || true
+        fi
+        sleep 30
+    done
+) &
+RAM_MONITOR_PID=$!
+
+trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
+
+cd "$REPO_ROOT"
+source .venv_isaacsim/bin/activate
+export OMNI_KIT_ACCEPT_EULA=YES
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache"
+mkdir -p "$OMNI_KIT_CACHE_PATH"
+
+python -u isaacsimenvs/train.py \
+    --task "$TASK_ID" \
+    --agent "$AGENT_KEY" \
+    --checkpoint "$CHECKPOINT" \
+    --checkpoint_load_mode weights \
+    --headless \
+    --capture_viewer \
+    --capture_viewer_len "$CAPTURE_VIEWER_LEN" \
+    --capture_viewer_interval "$CAPTURE_VIEWER_INTERVAL" \
+    --capture_viewer_env_id "$CAPTURE_VIEWER_ENV_ID" \
+    --capture_viewer_wandb_key "$CAPTURE_VIEWER_WANDB_KEY" \
+    --wandb_activate \
+    --wandb_project "$WANDB_PROJECT" \
+    --wandb_group "$WANDB_GROUP" \
+    --wandb_entity kk837 \
+    --wandb_name "$EXPERIMENT_NAME" \
+    env.scene.num_envs=$NUM_ENVS \
+    env.peg_in_hole.problem="$PROBLEM" \
+    env.peg_in_hole.goal_mode="$GOAL_MODE" \
+    env.peg_in_hole.goal_xy_obs_noise=$GOAL_XY_OBS_NOISE \
+    env.peg_in_hole.random_goal_fraction=$RANDOM_GOAL_FRACTION \
+    env.peg_in_hole.random_goal_max_successes=$RANDOM_GOAL_MAX_SUCCESSES \
+    env.peg_in_hole.insertion_success_tolerance=$INSERTION_SUCCESS_TOLERANCE \
+    env.termination.success_tolerance=$SUCCESS_TOLERANCE \
+    env.termination.target_success_tolerance=$TARGET_SUCCESS_TOLERANCE \
+    env.peg_in_hole.enable_retract=$ENABLE_RETRACT \
+    env.peg_in_hole.retract_reward_scale=$RETRACT_REWARD_SCALE \
+    env.peg_in_hole.retract_distance_threshold=$RETRACT_DISTANCE_THRESHOLD \
+    env.peg_in_hole.retract_success_tolerance=$RETRACT_SUCCESS_TOLERANCE \
+    env.domain_randomization.force_scale=$FORCE_SCALE \
+    env.domain_randomization.torque_scale=$TORQUE_SCALE \
+    env.domain_randomization.use_obs_delay=$USE_OBS_DELAY \
+    env.domain_randomization.use_action_delay=$USE_ACTION_DELAY \
+    env.domain_randomization.use_object_state_delay_noise=$USE_OBJECT_STATE_DELAY_NOISE \
+    env.domain_randomization.object_state_xyz_noise_std=$OBJECT_STATE_XYZ_NOISE_STD \
+    env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
+    env.domain_randomization.joint_velocity_obs_noise_std=$JOINT_VELOCITY_OBS_NOISE_STD \
+    "env.domain_randomization.object_scale_noise_multiplier_range=$OBJECT_SCALE_NOISE_RANGE" \
+    env.reset.reset_position_noise_x=$RESET_POSITION_NOISE_X \
+    env.reset.reset_position_noise_y=$RESET_POSITION_NOISE_Y \
+    env.reset.reset_position_noise_z=$RESET_POSITION_NOISE_Z \
+    env.reset.reset_dof_pos_random_interval_arm=$RESET_DOF_POS_NOISE_ARM \
+    env.reset.reset_dof_pos_random_interval_fingers=$RESET_DOF_POS_NOISE_FINGERS \
+    env.reset.reset_dof_vel_random_interval=$RESET_DOF_VEL_NOISE \
+    env.reset.table_reset_z_range=$TABLE_RESET_Z_RANGE \
+    env.reward.lifting_rew_scale=$LIFTING_REW_SCALE \
+    env.reward.lifting_bonus=$LIFTING_BONUS \
+    env.termination.force_consecutive_near_goal_steps=$FORCE_CONSECUTIVE_NEAR_GOAL \
+    agent.params.config.max_epochs=$MAX_ITERATIONS \
+    agent.params.config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
+    agent.params.config.expl_coef_block_size=$EXPL_COEF_BLOCK_SIZE \
+    agent.params.config.name="0_${EXPERIMENT_NAME}" \
+    agent.params.seed=$SEED \
+    hydra.run.dir="$HYDRA_RUN_DIR"
