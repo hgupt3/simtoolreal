@@ -91,21 +91,48 @@ TABLE_SCALE_CHOICES: dict[str, tuple[tuple[float, float], tuple[float, float]]] 
 # Number of pre-baked USD variants when scale is on. Round-robined per env.
 TABLE_SCALE_N_VARIANTS_DEFAULT = 10
 
-# Camera principal-point dropdown. Sim's PinholeCameraCfg always renders with
-# the optical axis at the geometric image center (cy=45 in a 90-row image);
-# the real ZED HD1080 on serial 15107 has cy=47.13 at 160x90 retrieve. The
-# vertical_aperture_offset shifts cy without changing FOV or image dims, so
-# the 70x70 policy input stays valid under either setting.
-# offset_cm = (cy_target - height/2) * focal_length / fx
-#           = (47.13 - 45) * 24 / 115.67  ~=  0.442 cm
-CAMERA_CY_CHOICES: dict[str, float] = {
-    # Matches the real ZED HD1080 calibration on lab serial 15107
-    # (cy=47.13 in a 160x90 retrieve). This is now also the cfg/yaml default.
-    "match real ZED (cy=47.13)":      0.4418,
-    # Forces back to the geometric image center (cy=45). Use for pre-cal
-    # checkpoints or when comparing against a different camera.
-    "override to image center (cy=45)": 0.0,
-}
+# Camera principal-point dropdown. The real ZED HD1080 on serial 15107 has
+# cy=47.13 at 160x90 retrieve; the sim's default principal point is the
+# geometric image center (cy=45 in 90 rows). vertical_aperture_offset shifts
+# cy without changing FOV or image dims, so the 70x70 policy input stays
+# valid under either setting.
+#
+# UNITS WARNING — the offset interpretation differs by backend:
+#   * Tiled (rasterizer / Replicator): cm at sensor plane. NOTE: Replicator
+#     SILENTLY DROPS this offset (sensors.py:110), so the tiled backend's
+#     effective cy is always the geometric center regardless of this value.
+#     Kept here for back-compat with the yaml/cfg.
+#     v_off_cm = (cy_target - H/2) * focal / fx  = (47.13-45)*24/115.67 ~= 0.442 cm
+#   * RayCaster (MultiMeshRayCasterCamera): DIMENSIONLESS — see
+#     PinholeCameraPatternCfg / ray_caster_camera._compute_intrinsic_matrices:
+#         c_x = horizontal_aperture_offset * f_x + W/2
+#     v_off_dim = (cy_target - H/2) / fy_px  = (47.13 - 45) / 115.67 ~= 0.01841
+#
+# `_resolve_v_aperture_offset(backend, cy_choice)` below maps the dropdown
+# choice + selected backend to the correct units.
+CAMERA_CY_CHOICES: tuple[str, ...] = (
+    "match real ZED (cy=47.13)",
+    "override to image center (cy=45)",
+)
+
+
+def _resolve_v_aperture_offset(backend: str, cy_choice: str) -> float:
+    if cy_choice == "override to image center (cy=45)":
+        return 0.0
+    # Otherwise: match real ZED HD1080 cal cy=47.13 at 160x90.
+    if backend == "raycaster":
+        # Dimensionless: (cy - H/2) / fy_px = (47.13 - 45) / 115.67.
+        return (47.13 - 45.0) / 115.67
+    # Tiled: cm at sensor plane (effectively dropped by Replicator,
+    # but kept for back-compat / for any future tiled fix).
+    return 0.4418
+
+
+# Camera-backend dropdown. The raycaster honors aperture offsets and is the
+# ONLY way to actually shift cy at eval time. It also runs ~2x faster than
+# the tiled backend at this resolution. Keep tiled as the default for now to
+# match how older checkpoints were trained.
+CAMERA_BACKEND_CHOICES: tuple[str, ...] = ("tiled", "raycaster")
 
 # Init-pose dropdown. Values mirror the training-side fixed-init subs in
 # isaacsimenvs/final_experiments/play2win/dagger/fixed_init_ablations/*.sub
@@ -792,6 +819,16 @@ def _build_parser() -> argparse.ArgumentParser:
              "trained obs distribution. Use when running against the real "
              "robot or comparing sim depth to a real ZED capture.",
     )
+    parser.add_argument(
+        "--camera-backend",
+        choices=CAMERA_BACKEND_CHOICES,
+        default="tiled",
+        help="Initial value for the camera backend dropdown. 'tiled' uses "
+             "the RTX rasterizer (Replicator); 'raycaster' uses the CUDA "
+             "MultiMeshRayCasterCamera. Raycaster is ~2x faster at this "
+             "resolution and is the only backend that honors aperture "
+             "offsets (i.e., that can actually shift cy to match real ZED).",
+    )
 
     # Hidden worker mode args.
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -945,6 +982,8 @@ def _run_viewer(args) -> int:
                 if not bool(getattr(args, "match_real_cy", True))
                 else "match real ZED (cy=47.13)"
             )
+            # Camera backend dropdown initial value.
+            self.camera_backend = str(getattr(args, "camera_backend", "tiled"))
             self.action_source = args.initial_action_source
             self.env_id = int(args.env_id)
             self.depth_send_every = int(args.depth_send_every)
@@ -1042,8 +1081,13 @@ def _run_viewer(args) -> int:
                 )
                 self._dd_camera_cy = self.server.gui.add_dropdown(
                     "Camera cy (principal point)",
-                    options=tuple(CAMERA_CY_CHOICES.keys()),
+                    options=tuple(CAMERA_CY_CHOICES),
                     initial_value=self.camera_cy_choice,
+                )
+                self._dd_camera_backend = self.server.gui.add_dropdown(
+                    "Camera backend",
+                    options=tuple(CAMERA_BACKEND_CHOICES),
+                    initial_value=self.camera_backend,
                 )
 
                 # === load env ===
@@ -1210,7 +1254,8 @@ def _run_viewer(args) -> int:
             toggles_label = (
                 f"delays={self._cb_delays.value} "
                 f"camposerand={self._cb_camera_pose_rand.value} "
-                f"depthaug={self._cb_depth_aug.value}"
+                f"depthaug={self._cb_depth_aug.value} "
+                f"cambackend={self._dd_camera_backend.value}"
             )
             label = (
                 f"{problem_name} | source: {self.action_source} | "
@@ -1243,14 +1288,18 @@ def _run_viewer(args) -> int:
             self.init_choice = str(self._dd_init.value)
 
             worker_overrides = dict(self.extra_overrides)
-            # Camera cy dropdown -> PinholeCameraCfg.vertical_aperture_offset
-            # (cm). 0 = sim default optical-axis-at-image-center; 0.442 cm
-            # shifts cy to 47.13 to match the real ZED HD1080 calibration.
-            # Doesn't change FOV or image dims, so the trained 70x70 student
-            # is unaffected.
+            # Camera backend dropdown -> StudentObsCfg.camera_backend.
+            # 'tiled' uses the RTX rasterizer (Replicator); 'raycaster' uses
+            # MultiMeshRayCasterCamera (CUDA warp BVH). See
+            # isaacsimenvs/tasks/simtoolreal/utils/scene_utils.py.
+            self.camera_backend = str(self._dd_camera_backend.value)
+            worker_overrides["env.student_obs.camera_backend"] = self.camera_backend
+            # Camera cy dropdown -> vertical_aperture_offset. Units depend on
+            # backend (cm-at-sensor for tiled — but Replicator drops it;
+            # dimensionless for raycaster). The resolver picks the right form.
             self.camera_cy_choice = str(self._dd_camera_cy.value)
-            worker_overrides["env.student_obs.vertical_aperture_offset"] = float(
-                CAMERA_CY_CHOICES[self.camera_cy_choice]
+            worker_overrides["env.student_obs.vertical_aperture_offset"] = (
+                _resolve_v_aperture_offset(self.camera_backend, self.camera_cy_choice)
             )
             # Map the 3 GUI toggles to the underlying StudentObsCfg /
             # DomainRandomizationCfg keys. Delays gate three independent flags
