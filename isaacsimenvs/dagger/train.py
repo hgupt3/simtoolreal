@@ -43,6 +43,21 @@ def main() -> None:
     parser.add_argument("--lambda-d-start", type=float, default=None)
     parser.add_argument("--lambda-d-floor", type=float, default=None)
     parser.add_argument("--lambda-d-decay-frac", type=float, default=None)
+    parser.add_argument("--value-warmup-epochs", type=int, default=None,
+                        help="If >0, the first N updates train critic + BC MSE only "
+                             "(actor PPO loss, entropy, bounds suppressed). λ_D stays "
+                             "pinned to lambda_d_start during warmup, then the decay "
+                             "schedule applies over the remaining max_epochs.")
+    parser.add_argument("--distill-loss", choices=("mse", "nll"), default=None,
+                        help="BC distillation objective. 'mse' (default) trains only "
+                             "the student's μ head against teacher μ. 'nll' minimizes "
+                             "expected NLL of teacher samples and trains μ_s + σ_s to "
+                             "match the teacher's full Gaussian.")
+    parser.add_argument("--init-sigma-from-teacher-block", type=float, default=None,
+                        help="If set, the student's log_sigma is overwritten with the "
+                             "teacher's log_sigma for this block id AFTER the student "
+                             "checkpoint is loaded. For coef_cond student networks, all "
+                             "blocks are initialized to the same teacher row.")
     parser.add_argument("--deterministic-rollouts", action="store_true",
                         help="Use student μ as rollout action (no N(μ, σ) sampling). "
                              "Still DAgger — teacher labels every student-visited state.")
@@ -168,6 +183,12 @@ def main() -> None:
             dagger_cfg["lambda_d_floor"] = args_cli.lambda_d_floor
         if args_cli.lambda_d_decay_frac is not None:
             dagger_cfg["lambda_d_decay_frac"] = args_cli.lambda_d_decay_frac
+        if args_cli.value_warmup_epochs is not None:
+            dagger_cfg["value_warmup_epochs"] = args_cli.value_warmup_epochs
+        if args_cli.distill_loss is not None:
+            dagger_cfg["distill_loss"] = args_cli.distill_loss
+        if args_cli.init_sigma_from_teacher_block is not None:
+            dagger_cfg["init_sigma_from_teacher_block_id"] = args_cli.init_sigma_from_teacher_block
         if args_cli.deterministic_rollouts:
             dagger_cfg["deterministic_rollouts"] = True
 

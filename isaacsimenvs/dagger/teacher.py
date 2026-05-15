@@ -153,6 +153,36 @@ class Teacher:
             action = action.unsqueeze(0)
         return action
 
+    @torch.no_grad()
+    def get_action_and_sigma(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return (mu, sigma) of the teacher's policy for ``obs``.
+
+        Like :meth:`get_action` but also exposes the teacher's per-dim sigma,
+        needed for NLL/KL distillation. Bypasses ``player.get_action`` so we
+        can read ``res_dict['sigmas']`` directly. Updates the player's RNN
+        states the same way ``player.get_action`` does, so successive calls
+        advance the teacher's RNN in lock-step.
+        """
+        if self.intr_reward_coef_embd is not None:
+            obs = torch.cat([obs, self.intr_reward_coef_embd], dim=1)
+        # Teacher.__init__ sets has_batch_dimension=True, so we don't need
+        # the unsqueeze path here.
+        obs = self.player._preproc_obs(obs)
+        input_dict = {
+            "is_train": False,
+            "prev_actions": None,
+            "obs": obs,
+            "rnn_states": self.player.states,
+        }
+        res_dict = self.player.model(input_dict)
+        self.player.states = res_dict["rnn_states"]
+        mu = res_dict["mus"]
+        sigma = res_dict["sigmas"]
+        if mu.ndim == 1:
+            mu = mu.unsqueeze(0)
+            sigma = sigma.unsqueeze(0)
+        return mu, sigma
+
     def reset(self) -> None:
         """Reset the player's RNN state (call when all envs reset)."""
         self.player.reset()

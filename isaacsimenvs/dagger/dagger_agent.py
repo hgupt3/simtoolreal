@@ -82,6 +82,31 @@ class DAggerA2CAgent(A2CAgent):
         self.lambda_d_floor = float(cfg.get("lambda_d_floor", 0.1))
         self.lambda_d_decay_frac = float(cfg.get("lambda_d_decay_frac", 0.5))
 
+        # Value-only warmup: first `value_warmup_epochs` updates train the
+        # critic + BC MSE only, with the actor PPO / entropy / bounds losses
+        # zeroed. λ_D stays pinned to `lambda_d_start` during warmup, then the
+        # regular decay schedule kicks in over the remaining max_epochs.
+        self.value_warmup_epochs = int(cfg.get("value_warmup_epochs", 0))
+
+        # Distillation objective. "mse" matches teacher μ via squared error
+        # on the student μ head (σ never gets gradient). "nll" minimizes the
+        # closed-form expected NLL of teacher samples under the student's
+        # full Gaussian, which trains both μ_s and σ_s to match the teacher's
+        # distribution. The σ pull comes from the `1/σ_s²` weighting on the
+        # μ error plus the `log σ_s` regularizer.
+        self.distill_loss_type = str(cfg.get("distill_loss", "mse")).lower()
+        if self.distill_loss_type not in ("mse", "nll"):
+            raise ValueError(f"distill_loss must be 'mse' or 'nll', got {self.distill_loss_type!r}")
+
+        # If set, after the student checkpoint is loaded, the student's
+        # log_sigma is overwritten with the teacher's log_sigma for the
+        # specified block id. For `coef_cond` student networks, all blocks
+        # get the same value (one teacher row broadcast across all student
+        # rows). Set to None (default) to leave the student's σ at its init.
+        self.init_sigma_from_teacher_block_id = cfg.get("init_sigma_from_teacher_block_id", None)
+        if self.init_sigma_from_teacher_block_id is not None:
+            self.init_sigma_from_teacher_block_id = float(self.init_sigma_from_teacher_block_id)
+
         # If True, training rollouts use the student's deterministic μ instead
         # of sampling from N(μ, σ). Still DAgger (student visits states, teacher
         # labels), but with no exploration noise. Useful when σ never gets
@@ -92,6 +117,116 @@ class DAggerA2CAgent(A2CAgent):
         # Counter incremented inside the wrapped env_step (one per env-step).
         self._dagger_step_counter = 0
         self._dagger_buffer_allocated = False
+
+        # Optional override of the rl_games scheduler bounds. rl_games hardcodes
+        # AdaptiveScheduler.min_lr=1e-6 and max_lr=1e-2, but those are reachable
+        # via Hydra by setting agent.params.config.scheduler_min_lr / _max_lr.
+        if hasattr(self.scheduler, "min_lr"):
+            cfg_min_lr = self.config.get("scheduler_min_lr", None)
+            if cfg_min_lr is not None:
+                self.scheduler.min_lr = float(cfg_min_lr)
+        if hasattr(self.scheduler, "max_lr"):
+            cfg_max_lr = self.config.get("scheduler_max_lr", None)
+            if cfg_max_lr is not None:
+                self.scheduler.max_lr = float(cfg_max_lr)
+
+        # During value warmup the loss is pure MSE (no PPO actor gradient),
+        # which makes the policy KL between snapshots large (~0.2-0.6 vs the
+        # default kl_threshold of 0.008). An AdaptiveScheduler would halve LR
+        # every epoch and floor it at 1e-6 well before warmup ends. So we wrap
+        # the rl_games scheduler.update to be a no-op while epoch_num <
+        # value_warmup_epochs; the adaptive logic engages from epoch_num >=
+        # value_warmup_epochs onward, when PPO clipping keeps KL bounded.
+        if self.value_warmup_epochs > 0:
+            _orig_scheduler_update = self.scheduler.update
+
+            def _gated_scheduler_update(current_lr, entropy_coef, epoch, frames, kl_dist, **kwargs):
+                if self.epoch_num < self.value_warmup_epochs:
+                    return current_lr, entropy_coef
+                return _orig_scheduler_update(current_lr, entropy_coef, epoch, frames, kl_dist, **kwargs)
+
+            self.scheduler.update = _gated_scheduler_update
+
+    # ----- lenient checkpoint load (cross-critic-arch transfer) -----
+
+    def set_weights(self, weights):
+        """Lenient state_dict load so a symmetric-critic checkpoint can seed
+        an asymmetric-critic run (or vice versa). The shared trunk + actor
+        heads transfer; the `a2c_network.value_head.*` keys present only in
+        symmetric checkpoints are dropped, and the asymmetric central value
+        net keeps its fresh init.
+
+        Also runs the optional ``init_sigma_from_teacher_block_id`` override
+        AFTER the checkpoint load — otherwise the loaded log_sigma would
+        clobber any earlier init."""
+        missing, unexpected = self.model.load_state_dict(weights["model"], strict=False)
+        if missing:
+            print(f"[DAgger weights load] missing keys (kept at init): {missing}")
+        if unexpected:
+            print(f"[DAgger weights load] unexpected keys (skipped): {unexpected}")
+        self.set_stats_weights(weights)
+        if self.init_sigma_from_teacher_block_id is not None:
+            self._init_log_sigma_from_teacher(self.init_sigma_from_teacher_block_id)
+
+    def _init_log_sigma_from_teacher(self, block_id: float) -> None:
+        """Copy teacher's effective sigma at the given block id into every
+        row of the student's log_sigma parameter.
+
+        Handles the naming mismatch between rl_games' standard SAPG network
+        (parameter ``a2c_network.sigma`` + optional ``sigma_act``) and the
+        depth_cnn_lstm student (parameter ``a2c_network.log_sigma``, no act).
+        The teacher's effective σ is read by applying ``sigma_act`` to its
+        raw param; the student stores ``log σ`` directly.
+        """
+        t_net = self.teacher.player.model.a2c_network
+        s_net = self.model.a2c_network
+        # --- Teacher: locate raw param + apply sigma_act to get effective σ ---
+        if hasattr(t_net, "log_sigma"):
+            t_param, teacher_is_logspace = t_net.log_sigma, True
+        elif hasattr(t_net, "sigma") and isinstance(t_net.sigma, torch.nn.Parameter):
+            t_param, teacher_is_logspace = t_net.sigma, False
+        else:
+            print("[DAgger sigma init] teacher has no recognizable sigma parameter; skipping")
+            return
+        if hasattr(t_net, "sigma_ids") and t_param.ndim == 2:
+            ids = t_net.sigma_ids.detach().cpu().reshape(-1)
+            match = (ids == float(block_id)).nonzero(as_tuple=True)[0]
+            if match.numel() == 0:
+                print(f"[DAgger sigma init] teacher has no block {block_id}; using row 0 ({float(ids[0])})")
+                row = t_param[0]
+            else:
+                row = t_param[int(match[0])]
+        else:
+            row = t_param.reshape(-1)
+        row = row.detach()
+        if teacher_is_logspace:
+            actual_sigma = torch.exp(row)
+        elif hasattr(t_net, "sigma_act"):
+            actual_sigma = t_net.sigma_act(row)
+        else:
+            actual_sigma = row
+        # Floor at 0.05: rl_games SAPG with `sigma_activation: None` lets the
+        # teacher's σ parameter drift negative during training, which surfaces
+        # as ≤ 0 entries on some action dims (3 of 29 in this checkpoint).
+        # Copying those into the student would give σ_s ≈ 0, making the NLL
+        # term (μ_s-μ_t)²/σ_s² explode. 0.05 is a sane minimum exploration
+        # scale for action units of order O(1).
+        actual_sigma = actual_sigma.clamp(min=0.05)
+        target_log_sigma = torch.log(actual_sigma)
+        # --- Student: write into log_sigma (depth_cnn_lstm naming) ---
+        if not hasattr(s_net, "log_sigma"):
+            print("[DAgger sigma init] student has no log_sigma; skipping")
+            return
+        with torch.no_grad():
+            if s_net.log_sigma.ndim == 2:
+                target = target_log_sigma.to(s_net.log_sigma.device).unsqueeze(0).expand_as(s_net.log_sigma)
+                s_net.log_sigma.copy_(target)
+                print(f"[DAgger sigma init] copied teacher block {block_id} sigma into all "
+                      f"{s_net.log_sigma.shape[0]} student blocks; sigma~={actual_sigma.tolist()}")
+            else:
+                s_net.log_sigma.copy_(target_log_sigma.to(s_net.log_sigma.device))
+                print(f"[DAgger sigma init] copied teacher block {block_id} sigma "
+                      f"({s_net.log_sigma.shape[-1]} dims); sigma~={actual_sigma.tolist()}")
 
     # ----- buffers -----
 
@@ -106,9 +241,18 @@ class DAggerA2CAgent(A2CAgent):
                 dtype=torch.float32,
                 device=self.ppo_device,
             )
-            # Make sure swap_and_flatten01 sees this key when building batch_dict.
-            if "teacher_actions" not in self.tensor_list:
-                self.tensor_list = list(self.tensor_list) + ["teacher_actions"]
+            # Teacher's per-dim sigma at each rollout step, used by NLL
+            # distillation. Always allocated (cheap) so the buffer schema
+            # is stable whether the loss is MSE or NLL.
+            self.experience_buffer.tensor_dict["teacher_sigmas"] = torch.zeros(
+                (self.horizon_length, self.num_actors, self.actions_num),
+                dtype=torch.float32,
+                device=self.ppo_device,
+            )
+            # Make sure swap_and_flatten01 sees these keys when building batch_dict.
+            for k in ("teacher_actions", "teacher_sigmas"):
+                if k not in self.tensor_list:
+                    self.tensor_list = list(self.tensor_list) + [k]
             self._dagger_buffer_allocated = True
 
     # ----- deterministic rollout override -----
@@ -123,10 +267,16 @@ class DAggerA2CAgent(A2CAgent):
     # ----- λ_D schedule -----
 
     def _lambda_d(self) -> float:
-        end_epoch = self.lambda_d_decay_frac * float(self.max_epochs)
-        if end_epoch <= 0 or self.epoch_num >= end_epoch:
+        # During value warmup, hold λ_D at start (the warmup loss branch
+        # ignores it anyway, but logging still uses this value).
+        if self.epoch_num < self.value_warmup_epochs:
+            return self.lambda_d_start
+        eff_epoch = self.epoch_num - self.value_warmup_epochs
+        eff_max = max(self.max_epochs - self.value_warmup_epochs, 1)
+        end_epoch = self.lambda_d_decay_frac * float(eff_max)
+        if end_epoch <= 0 or eff_epoch >= end_epoch:
             return self.lambda_d_floor
-        frac = float(self.epoch_num) / end_epoch
+        frac = float(eff_epoch) / end_epoch
         return self.lambda_d_start + (self.lambda_d_floor - self.lambda_d_start) * frac
 
     # ----- rollout: monkey-patch env_step to record teacher labels -----
@@ -141,12 +291,14 @@ class DAggerA2CAgent(A2CAgent):
 
         def wrapped_env_step(actions):
             # Query the teacher on the SAME obs we just fed to get_action_values,
-            # so its RNN advances in lock-step with the student's.
+            # so its RNN advances in lock-step with the student's. Always fetch
+            # both μ and σ so the buffer schema is independent of the loss type.
             base_obs = self.obs[self._teacher_obs_key]
             with torch.no_grad():
-                teacher_a = self.teacher.get_action(base_obs)
+                teacher_mu, teacher_sigma = self.teacher.get_action_and_sigma(base_obs)
             n = self._dagger_step_counter
-            self.experience_buffer.tensor_dict["teacher_actions"][n].copy_(teacher_a)
+            self.experience_buffer.tensor_dict["teacher_actions"][n].copy_(teacher_mu)
+            self.experience_buffer.tensor_dict["teacher_sigmas"][n].copy_(teacher_sigma)
             self._dagger_step_counter += 1
 
             result = original_env_step(actions)
@@ -167,9 +319,10 @@ class DAggerA2CAgent(A2CAgent):
 
     def prepare_dataset(self, batch_dict, train_value_mean_std=True):
         super().prepare_dataset(batch_dict, train_value_mean_std=train_value_mean_std)
-        # Patch teacher_actions into the same flat ordering as the rest of the dataset.
-        # batch_dict was built with swap_and_flatten01 → shape (T*B, A) for our key.
+        # Patch teacher_actions + teacher_sigmas into the same flat ordering as the rest
+        # of the dataset. batch_dict was built with swap_and_flatten01 → shape (T*B, A).
         self.dataset.values_dict["teacher_actions"] = batch_dict["teacher_actions"]
+        self.dataset.values_dict["teacher_sigmas"] = batch_dict["teacher_sigmas"]
 
     # ----- per-minibatch loss: copy of A2CAgent.calc_gradients with the DAgger term added -----
 
@@ -183,7 +336,8 @@ class DAggerA2CAgent(A2CAgent):
         actions_batch = input_dict["actions"]
         obs_batch = input_dict["obs"]
         obs_batch = self._preproc_obs(obs_batch)
-        teacher_actions_batch = input_dict["teacher_actions"]   # (mb, action_dim)
+        teacher_actions_batch = input_dict["teacher_actions"]   # (mb, action_dim) — teacher μ
+        teacher_sigmas_batch = input_dict["teacher_sigmas"]     # (mb, action_dim) — teacher σ
 
         lr_mul = 1.0
         curr_e_clip = self.e_clip
@@ -241,13 +395,36 @@ class DAggerA2CAgent(A2CAgent):
 
             ppo_loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy_loss + b_loss * self.bounds_loss_coef
 
-            # ---- DAgger MSE term ----
-            # Per-element MSE (no reduction yet) so we can mask + average like the other losses.
-            mse_per_elem = (mu - teacher_actions_batch).pow(2).mean(dim=-1, keepdim=True)  # (mb, 1)
-            (mse_loss,), _ = torch_ext.apply_masks([mse_per_elem], rnn_masks)
+            # ---- DAgger distillation term ----
+            # Per-element distill loss (no reduction yet) so we can mask + average like the other losses.
+            if self.distill_loss_type == "nll":
+                # Closed-form expected NLL of teacher samples under the student:
+                #   E_{a~N(μ_t, σ_t)} [-log π_s(a)]
+                #     = 0.5 * ((μ_s-μ_t)² + σ_t²) / σ_s²  +  log σ_s  + const
+                # σ_s appears as a 1/σ_s² weight on μ-error and as a log σ_s
+                # regularizer, so the student's σ is pulled toward teacher's σ.
+                eps = 1e-6
+                inv_var = 1.0 / (sigma * sigma + eps)
+                nll_per_dim = (
+                    0.5 * ((mu - teacher_actions_batch).pow(2) + teacher_sigmas_batch.pow(2)) * inv_var
+                    + torch.log(sigma + eps)
+                )
+                distill_per_elem = nll_per_dim.mean(dim=-1, keepdim=True)  # (mb, 1)
+            else:
+                distill_per_elem = (mu - teacher_actions_batch).pow(2).mean(dim=-1, keepdim=True)
+            (distill_loss,), _ = torch_ext.apply_masks([distill_per_elem], rnn_masks)
+            # Keep `mse_loss` as an alias for the wandb scalar name `dagger/L_D`
+            # so existing dashboards don't break.
+            mse_loss = distill_loss
 
             lam_d = self._lambda_d()
-            loss = (1.0 - lam_d) * ppo_loss + lam_d * mse_loss
+            if self.epoch_num < self.value_warmup_epochs:
+                # Value warmup: critic + BC distillation only. Suppress actor
+                # PPO loss, entropy bonus, and bounds penalty so the policy
+                # is updated by BC labels alone while the value head catches up.
+                loss = distill_loss + 0.5 * c_loss * self.critic_coef
+            else:
+                loss = (1.0 - lam_d) * ppo_loss + lam_d * distill_loss
 
             if self.multi_gpu:
                 self.optimizer.zero_grad()
