@@ -3,34 +3,50 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=12
 #SBATCH --get-user-env
-#SBATCH --mem=200000
-#SBATCH -t 12-00:00:00
+#SBATCH --mem=100000
+#SBATCH -t 24:00:00
 #SBATCH --partition=portal
 #SBATCH --exclude=portal-compute-01
 #SBATCH --gres=gpu:1
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
 
-# IsaacSim PegInHole SAPG finetune, rgf=0.10 (10% random-goal cotrain).
-# Problem: Lpeg.tol0p5mm (L-shaped peg into 0.5mm tolerance hole).
-# Stricter insertion/retract success tolerances.
-# URDF <sdf> collision tags and UWLab-style PhysX settings are task defaults.
+# All-DR BC-only distillation for fabrica.beam_2x.part_0_sdf_hybrid.
+#
+# Mirrors the env knobs of the corresponding teacher sub
+# (../teachers/finetune_fabrica_beam_2x_part_0_sdf_hybrid_rgf0.sub) so the teacher's labels stay on its
+# training distribution. Adds the student-side DR knobs that are not part
+# of the teacher's obs (camera delay, camera-pose rand, depth aug, table xy
+# + yaw + scale). Table DR is cosmetic to the teacher because the teacher
+# observes in hole frame, not table frame.
+#
+# Hyperparams (n=512, mb=2048, me=8, lr=4e-4, lr_schedule=identity) are
+# the validated non-fixed-init values from earlier BC-only sweeps.
+#
+# Scale variants require replicate_physics=False + clone_in_fabric=False
+# because the spawner cycles N distinct USDs per env via MultiUsdFileCfg.
 
-TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
-AGENT_KEY="rl_games_sapg_cfg_entry_point"
-PROBLEM="Lpeg.tol0p5mm"
+TASK_ID="Isaacsimenvs-PegInHoleDepthStudent-Direct-v0"
+AGENT_KEY="rl_games_dagger_sapg_cfg_entry_point"
+PROBLEM="fabrica.beam_2x.part_0_sdf_hybrid"
 GOAL_MODE="preInsertAndFinal"
-CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
 
-NUM_ENVS=12288
-MINIBATCH_SIZE=98304
-MAX_ITERATIONS=1000000
-SEED=0
-EXPL_COEF_BLOCK_SIZE=2048
+TEACHER_RUN_DIR="${TEACHER_RUN_DIR:-/share/portal/kk837/depthbasedRL/train_dir/isaacsimenvs/play2win_multi_part_assembly/fabrica_beam_2x_part_0_sdf_hybrid_finetune_rgf0_2026-05-11_16-50-01}"
 
-RANDOM_GOAL_FRACTION=0.1
+NUM_ENVS=256
+EXPL_BLOCK=128
+MINIBATCH_SIZE=2048
+MINI_EPOCHS=8
+LR=4e-4
+
+CRITIC=symmetric
+LAMBDA_D_START=1.0
+LAMBDA_D_FLOOR=1.0
+LAMBDA_D_DECAY_FRAC=0.5
+
+RANDOM_GOAL_FRACTION=0.0
 RANDOM_GOAL_MAX_SUCCESSES=5
-GOAL_XY_OBS_NOISE=0.002
+GOAL_XY_OBS_NOISE=0.0
 INSERTION_SUCCESS_TOLERANCE=0.010
 SUCCESS_TOLERANCE=0.01
 TARGET_SUCCESS_TOLERANCE=0.01
@@ -41,12 +57,19 @@ RETRACT_DISTANCE_THRESHOLD=0.1
 RETRACT_SUCCESS_TOLERANCE=0.005
 
 USE_OBS_DELAY=True
+OBS_DELAY_MAX=3
 USE_ACTION_DELAY=True
-USE_OBJECT_STATE_DELAY_NOISE=True
+ACTION_DELAY_MAX=3
+USE_CAMERA_DELAY=True
+CAMERA_DELAY_MAX=3
+USE_OBJECT_STATE_DELAY_NOISE=False
 OBJECT_STATE_XYZ_NOISE_STD=0.01
 OBJECT_STATE_ROTATION_NOISE_DEG=5.0
-JOINT_VELOCITY_OBS_NOISE_STD=0.1
+JOINT_VELOCITY_OBS_NOISE_STD=0.0
 OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
+
+USE_CAMERA_POSE_RAND=True
+USE_DEPTH_AUG=True
 
 FORCE_SCALE=0.0
 TORQUE_SCALE=0.0
@@ -59,24 +82,29 @@ RESET_DOF_POS_NOISE_FINGERS=0.1
 RESET_DOF_VEL_NOISE=0.5
 TABLE_RESET_Z_RANGE=0.01
 
+TABLE_RESET_XY_RANGE="[0.03,0.03]"
+TABLE_RESET_YAW_RANGE_DEG=5.0
+TABLE_SCALE_RANGE_X="[0.85,1.15]"
+TABLE_SCALE_RANGE_Y="[0.85,1.15]"
+TABLE_SCALE_NUM_VARIANTS=100
+
 LIFTING_REW_SCALE=20.0
 LIFTING_BONUS=300.0
 FORCE_CONSECUTIVE_NEAR_GOAL=True
-
-WANDB_PROJECT="isaacsimenvs"
-WANDB_GROUP="play2win_peg_insertion"
-EXPERIMENT_TAG="lpeg_tol0p5mm_finetune_rgf10"
 
 CAPTURE_VIEWER_LEN=600
 CAPTURE_VIEWER_INTERVAL=6000
 CAPTURE_VIEWER_ENV_ID=0
 CAPTURE_VIEWER_WANDB_KEY="interactive_viewer"
 
-set -euo pipefail
+WANDB_PROJECT="dagger_final"
+WANDB_GROUP="play2win_multi_part_assembly_distill_all_dr"
+EXPERIMENT_TAG="fabrica_beam_2x_part_0_sdf_hybrid_rgf0_distill_all_dr_highres3x"
 
+set -euo pipefail
 REPO_ROOT="/share/portal/kk837/depthbasedRL"
-if [ ! -f "$CHECKPOINT" ]; then
-    echo "Checkpoint not found: $CHECKPOINT" >&2
+if [ ! -d "$TEACHER_RUN_DIR" ]; then
+    echo "Teacher run dir not found: $TEACHER_RUN_DIR" >&2
     exit 1
 fi
 
@@ -92,8 +120,24 @@ exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
 echo "=== Initial GPU State ==="
 nvidia-smi
 echo ""
-echo "Checkpoint: $CHECKPOINT"
-echo "Run dir:    $HYDRA_RUN_DIR"
+echo "Teacher run dir:    $TEACHER_RUN_DIR"
+echo "Hydra run dir:      $HYDRA_RUN_DIR"
+echo "num_envs:           $NUM_ENVS"
+echo "expl_block_size:    $EXPL_BLOCK"
+echo "minibatch_size:     $MINIBATCH_SIZE"
+echo "mini_epochs:        $MINI_EPOCHS"
+echo "learning_rate:      $LR"
+echo "critic:             $CRITIC"
+echo "obs_delay:          $USE_OBS_DELAY (max=$OBS_DELAY_MAX)"
+echo "action_delay:       $USE_ACTION_DELAY (max=$ACTION_DELAY_MAX)"
+echo "camera_delay:       $USE_CAMERA_DELAY (max=$CAMERA_DELAY_MAX)"
+echo "use_camera_pose_rand: $USE_CAMERA_POSE_RAND"
+echo "use_depth_aug:        $USE_DEPTH_AUG"
+echo "table_reset_xy_m:     $TABLE_RESET_XY_RANGE"
+echo "table_reset_yaw_deg:  $TABLE_RESET_YAW_RANGE_DEG"
+echo "table_scale_x:        $TABLE_SCALE_RANGE_X"
+echo "table_scale_y:        $TABLE_SCALE_RANGE_Y"
+echo "table_scale_n:        $TABLE_SCALE_NUM_VARIANTS"
 echo ""
 
 GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
@@ -126,15 +170,20 @@ trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
 cd "$REPO_ROOT"
 source .venv_isaacsim/bin/activate
 export OMNI_KIT_ACCEPT_EULA=YES
-export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache"
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache_dagger_${SLURM_JOB_ID:-$$}"
 mkdir -p "$OMNI_KIT_CACHE_PATH"
 
-python -u isaacsimenvs/train.py \
+python -u isaacsimenvs/dagger/train.py \
     --task "$TASK_ID" \
     --agent "$AGENT_KEY" \
-    --checkpoint "$CHECKPOINT" \
-    --checkpoint_load_mode weights \
+    --teacher-run-dir "$TEACHER_RUN_DIR" \
+    --critic "$CRITIC" \
+    --lambda-d-start "$LAMBDA_D_START" \
+    --lambda-d-floor "$LAMBDA_D_FLOOR" \
+    --lambda-d-decay-frac "$LAMBDA_D_DECAY_FRAC" \
+    --deterministic-rollouts \
     --headless \
+    --enable_cameras \
     --capture_viewer \
     --capture_viewer_len "$CAPTURE_VIEWER_LEN" \
     --capture_viewer_interval "$CAPTURE_VIEWER_INTERVAL" \
@@ -146,6 +195,8 @@ python -u isaacsimenvs/train.py \
     --wandb_entity kk837 \
     --wandb_name "$EXPERIMENT_NAME" \
     env.scene.num_envs=$NUM_ENVS \
+    env.scene.replicate_physics=False \
+    env.scene.clone_in_fabric=False \
     env.peg_in_hole.problem="$PROBLEM" \
     env.peg_in_hole.goal_mode="$GOAL_MODE" \
     env.peg_in_hole.goal_xy_obs_noise=$GOAL_XY_OBS_NOISE \
@@ -161,7 +212,13 @@ python -u isaacsimenvs/train.py \
     env.domain_randomization.force_scale=$FORCE_SCALE \
     env.domain_randomization.torque_scale=$TORQUE_SCALE \
     env.domain_randomization.use_obs_delay=$USE_OBS_DELAY \
+    env.domain_randomization.obs_delay_max=$OBS_DELAY_MAX \
     env.domain_randomization.use_action_delay=$USE_ACTION_DELAY \
+    env.domain_randomization.action_delay_max=$ACTION_DELAY_MAX \
+    env.student_obs.use_camera_delay=$USE_CAMERA_DELAY \
+    env.student_obs.camera_delay_max=$CAMERA_DELAY_MAX \
+    env.student_obs.use_camera_pose_rand=$USE_CAMERA_POSE_RAND \
+    env.student_obs.use_depth_aug=$USE_DEPTH_AUG \
     env.domain_randomization.use_object_state_delay_noise=$USE_OBJECT_STATE_DELAY_NOISE \
     env.domain_randomization.object_state_xyz_noise_std=$OBJECT_STATE_XYZ_NOISE_STD \
     env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
@@ -174,13 +231,25 @@ python -u isaacsimenvs/train.py \
     env.reset.reset_dof_pos_random_interval_fingers=$RESET_DOF_POS_NOISE_FINGERS \
     env.reset.reset_dof_vel_random_interval=$RESET_DOF_VEL_NOISE \
     env.reset.table_reset_z_range=$TABLE_RESET_Z_RANGE \
+    "env.reset.table_reset_xy_range_m=$TABLE_RESET_XY_RANGE" \
+    env.reset.table_reset_yaw_range_deg=$TABLE_RESET_YAW_RANGE_DEG \
+    "env.assets.table_scale_range_x=$TABLE_SCALE_RANGE_X" \
+    "env.assets.table_scale_range_y=$TABLE_SCALE_RANGE_Y" \
+    env.assets.table_scale_num_variants=$TABLE_SCALE_NUM_VARIANTS \
     env.reward.lifting_rew_scale=$LIFTING_REW_SCALE \
     env.reward.lifting_bonus=$LIFTING_BONUS \
     env.termination.force_consecutive_near_goal_steps=$FORCE_CONSECUTIVE_NEAR_GOAL \
-    agent.params.config.max_epochs=$MAX_ITERATIONS \
+    env.student_obs.image_width=480 \
+    env.student_obs.image_height=270 \
+    env.student_obs.image_input_width=210 \
+    env.student_obs.image_input_height=210 \
+    "env.student_obs.crop_top_left=[270, 0]" \
+    "env.student_obs.crop_bottom_right=[480, 210]" \
+    "agent.params.network.image_hw=[210,210]" \
+    agent.params.config.expl_coef_block_size=$EXPL_BLOCK \
     agent.params.config.minibatch_size=$MINIBATCH_SIZE \
     agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
-    agent.params.config.expl_coef_block_size=$EXPL_COEF_BLOCK_SIZE \
-    agent.params.config.name="0_${EXPERIMENT_NAME}" \
-    agent.params.seed=$SEED \
+    agent.params.config.mini_epochs=$MINI_EPOCHS \
+    agent.params.config.learning_rate=$LR \
+    agent.params.config.lr_schedule=identity \
     hydra.run.dir="$HYDRA_RUN_DIR"

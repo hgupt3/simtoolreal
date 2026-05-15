@@ -3,54 +3,93 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=12
 #SBATCH --get-user-env
-#SBATCH --mem=200000
-#SBATCH -t 12-00:00:00
+#SBATCH --mem=100000
+#SBATCH -t 24:00:00
 #SBATCH --partition=portal
 #SBATCH --exclude=portal-compute-01
 #SBATCH --gres=gpu:1
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
 
-# IsaacSim PegInHole SAPG finetune, rgf=0.10 (10% random-goal cotrain).
-# Problem: furniture_bench.one_leg_sdf_hybrid_dense (FurnitureBench square_table leg-screwing, dense waypoints, SDF hole patch + 4-wall+base-plate tray fixture).
-# Stricter insertion/retract success tolerances.
-# URDF <sdf> collision tags and UWLab-style PhysX settings are task defaults.
+# DAgger + PPO from scratch (no BC pretrain, no checkpoint).
+#
+# Single-stage variant: instead of (1) BC-only distillation -> (2) RL
+# post-training, run both objectives in the same job from epoch 0. Student
+# starts from random init; SAPG learns the policy through a curriculum that
+# starts BC-dominated and gradually hands off to RL.
+#
+# Strategy: same dagger/train.py, same SAPG agent.
+#  - First 1000 updates (value warmup): loss = mse + 0.5 * critic_coef * c_loss.
+#    Actor PPO loss / entropy / bounds suppressed. BC pulls the random actor
+#    toward the teacher while the value head learns returns under that policy.
+#  - Then lambda_D ramps linearly from 1.0 -> 0.0 over the next 50% of the
+#    remaining epochs, then pure SAPG.
+#  - LR=4e-4 (from-scratch BC value), adaptive scheduler tames KL spikes once
+#    PPO engages.
+# CRITIC=asymmetric: privileged-state value head (central_value_config in
+# the yaml takes the teacher's full obs). Pinto et al. 1710.06542 standard
+# for vision-based sim-to-real.
+#
+# Env DR matches the BC-only baseline (delays ON, obs/object noise OFF,
+# reset noise kept). Stochastic rollouts so PPO ratio stays sane.
 
-TASK_ID="Isaacsimenvs-PegInHole-Direct-v0"
-AGENT_KEY="rl_games_sapg_cfg_entry_point"
-PROBLEM="furniture_bench.one_leg_sdf_hybrid_dense"
+TASK_ID="Isaacsimenvs-PegInHoleDepthStudent-Direct-v0"
+AGENT_KEY="rl_games_dagger_sapg_cfg_entry_point"
+PROBLEM="Lpeg.tol0p5mm"
 GOAL_MODE="preInsertAndFinal"
-CHECKPOINT="${CHECKPOINT:-/share/portal/kk837/depthbasedRL/pretrained_policy/model.pth}"
 
-NUM_ENVS=12288
-MINIBATCH_SIZE=98304
-MAX_ITERATIONS=1000000
-SEED=0
-EXPL_COEF_BLOCK_SIZE=2048
+TEACHER_RUN_DIR="${TEACHER_RUN_DIR:-/share/portal/kk837/depthbasedRL/train_dir/isaacsimenvs/play2win_peg_insertion/lpeg_tol0p5mm_finetune_rgf0_2026-05-11_16-50-01}"
+# No CHECKPOINT — student starts from random init.
 
-RANDOM_GOAL_FRACTION=0.1
+NUM_ENVS=512
+EXPL_BLOCK=128
+# Noise reduction for SAPG: bigger minibatch (more samples per gradient
+# step) + fewer mini_epochs (fewer passes over noisy advantage estimates).
+# 512 envs * 16 horizon = 8192 batch -> 4096 minibatch = 2 mb/epoch.
+MINIBATCH_SIZE=4096
+MINI_EPOCHS=4
+LR=4e-4
+MAX_EPOCHS=6000
+
+CRITIC=asymmetric
+LAMBDA_D_START=1.0
+LAMBDA_D_FLOOR=0.0
+LAMBDA_D_DECAY_FRAC=0.5
+
+RANDOM_GOAL_FRACTION=0.0
 RANDOM_GOAL_MAX_SUCCESSES=5
-GOAL_XY_OBS_NOISE=0.002
-INSERTION_SUCCESS_TOLERANCE=0.005
+GOAL_XY_OBS_NOISE=0.0
+INSERTION_SUCCESS_TOLERANCE=0.010
 SUCCESS_TOLERANCE=0.01
 TARGET_SUCCESS_TOLERANCE=0.01
 
 ENABLE_RETRACT=True
 RETRACT_REWARD_SCALE=1.0
 RETRACT_DISTANCE_THRESHOLD=0.1
-RETRACT_SUCCESS_TOLERANCE=0.002
+RETRACT_SUCCESS_TOLERANCE=0.005
 
+# === Delays: ON (matching the baseline.sub the student trained against) ===
 USE_OBS_DELAY=True
+OBS_DELAY_MAX=3
 USE_ACTION_DELAY=True
-USE_OBJECT_STATE_DELAY_NOISE=True
-OBJECT_STATE_XYZ_NOISE_STD=0.01
-OBJECT_STATE_ROTATION_NOISE_DEG=5.0
-JOINT_VELOCITY_OBS_NOISE_STD=0.1
-OBJECT_SCALE_NOISE_RANGE="[0.9,1.1]"
+ACTION_DELAY_MAX=3
+USE_CAMERA_DELAY=True
+CAMERA_DELAY_MAX=3
+
+# === Obs / object noise: OFF (first-step simplification) ===
+USE_OBJECT_STATE_DELAY_NOISE=False
+OBJECT_STATE_XYZ_NOISE_STD=0.0
+OBJECT_STATE_ROTATION_NOISE_DEG=0.0
+JOINT_VELOCITY_OBS_NOISE_STD=0.0
+OBJECT_SCALE_NOISE_RANGE="[1.0,1.0]"
+
+USE_CAMERA_POSE_RAND=False
+USE_DEPTH_AUG=False
 
 FORCE_SCALE=0.0
 TORQUE_SCALE=0.0
 
+# === Reset noise: KEPT (exploration variance, not obs noise) ===
 RESET_POSITION_NOISE_X=0.1
 RESET_POSITION_NOISE_Y=0.1
 RESET_POSITION_NOISE_Z=0.02
@@ -63,23 +102,26 @@ LIFTING_REW_SCALE=20.0
 LIFTING_BONUS=300.0
 FORCE_CONSECUTIVE_NEAR_GOAL=True
 
-WANDB_PROJECT="isaacsimenvs"
-WANDB_GROUP="play2win_furniture_screwing"
-EXPERIMENT_TAG="furniture_bench_one_leg_sdf_hybrid_dense_finetune_rgf10"
-
 CAPTURE_VIEWER_LEN=600
 CAPTURE_VIEWER_INTERVAL=6000
 CAPTURE_VIEWER_ENV_ID=0
 CAPTURE_VIEWER_WANDB_KEY="interactive_viewer"
 
-set -euo pipefail
+WANDB_PROJECT="dagger_rl_post_training"
+WANDB_GROUP="lpeg_tol0p5mm"
+EXPERIMENT_TAG="dagger_ppo_from_scratch_warmup1000_mse_asym_stoch_clip05_lrfix_24h"
+E_CLIP=0.05
+SUCCESS_STEPS=1
+VALUE_WARMUP_EPOCHS=1000
+# BC distillation stays as MSE on teacher μ — SAPG learns σ on its own
+# during the post-warmup phase via the actor PPO + entropy gradients.
 
+set -euo pipefail
 REPO_ROOT="/share/portal/kk837/depthbasedRL"
-if [ ! -f "$CHECKPOINT" ]; then
-    echo "Checkpoint not found: $CHECKPOINT" >&2
+if [ ! -d "$TEACHER_RUN_DIR" ]; then
+    echo "Teacher run dir not found: $TEACHER_RUN_DIR" >&2
     exit 1
 fi
-
 DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
 EXPERIMENT_NAME="${EXPERIMENT_TAG}_${DATETIME}"
 if [ -n "${SLURM_JOB_ID:-}" ]; then
@@ -92,8 +134,23 @@ exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
 echo "=== Initial GPU State ==="
 nvidia-smi
 echo ""
-echo "Checkpoint: $CHECKPOINT"
-echo "Run dir:    $HYDRA_RUN_DIR"
+echo "Teacher run dir:    $TEACHER_RUN_DIR"
+echo "Student init:       random (no checkpoint)"
+echo "Hydra run dir:      $HYDRA_RUN_DIR"
+echo "num_envs:           $NUM_ENVS"
+echo "expl_block_size:    $EXPL_BLOCK"
+echo "minibatch_size:     $MINIBATCH_SIZE"
+echo "mini_epochs:        $MINI_EPOCHS"
+echo "learning_rate:      $LR"
+echo "max_epochs:         $MAX_EPOCHS"
+echo "critic:             $CRITIC"
+echo "lambda_d:           start=$LAMBDA_D_START floor=$LAMBDA_D_FLOOR decay_frac=$LAMBDA_D_DECAY_FRAC"
+echo "obs_delay:          $USE_OBS_DELAY"
+echo "action_delay:       $USE_ACTION_DELAY"
+echo "camera_delay:       $USE_CAMERA_DELAY"
+echo "object_state_noise: $USE_OBJECT_STATE_DELAY_NOISE"
+echo "joint_vel_noise:    $JOINT_VELOCITY_OBS_NOISE_STD"
+echo "object_scale_range: $OBJECT_SCALE_NOISE_RANGE"
 echo ""
 
 GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
@@ -126,15 +183,20 @@ trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
 cd "$REPO_ROOT"
 source .venv_isaacsim/bin/activate
 export OMNI_KIT_ACCEPT_EULA=YES
-export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache"
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache_dagger_${SLURM_JOB_ID:-$$}"
 mkdir -p "$OMNI_KIT_CACHE_PATH"
 
-python -u isaacsimenvs/train.py \
+python -u isaacsimenvs/dagger/train.py \
     --task "$TASK_ID" \
     --agent "$AGENT_KEY" \
-    --checkpoint "$CHECKPOINT" \
-    --checkpoint_load_mode weights \
+    --teacher-run-dir "$TEACHER_RUN_DIR" \
+    --critic "$CRITIC" \
+    --lambda-d-start "$LAMBDA_D_START" \
+    --lambda-d-floor "$LAMBDA_D_FLOOR" \
+    --lambda-d-decay-frac "$LAMBDA_D_DECAY_FRAC" \
+    --value-warmup-epochs "$VALUE_WARMUP_EPOCHS" \
     --headless \
+    --enable_cameras \
     --capture_viewer \
     --capture_viewer_len "$CAPTURE_VIEWER_LEN" \
     --capture_viewer_interval "$CAPTURE_VIEWER_INTERVAL" \
@@ -146,6 +208,7 @@ python -u isaacsimenvs/train.py \
     --wandb_entity kk837 \
     --wandb_name "$EXPERIMENT_NAME" \
     env.scene.num_envs=$NUM_ENVS \
+    env.scene.replicate_physics=True \
     env.peg_in_hole.problem="$PROBLEM" \
     env.peg_in_hole.goal_mode="$GOAL_MODE" \
     env.peg_in_hole.goal_xy_obs_noise=$GOAL_XY_OBS_NOISE \
@@ -161,7 +224,13 @@ python -u isaacsimenvs/train.py \
     env.domain_randomization.force_scale=$FORCE_SCALE \
     env.domain_randomization.torque_scale=$TORQUE_SCALE \
     env.domain_randomization.use_obs_delay=$USE_OBS_DELAY \
+    env.domain_randomization.obs_delay_max=$OBS_DELAY_MAX \
     env.domain_randomization.use_action_delay=$USE_ACTION_DELAY \
+    env.domain_randomization.action_delay_max=$ACTION_DELAY_MAX \
+    env.student_obs.use_camera_delay=$USE_CAMERA_DELAY \
+    env.student_obs.camera_delay_max=$CAMERA_DELAY_MAX \
+    env.student_obs.use_camera_pose_rand=$USE_CAMERA_POSE_RAND \
+    env.student_obs.use_depth_aug=$USE_DEPTH_AUG \
     env.domain_randomization.use_object_state_delay_noise=$USE_OBJECT_STATE_DELAY_NOISE \
     env.domain_randomization.object_state_xyz_noise_std=$OBJECT_STATE_XYZ_NOISE_STD \
     env.domain_randomization.object_state_rotation_noise_degrees=$OBJECT_STATE_ROTATION_NOISE_DEG \
@@ -177,10 +246,14 @@ python -u isaacsimenvs/train.py \
     env.reward.lifting_rew_scale=$LIFTING_REW_SCALE \
     env.reward.lifting_bonus=$LIFTING_BONUS \
     env.termination.force_consecutive_near_goal_steps=$FORCE_CONSECUTIVE_NEAR_GOAL \
-    agent.params.config.max_epochs=$MAX_ITERATIONS \
+    env.termination.success_steps=$SUCCESS_STEPS \
+    agent.params.config.expl_coef_block_size=$EXPL_BLOCK \
     agent.params.config.minibatch_size=$MINIBATCH_SIZE \
     agent.params.config.central_value_config.minibatch_size=$MINIBATCH_SIZE \
-    agent.params.config.expl_coef_block_size=$EXPL_COEF_BLOCK_SIZE \
-    agent.params.config.name="0_${EXPERIMENT_NAME}" \
-    agent.params.seed=$SEED \
+    agent.params.config.mini_epochs=$MINI_EPOCHS \
+    agent.params.config.learning_rate=$LR \
+    agent.params.config.lr_schedule=adaptive \
+    +agent.params.config.scheduler_min_lr=1e-5 \
+    agent.params.config.e_clip=$E_CLIP \
+    agent.params.config.max_epochs=$MAX_EPOCHS \
     hydra.run.dir="$HYDRA_RUN_DIR"
