@@ -179,7 +179,6 @@ def setup_scene(env) -> None:
     env.scene.rigid_objects["object"] = env.object
     env.scene.rigid_objects["goal_viz"] = env.goal_viz
     hide_goal_viz_for_student_camera(env)
-    setup_student_camera(env)
     _log_scene_step(setup_t0, "registered assets with scene")
 
     # When replicate_physics=True, InteractiveScene.__init__ leaves
@@ -192,6 +191,12 @@ def setup_scene(env) -> None:
     if env.scene._default_env_origins is None:
         env.scene.clone_environments(copy_from_source=False)
         _log_scene_step(setup_t0, "cloned environments (replicate_physics=True path)")
+
+    # Student camera is set up AFTER the clone so every env path exists at
+    # sensor-construction time. The TiledCamera/Camera spawn-cfg regex still
+    # creates per-env prims correctly post-clone, and the RayCaster branch
+    # can pre-create its Xform parent on each env explicitly.
+    setup_student_camera(env)
 
 
 __all__ = ["setup_scene"]

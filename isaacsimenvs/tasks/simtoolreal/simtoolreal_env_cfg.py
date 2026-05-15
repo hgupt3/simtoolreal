@@ -184,7 +184,7 @@ class StudentObsCfg:
     depth_max_m: float = 1.25
     hide_goal_viz: bool = True
 
-    camera_backend: str = "tiled"  # "tiled" | "standard"
+    camera_backend: str = "tiled"  # "tiled" | "standard" | "raycaster"
     camera_mount: str = "world"
     camera_convention: str = "ros"
     camera_pos: tuple[float, float, float] = (0.0, -1.0, 1.0)
@@ -206,6 +206,46 @@ class StudentObsCfg:
     vertical_aperture_offset: float = 0.4418
     focus_distance: float = 400.0
     clipping_range: tuple[float, float] = (0.1, 5.0)
+
+    # ---- RayCaster-only knobs (consumed when camera_backend == "raycaster") ----
+    # USD prim-path globs the raycaster casts against. Entries in
+    # `raycast_static_prim_exprs` have their pose cached at sensor init (no
+    # per-step view query, cheaper). Entries in `raycast_dynamic_prim_exprs`
+    # have their mesh transforms refreshed every step — list every prim
+    # whose pose changes (robot links, the peg, the receptive, the table if
+    # table-DR is enabled).
+    raycast_static_prim_exprs: tuple[str, ...] = ("/World/ground",)
+    # Point at each rigid body's `/visuals` subgroup, NOT the rigid body root.
+    # The URDF importer attaches the visual-origin xform (e.g.
+    # `<origin xyz="0 0 0.38"/>` on a table) at the `/box/visuals` level;
+    # targeting the rigid body root collapses across that xform and the
+    # raycaster places the geometry at z=0 instead. For the iiwa+sharpa
+    # articulation we use `.*` to pick up every link's `/visuals` child —
+    # the MultiMeshRayCaster creates a view that tracks each matched prim's
+    # world pose independently, so articulation joints update per step.
+    raycast_dynamic_prim_exprs: tuple[str, ...] = (
+        "/World/envs/env_.*/Table/box/visuals",
+        "/World/envs/env_.*/Hole/hole/visuals",
+        # Wildcard the Object's link-name subpath so this works for any
+        # task / problem URDF (peg, lpeg, fmb_peg_board_*, fabrica beam
+        # parts, furniture parts, ...). The single-link case matches one
+        # `/visuals` group; multi-link URDFs (fabrica) match each link's
+        # `/visuals` group independently, which is what we want.
+        "/World/envs/env_.*/Object/.*/visuals",
+        # iiwa arm + sharpa hand link visuals. Explicit prefixes (not a
+        # broad `/Robot/.*/visuals`) so the parser doesn't try to make
+        # rigid-body views for non-link prims like `/Robot/Looks` /
+        # `/Robot/joints` (those stall sensor init for several minutes
+        # with PhysX retries before timing out).
+        "/World/envs/env_.*/Robot/iiwa14_link_.*/visuals",
+        "/World/envs/env_.*/Robot/left_.*/visuals",
+    )
+    # Rays that don't intersect any mesh return max_distance (instead of NaN)
+    # when `depth_clipping_behavior == "max"`. Keep at the rasterizer's default
+    # ("none" → NaN at infinity) so downstream depth-window normalization
+    # treats far rays the same as the TiledCamera path.
+    raycast_max_distance_m: float = 10.0
+    raycast_depth_clipping_behavior: str = "none"  # "max" | "zero" | "none"
 
     # Camera pose randomization (sampled per env at reset, fixed during episode).
     # Master switch + numerical defaults are the team's "medium" preset.

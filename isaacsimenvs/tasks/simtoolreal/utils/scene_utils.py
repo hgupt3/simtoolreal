@@ -221,6 +221,122 @@ def hide_goal_viz_for_student_camera(env) -> None:
     )
 
 
+def _diagnose_target_expr(expr: str) -> None:
+    """Echo what `_obtain_trackable_prim_view` will see for this expr.
+
+    Walks parents until hitting RigidBodyAPI / ArticulationRootAPI exactly
+    like the raycaster does, then prints `mesh_prims` and `view_prims`
+    counts. If they disagree, the worker will error with
+    "1 mesh prim vs N physics prims" and this print pinpoints which target.
+    """
+    from pxr import Usd, UsdPhysics
+    from isaaclab.sim.utils import find_matching_prims, find_first_matching_prim
+
+    try:
+        mesh_prim = find_first_matching_prim(expr)
+        if mesh_prim is None or not mesh_prim.IsValid():
+            print(f"[raycaster][diag]   {expr!r}: NO mesh prim match", flush=True)
+            return
+        cur_prim = mesh_prim
+        cur_expr = expr
+        depth = 0
+        while True:
+            depth += 1
+            if cur_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+                kind = "ArticulationRoot"
+                break
+            if cur_prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                kind = "RigidBody"
+                break
+            parent = cur_prim.GetParent()
+            cur_expr = cur_expr.rsplit("/", 1)[0]
+            if not parent.IsValid() or depth > 10:
+                kind = "XForm(fallback)"
+                break
+            cur_prim = parent
+
+        mesh_paths = [str(p.GetPath()) for p in find_matching_prims(expr)]
+        view_paths = [str(p.GetPath()) for p in find_matching_prims(cur_expr)]
+        print(
+            f"[raycaster][diag]   target={expr!r}\n"
+            f"     -> walked up to {cur_prim.GetPath()} ({kind}), "
+            f"path_expr={cur_expr!r}\n"
+            f"     -> meshes ({len(mesh_paths)}): {mesh_paths}\n"
+            f"     -> views  ({len(view_paths)}): {view_paths}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[raycaster][diag]   {expr!r}: diag failed: {exc!r}", flush=True)
+
+
+def _expand_link_wildcard(expr: str, num_envs: int) -> list[str]:
+    """Resolve a `.../<wildcard>/visuals` raycast prim expression at setup
+    time.
+
+    The raycaster needs a 1-to-1 mapping between mesh prims (the leaves
+    matching the prim_expr) and physics-body view prims (the parent it
+    walks up to with RigidBodyAPI / ArticulationRootAPI). When the regex
+    component just before `/visuals` is a wildcard like `.*`, the walk-up
+    builds a `.../...*` view-prim expression that also matches sibling
+    non-link xforms (`Looks`, `joints`, ...), and the raycaster errors:
+        "The number of mesh prims (N) does not match the number of physics
+         prims (M)"
+
+    Fix: at setup time, list the actual link children that (a) match the
+    wildcard component, AND (b) have a `/visuals` subgroup with at least
+    one Gprim child. Return one explicit prim_expr per concrete link name,
+    preserving the `/visuals` tail. Callers who pass an expression without
+    a single wildcard between two slashes just get it back unchanged.
+
+    Example:
+        `/World/envs/env_.*/Object/.*/visuals`  ->
+            ["/World/envs/env_.*/Object/peg/visuals"]      # peg.tol0p5mm
+        or  ["/World/envs/env_.*/Object/lpeg/visuals"]     # Lpeg.tol0p5mm
+
+    For multi-link object URDFs (e.g. fabrica beam parts) we emit one
+    expression per link.
+    """
+    if "/.*/" not in expr:
+        return [expr]
+    # Split at the first wildcard component so we can list its concrete
+    # candidates against env_0 (clones share structure, so env_0 is enough).
+    head, tail = expr.split("/.*/", 1)
+    # Materialise `env_.*` in the head against env_0 for the stage lookup.
+    head_env0 = head.replace("/env_.*", "/env_0")
+    stage = get_current_stage()
+    parent_prim = stage.GetPrimAtPath(head_env0)
+    if not parent_prim.IsValid():
+        print(
+            f"[raycaster][expand] parent {head_env0!r} INVALID; keeping {expr!r}",
+            flush=True,
+        )
+        return [expr]
+
+    # Walk children of `parent_prim`. Keep ones that look like URDF link
+    # subgroups (have a `/visuals` child), drop the materials / joints /
+    # sensor xforms the URDF importer also creates.
+    SKIP_NAMES = {"Looks", "joints", "Sensors", "joint_drives"}
+    concrete: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    for child in parent_prim.GetChildren():
+        name = child.GetName()
+        if name in SKIP_NAMES:
+            skipped.append((name, "in SKIP_NAMES"))
+            continue
+        visuals_prim = stage.GetPrimAtPath(f"{head_env0}/{name}/visuals")
+        if not visuals_prim.IsValid():
+            skipped.append((name, "no /visuals child"))
+            continue
+        concrete.append(f"{head}/{name}/{tail}")
+    print(
+        f"[raycaster][expand] {expr!r} -> kept {len(concrete)}: "
+        f"{[c.rsplit('/', 2)[0].rsplit('/', 1)[1] for c in concrete]}; "
+        f"skipped {skipped}",
+        flush=True,
+    )
+    return concrete if concrete else [expr]
+
+
 def setup_student_camera(env) -> None:
     """Create the optional per-env student camera sensor.
 
@@ -235,10 +351,10 @@ def setup_student_camera(env) -> None:
         return
 
     backend = str(cfg.camera_backend).lower()
-    if backend not in ("tiled", "standard"):
+    if backend not in ("tiled", "standard", "raycaster"):
         raise ValueError(
-            "cfg.student_obs.camera_backend must be 'tiled' or 'standard', "
-            f"got {backend!r}."
+            "cfg.student_obs.camera_backend must be 'tiled', 'standard', or "
+            f"'raycaster', got {backend!r}."
         )
 
     camera_mount = str(cfg.camera_mount).lower()
@@ -249,20 +365,57 @@ def setup_student_camera(env) -> None:
         )
 
     t0 = time.perf_counter()
-    from isaaclab.sensors import Camera, CameraCfg, TiledCamera, TiledCameraCfg
 
-    camera_cfg_cls = TiledCameraCfg if backend == "tiled" else CameraCfg
-    camera_cls = TiledCamera if backend == "tiled" else Camera
-    camera_cfg = camera_cfg_cls(
-        prim_path="/World/envs/env_.*/StudentCamera",
-        update_period=0,
-        update_latest_camera_pose=True,
-        height=int(cfg.image_height),
-        width=int(cfg.image_width),
-        data_types=_student_camera_data_types(cfg.image_modality),
-        spawn=sim_utils.PinholeCameraCfg(
+    if backend in ("tiled", "standard"):
+        from isaaclab.sensors import Camera, CameraCfg, TiledCamera, TiledCameraCfg
+
+        camera_cfg_cls = TiledCameraCfg if backend == "tiled" else CameraCfg
+        camera_cls = TiledCamera if backend == "tiled" else Camera
+        camera_cfg = camera_cfg_cls(
+            prim_path="/World/envs/env_.*/StudentCamera",
+            update_period=0,
+            update_latest_camera_pose=True,
+            height=int(cfg.image_height),
+            width=int(cfg.image_width),
+            data_types=_student_camera_data_types(cfg.image_modality),
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=float(cfg.focal_length),
+                focus_distance=float(cfg.focus_distance),
+                horizontal_aperture=float(cfg.horizontal_aperture),
+                horizontal_aperture_offset=float(
+                    getattr(cfg, "horizontal_aperture_offset", 0.0)
+                ),
+                vertical_aperture_offset=float(
+                    getattr(cfg, "vertical_aperture_offset", 0.0)
+                ),
+                clipping_range=tuple(float(x) for x in cfg.clipping_range),
+            ),
+            offset=camera_cfg_cls.OffsetCfg(
+                pos=tuple(float(x) for x in cfg.camera_pos),
+                rot=tuple(float(x) for x in cfg.camera_quat_wxyz),
+                convention=str(cfg.camera_convention),
+            ),
+        )
+        env.student_camera = camera_cls(cfg=camera_cfg)
+        env.scene.sensors["student_camera"] = env.student_camera
+        size_str = f"{int(cfg.image_width)}x{int(cfg.image_height)}"
+    else:
+        # backend == "raycaster": CUDA mesh raycaster, no rasterizer / Replicator.
+        # Restricted to depth modality — RGB / semantic outputs aren't supported.
+        if str(cfg.image_modality).lower() != "depth":
+            raise ValueError(
+                "cfg.student_obs.camera_backend='raycaster' only supports "
+                f"image_modality='depth' (got {cfg.image_modality!r}). "
+                "Use camera_backend='tiled' for RGB/semantic modalities."
+            )
+        from isaaclab.sensors.ray_caster import (
+            MultiMeshRayCasterCamera,
+            MultiMeshRayCasterCameraCfg,
+            patterns,
+        )
+
+        pattern_cfg = patterns.PinholeCameraPatternCfg(
             focal_length=float(cfg.focal_length),
-            focus_distance=float(cfg.focus_distance),
             horizontal_aperture=float(cfg.horizontal_aperture),
             horizontal_aperture_offset=float(
                 getattr(cfg, "horizontal_aperture_offset", 0.0)
@@ -270,21 +423,80 @@ def setup_student_camera(env) -> None:
             vertical_aperture_offset=float(
                 getattr(cfg, "vertical_aperture_offset", 0.0)
             ),
-            clipping_range=tuple(float(x) for x in cfg.clipping_range),
-        ),
-        offset=camera_cfg_cls.OffsetCfg(
-            pos=tuple(float(x) for x in cfg.camera_pos),
-            rot=tuple(float(x) for x in cfg.camera_quat_wxyz),
-            convention=str(cfg.camera_convention),
-        ),
-    )
-    env.student_camera = camera_cls(cfg=camera_cfg)
-    env.scene.sensors["student_camera"] = env.student_camera
+            width=int(cfg.image_width),
+            height=int(cfg.image_height),
+        )
+
+        raycast_targets = []
+        for expr in tuple(cfg.raycast_static_prim_exprs):
+            print(f"[raycaster] STATIC target: {expr!r}", flush=True)
+            raycast_targets.append(
+                MultiMeshRayCasterCameraCfg.RaycastTargetCfg(
+                    prim_expr=str(expr), track_mesh_transforms=False
+                )
+            )
+        for expr in tuple(cfg.raycast_dynamic_prim_exprs):
+            expanded = _expand_link_wildcard(str(expr), env.num_envs)
+            print(
+                f"[raycaster] DYNAMIC target: {expr!r} -> "
+                f"{len(expanded)} concrete: {expanded}",
+                flush=True,
+            )
+            for concrete_expr in expanded:
+                # Verify mesh/view counts match before the raycaster's
+                # _obtain_trackable_prim_view sees this expression, so we
+                # know exactly which target trips the
+                # "1 mesh vs N physics" error.
+                _diagnose_target_expr(concrete_expr)
+                raycast_targets.append(
+                    MultiMeshRayCasterCameraCfg.RaycastTargetCfg(
+                        prim_expr=concrete_expr, track_mesh_transforms=True
+                    )
+                )
+        if not raycast_targets:
+            raise ValueError(
+                "camera_backend='raycaster' requires at least one entry in "
+                "cfg.student_obs.raycast_static_prim_exprs or "
+                "raycast_dynamic_prim_exprs."
+            )
+
+        # MultiMeshRayCasterCamera attaches to an existing prim (it doesn't
+        # spawn one the way TiledCamera does). setup_student_camera now runs
+        # AFTER clone_environments(), so every env's namespace exists — we
+        # just create a per-env Xform parent explicitly.
+        for env_id in range(int(env.num_envs)):
+            sim_utils.create_prim(
+                f"/World/envs/env_{env_id}/StudentCamera", "Xform"
+            )
+
+        raycaster_cfg = MultiMeshRayCasterCameraCfg(
+            prim_path="/World/envs/env_.*/StudentCamera",
+            update_period=0,
+            offset=MultiMeshRayCasterCameraCfg.OffsetCfg(
+                pos=tuple(float(x) for x in cfg.camera_pos),
+                rot=tuple(float(x) for x in cfg.camera_quat_wxyz),
+                convention=str(cfg.camera_convention),
+            ),
+            mesh_prim_paths=raycast_targets,
+            pattern_cfg=pattern_cfg,
+            data_types=["distance_to_image_plane"],
+            depth_clipping_behavior=str(cfg.raycast_depth_clipping_behavior),
+            max_distance=float(cfg.raycast_max_distance_m),
+        )
+        env.student_camera = MultiMeshRayCasterCamera(cfg=raycaster_cfg)
+        env.scene.sensors["student_camera"] = env.student_camera
+        size_str = (
+            f"{int(cfg.image_width)}x{int(cfg.image_height)} "
+            f"targets={len(raycast_targets)} "
+            f"(static={len(tuple(cfg.raycast_static_prim_exprs))}, "
+            f"dynamic={len(tuple(cfg.raycast_dynamic_prim_exprs))})"
+        )
+
     _log_scene_step(
         t0,
         f"registered student camera backend={backend} "
         f"modality={cfg.image_modality} "
-        f"size={int(cfg.image_width)}x{int(cfg.image_height)}",
+        f"size={size_str}",
     )
 
 
