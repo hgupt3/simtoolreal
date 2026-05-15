@@ -1,0 +1,90 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=24
+#SBATCH --get-user-env
+#SBATCH --mem=500000
+#SBATCH -t 8:00:00
+#SBATCH --partition=portal
+#SBATCH --nodelist=portal-compute-04
+#SBATCH --exclude=portal-compute-01,portal-compute-02,portal-compute-03
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# Sweep raycaster-direct-70x70 throughput at increasing num_envs, both at
+# 60Hz (camera_update_period_s=0.0) and 30Hz (=0.03333). Single GPU.
+# Output: one CSV row per (num_envs, period) cell appended to a stamped CSV.
+
+set -euo pipefail
+REPO=/share/portal/kk837/depthbasedRL
+
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+LOG_DIR="${REPO}/train_dir/bench_throughput_extended/${DATETIME}"
+mkdir -p "$LOG_DIR"
+exec > "${LOG_DIR}/slurm.log" 2> "${LOG_DIR}/slurm.err"
+
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    scontrol update JobId="$SLURM_JOB_ID" JobName="bench_throughput_extended_${DATETIME}" || true
+fi
+
+CSV="${LOG_DIR}/bench_throughput.csv"
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo
+echo "Log dir: $LOG_DIR"
+echo "CSV: $CSV"
+
+cd "$REPO"
+source .venv_isaacsim/bin/activate
+export OMNI_KIT_ACCEPT_EULA=YES
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache_bench_${SLURM_JOB_ID:-$$}"
+mkdir -p "$OMNI_KIT_CACHE_PATH"
+
+# Background GPU + RAM monitors (sample every 30s, append to log).
+GPU_LOG="${LOG_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 30
+    done
+) &
+GPU_MONITOR_PID=$!
+
+RAM_LOG="${LOG_DIR}/ram_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$RAM_LOG"
+        free -m | head -2 >> "$RAM_LOG" 2>&1
+        ps -eo pid,rss,comm --sort=-rss --no-headers 2>/dev/null | head -5 >> "$RAM_LOG"
+        sleep 30
+    done
+) &
+RAM_MONITOR_PID=$!
+
+trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
+
+# Sweep: (num_envs, period) pairs. Each child writes its own row to $CSV.
+# Going up to 24k envs; if any cell OOMs we'll see it in the per-cell log.
+for N in 256 1024 4096 8192 16384 24576; do
+  for P in 0.0 0.03333; do
+    tag="n${N}_p${P}"
+    cell_log="${LOG_DIR}/${tag}.log"
+    echo
+    echo "=== $(date +%H:%M:%S) starting $tag ==="
+    # smoke_throughput.py auto-appends to its --out-csv with a header on first write.
+    .venv_isaacsim/bin/python peg_in_hole_dynamic/smoke_throughput.py \
+      --num-envs $N --period $P --warmup 30 --measure 80 \
+      --out-csv "$CSV" \
+      > "$cell_log" 2>&1 || echo "[warn] cell $tag exited non-zero, continuing"
+    echo "=== $(date +%H:%M:%S) done $tag ==="
+    tail -3 "$cell_log" | sed 's/^/    /'
+  done
+done
+
+echo
+echo "=== SWEEP COMPLETE ==="
+echo "Final CSV:"
+cat "$CSV"

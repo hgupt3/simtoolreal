@@ -206,6 +206,12 @@ class StudentObsCfg:
     vertical_aperture_offset: float = 0.4418
     focus_distance: float = 400.0
     clipping_range: tuple[float, float] = (0.1, 5.0)
+    # Sensor update period in seconds. 0.0 = render every policy step (60 Hz
+    # at our 60-Hz policy cadence). Set to 1/30 = 0.03333 to render at 30 Hz
+    # (matches real ZED), in which case the sensor returns its cached output
+    # on alternate policy steps. Cuts depth-render cost ~in half and closes
+    # a sim2real fidelity gap (real ZED is 30 Hz, we control at 60 Hz).
+    camera_update_period_s: float = 0.0
 
     # ---- RayCaster-only knobs (consumed when camera_backend == "raycaster") ----
     # USD prim-path globs the raycaster casts against. Entries in

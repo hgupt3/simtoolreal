@@ -404,7 +404,7 @@ def setup_student_camera(env) -> None:
         camera_cls = TiledCamera if backend == "tiled" else Camera
         camera_cfg = camera_cfg_cls(
             prim_path="/World/envs/env_.*/StudentCamera",
-            update_period=0,
+            update_period=float(getattr(cfg, "camera_update_period_s", 0.0)),
             update_latest_camera_pose=True,
             height=int(cfg.image_height),
             width=int(cfg.image_width),
@@ -502,7 +502,7 @@ def setup_student_camera(env) -> None:
 
         raycaster_cfg = MultiMeshRayCasterCameraCfg(
             prim_path="/World/envs/env_.*/StudentCamera",
-            update_period=0,
+            update_period=float(getattr(cfg, "camera_update_period_s", 0.0)),
             offset=MultiMeshRayCasterCameraCfg.OffsetCfg(
                 pos=tuple(float(x) for x in cfg.camera_pos),
                 rot=tuple(float(x) for x in cfg.camera_quat_wxyz),
@@ -549,7 +549,7 @@ def setup_student_camera(env) -> None:
         def _build_stereo_cam_cfg(prim_path: str, pos: tuple, quat: tuple) -> "TiledCameraCfg":
             return TiledCameraCfg(
                 prim_path=prim_path,
-                update_period=0,
+                update_period=float(getattr(cfg, "camera_update_period_s", 0.0)),
                 update_latest_camera_pose=True,
                 height=stereo_h,
                 width=stereo_w,
@@ -941,6 +941,26 @@ def read_student_camera_image(env) -> torch.Tensor:
             "cfg.student_obs.image_enabled is false; no student image is available."
         )
 
+    # ---- env-level frame-skip gate (true 30Hz / 15Hz / ... behavior) ----
+    # Isaac Lab's sensor `update_period` is ineffective at our 60Hz policy
+    # cadence because `_timestamp` accumulates across the decimation loop's
+    # multiple `scene.update(dt=physics_dt)` calls plus our own explicit
+    # `camera.update`. So we gate at the env level instead: only fall through
+    # to a fresh render every `skip_every`-th call, otherwise return the
+    # cached previous frame to mimic a slower physical camera.
+    period_s = float(getattr(cfg, "camera_update_period_s", 0.0))
+    if period_s > 0.0:
+        step_dt = float(getattr(env, "step_dt", env.cfg.sim.dt * env.cfg.decimation))
+        skip_every = max(1, int(round(period_s / step_dt)))
+    else:
+        skip_every = 1
+    counter = int(getattr(env, "_student_camera_skip_counter", -1)) + 1
+    env._student_camera_skip_counter = counter
+    if skip_every > 1 and (counter % skip_every) != 0:
+        cached = getattr(env, "_last_student_image_noisy", None)
+        if cached is not None:
+            return _validate_student_image_shape(env, cached)
+
     # --- Fast-FoundationStereo path -------------------------------------------
     # Stereo backend bypasses the regular single-camera retrieve: it renders
     # both stereo views, runs FS inference, downsamples the depth, then
@@ -953,8 +973,11 @@ def read_student_camera_image(env) -> torch.Tensor:
             )
         env.sim.render()
         dt = float(getattr(env, "physics_dt", env.cfg.sim.dt))
-        env.student_camera_left.update(dt, force_recompute=True)
-        env.student_camera_right.update(dt, force_recompute=True)
+        # force_recompute=False so cfg.update_period is honored. With
+        # update_period=0 the sensor refreshes every call (60Hz default);
+        # with update_period=1/30 it caches alternate calls (30Hz).
+        env.student_camera_left.update(dt, force_recompute=False)
+        env.student_camera_right.update(dt, force_recompute=False)
         depth = _run_foundation_stereo(env, cfg)
         depth_raw = depth
         depth = _apply_depth_noise(env, depth)
@@ -980,7 +1003,10 @@ def read_student_camera_image(env) -> torch.Tensor:
 
     env.sim.render()
     dt = float(getattr(env, "physics_dt", env.cfg.sim.dt))
-    camera.update(dt, force_recompute=True)
+    # force_recompute=False so cfg.update_period is honored (see stereo branch
+    # above). With update_period=0 the sensor refreshes every call; with
+    # update_period=1/30 it caches alternate calls for a true 30Hz camera.
+    camera.update(dt, force_recompute=False)
 
     outputs = camera.data.output
     available = {key: value for key, value in outputs.items() if value is not None}

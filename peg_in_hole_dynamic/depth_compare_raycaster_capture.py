@@ -46,6 +46,20 @@ def main() -> int:
         help="See --direct-width.",
     )
     p.add_argument(
+        "--force-h-off",
+        type=float,
+        default=None,
+        help="If set, OVERRIDE the computed horizontal_aperture_offset with "
+        "this raw value. Use to reproduce a bug where the sub passes cm "
+        "values to PinholeCameraPatternCfg (which expects dimensionless).",
+    )
+    p.add_argument(
+        "--force-v-off",
+        type=float,
+        default=None,
+        help="See --force-h-off (vertical).",
+    )
+    p.add_argument(
         "--out-name",
         default="sim_depth_homepose_raycaster_matched",
         help="Base name written to /depth_compare/ (no extension).",
@@ -174,12 +188,21 @@ def main() -> int:
         cfg.student_obs.vertical_aperture_offset = 0.0
         print("=> raycaster offsets forced to 0 (geometric-center cy=45)", flush=True)
 
+    if args.force_h_off is not None:
+        cfg.student_obs.horizontal_aperture_offset = float(args.force_h_off)
+        print(f"=> OVERRIDE horizontal_aperture_offset := {args.force_h_off}", flush=True)
+    if args.force_v_off is not None:
+        cfg.student_obs.vertical_aperture_offset = float(args.force_v_off)
+        print(f"=> OVERRIDE vertical_aperture_offset := {args.force_v_off}", flush=True)
+
     print(
         f"=> camera_pos={tuple(cfg.student_obs.camera_pos)}\n"
         f"=> camera_quat_wxyz={tuple(cfg.student_obs.camera_quat_wxyz)}\n"
         f"=> image={cfg.student_obs.image_width}x{cfg.student_obs.image_height}, "
         f"focal_length={cfg.student_obs.focal_length}, "
-        f"H_ap={cfg.student_obs.horizontal_aperture}",
+        f"H_ap={cfg.student_obs.horizontal_aperture}, "
+        f"h_off={cfg.student_obs.horizontal_aperture_offset}, "
+        f"v_off={cfg.student_obs.vertical_aperture_offset}",
         flush=True,
     )
 
