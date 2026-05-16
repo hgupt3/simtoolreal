@@ -1,0 +1,91 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=16
+#SBATCH --get-user-env
+#SBATCH --mem=600000
+#SBATCH -t 1:30:00
+#SBATCH --partition=portal
+#SBATCH --nodelist=portal-compute-04
+#SBATCH --exclude=portal-compute-01,portal-compute-02,portal-compute-03
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# Single-cell throughput bench. Parameters from env vars (defaults):
+#   BENCH_N  = num_envs              (default 8192)
+#   BENCH_P  = camera_update_period_s (default 0.03333 = 30Hz)
+#   BENCH_WARMUP  / BENCH_MEASURE    (defaults 30 / 80)
+# Pass via:  sbatch --export=ALL,BENCH_N=16384,BENCH_P=0.03333 <this.sub>
+#
+# Fresh Isaac Sim process per submission -> no inter-cell memory leak.
+
+set -euo pipefail
+REPO=/share/portal/kk837/depthbasedRL
+
+BENCH_N="${BENCH_N:-8192}"
+BENCH_P="${BENCH_P:-0.03333}"
+BENCH_WARMUP="${BENCH_WARMUP:-30}"
+BENCH_MEASURE="${BENCH_MEASURE:-80}"
+
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+TAG="n${BENCH_N}_p${BENCH_P}"
+LOG_DIR="${REPO}/train_dir/bench_throughput_single/${DATETIME}_${TAG}"
+mkdir -p "$LOG_DIR"
+exec > "${LOG_DIR}/slurm.log" 2> "${LOG_DIR}/slurm.err"
+
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+    scontrol update JobId="$SLURM_JOB_ID" \
+        JobName="bench_single_${TAG}_${DATETIME}" || true
+fi
+
+CSV="${REPO}/train_dir/bench_throughput_single/all_results.csv"
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo
+echo "Log dir: $LOG_DIR"
+echo "CSV:     $CSV"
+echo "Cell:    N=${BENCH_N} P=${BENCH_P} warmup=${BENCH_WARMUP} measure=${BENCH_MEASURE}"
+
+cd "$REPO"
+source .venv_isaacsim/bin/activate
+export OMNI_KIT_ACCEPT_EULA=YES
+export OMNI_KIT_CACHE_PATH="/tmp/${USER}_ov_cache_bench_${SLURM_JOB_ID:-$$}"
+mkdir -p "$OMNI_KIT_CACHE_PATH"
+
+# Background GPU + RAM monitors.
+GPU_LOG="${LOG_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 15
+    done
+) &
+GPU_MONITOR_PID=$!
+
+RAM_LOG="${LOG_DIR}/ram_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$RAM_LOG"
+        free -m | head -2 >> "$RAM_LOG" 2>&1
+        ps -eo pid,rss,comm --sort=-rss --no-headers 2>/dev/null | head -5 >> "$RAM_LOG"
+        sleep 15
+    done
+) &
+RAM_MONITOR_PID=$!
+
+trap "kill $GPU_MONITOR_PID $RAM_MONITOR_PID 2>/dev/null" EXIT
+
+echo
+echo "=== $(date +%H:%M:%S) starting bench cell ==="
+.venv_isaacsim/bin/python peg_in_hole_dynamic/smoke_throughput.py \
+    --num-envs "$BENCH_N" --period "$BENCH_P" \
+    --warmup "$BENCH_WARMUP" --measure "$BENCH_MEASURE" \
+    --out-csv "$CSV"
+echo "=== $(date +%H:%M:%S) done ==="
+
+echo
+echo "=== Final CSV tail ==="
+tail -5 "$CSV"
