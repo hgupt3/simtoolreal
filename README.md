@@ -51,6 +51,8 @@ simtoolreal
 
 Please see the [Installation](docs/installation.md) documentation for more details.
 
+For the **depth-student pipeline** (`isaacsimenvs/`, `peg_in_hole_dynamic/`, real-robot deployment) the unified `.venv_isaacsim` env covers Isaac Sim + Fast-FoundationStereo + ROS Noetic in a single Python 3.11 venv — see [docs/venv_isaacsim_install.md](docs/venv_isaacsim_install.md).
+
 # Quick Start
 
 Please run all commands from the root directory of this repository.For most commands, you can add `--help` to see the available options.
