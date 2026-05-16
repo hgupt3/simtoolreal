@@ -277,10 +277,22 @@ def build_observations(env) -> dict[str, torch.Tensor]:
     goal_kp = _keypoints_world(goal_pos, goal_rot, kp_offsets)
     noisy_obj_kp = _keypoints_world(noisy_obj_pos, noisy_obj_rot, kp_offsets)
 
+    # Optional per-env yaw noise on the observed goal (world +Z about goal_pos).
+    goal_yaw_obs_noise = getattr(env, "goal_yaw_obs_noise", None)
+    if goal_yaw_obs_noise is not None and torch.any(goal_yaw_obs_noise != 0):
+        z_axis = torch.tensor(
+            [0.0, 0.0, 1.0], device=goal_rot.device, dtype=goal_rot.dtype
+        ).unsqueeze(0).expand(env.num_envs, -1)
+        yaw_q = quat_from_angle_axis(goal_yaw_obs_noise, z_axis)
+        noisy_goal_rot = quat_mul(yaw_q, goal_rot)
+        noisy_goal_kp = _keypoints_world(goal_pos, noisy_goal_rot, kp_offsets)
+    else:
+        noisy_goal_kp = goal_kp
+
     keypoints_rel_palm_clean = obj_kp - palm_pos.unsqueeze(1)
     keypoints_rel_palm_noisy = noisy_obj_kp - palm_pos.unsqueeze(1)
     keypoints_rel_goal_clean = obj_kp - goal_kp
-    keypoints_rel_goal_noisy = noisy_obj_kp - goal_kp
+    keypoints_rel_goal_noisy = noisy_obj_kp - noisy_goal_kp
 
     fingertip_pos_rel_palm = (
         (ft_pos_w - env_origins.unsqueeze(1)) - palm_pos.unsqueeze(1)

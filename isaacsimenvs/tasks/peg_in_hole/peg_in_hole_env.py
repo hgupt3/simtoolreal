@@ -172,6 +172,10 @@ class PegInHoleEnv(SimToolRealEnv):
         self.goal_pos_obs_noise = torch.zeros(
             self.num_envs, 3, dtype=torch.float32, device=self.device
         )
+        # Per-env yaw noise (radians) applied to the observed goal orientation.
+        self.goal_yaw_obs_noise = torch.zeros(
+            self.num_envs, dtype=torch.float32, device=self.device
+        )
         self._goal_kp_obs_slice = _obs_field_slice(
             tuple(cfg.obs.obs_list), "keypoints_rel_goal"
         )
@@ -327,6 +331,7 @@ class PegInHoleEnv(SimToolRealEnv):
         )
 
         self.goal_pos_obs_noise[env_ids] = 0.0
+        self.goal_yaw_obs_noise[env_ids] = 0.0
         noise = float(pih_cfg.goal_xy_obs_noise)
         insertion_mask = ~is_random_goal
         if noise > 0.0 and insertion_mask.any():
@@ -334,6 +339,13 @@ class PegInHoleEnv(SimToolRealEnv):
             self.goal_pos_obs_noise[ins_ids, 0:2] = torch.empty(
                 ins_ids.numel(), 2, device=self.device
             ).uniform_(-noise, noise)
+        yaw_noise_deg = float(pih_cfg.goal_yaw_obs_noise_deg)
+        if yaw_noise_deg > 0.0 and insertion_mask.any():
+            ins_ids = env_ids[insertion_mask]
+            yaw_max = yaw_noise_deg * (math.pi / 180.0)
+            self.goal_yaw_obs_noise[ins_ids] = torch.empty(
+                ins_ids.numel(), device=self.device
+            ).uniform_(-yaw_max, yaw_max)
 
         self.retract_phase[env_ids] = False
         self.retract_succeeded[env_ids] = False

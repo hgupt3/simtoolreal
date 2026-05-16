@@ -53,6 +53,7 @@ peg_in_hole:
   hole_x_range: [-0.1875, 0.1875]
   hole_y_range: [-0.1, 0.1]
   goal_xy_obs_noise: 0.002
+  goal_yaw_obs_noise_deg: 0.0
   random_goal_fraction: 0.0
   random_goal_max_successes: 5
   random_goal_curriculum_success_threshold: 2.0

@@ -38,6 +38,10 @@ class PegInHoleCfg:
     hole_yaw_range_deg: float = 0.0
 
     goal_xy_obs_noise: float = 0.002
+    # Per-episode yaw obs noise about world +Z applied to the observed goal
+    # (insertion targets only). Range is symmetric: yaw_noise ~ U(-deg, +deg).
+    # Default 0.0 keeps legacy behavior.
+    goal_yaw_obs_noise_deg: float = 0.0
     random_goal_fraction: float = 0.0
     random_goal_max_successes: int = 5
     random_goal_curriculum_success_threshold: float = 2.0
