@@ -259,3 +259,5 @@ assets/urdf/fabrica_copied/
 # Offline eval JSON / log / mp4 outputs (regenerable by
 # peg_in_hole_dynamic/offline_eval_*.py scripts).
 peg_in_hole_dynamic/offline_eval_outputs/
+
+peg_in_hole_dynamic/eval_teacher_student_outputs/
