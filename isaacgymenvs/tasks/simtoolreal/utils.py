@@ -230,6 +230,7 @@ def tolerance_curriculum(
     max_consecutive_successes: int = 50,
     eligible_mask: Optional[Tensor] = None,
     success_threshold: Optional[float] = None,
+    threshold_scale: float = 0.8,
 ) -> Tuple[float, int]:
     """
     Returns: new tolerance, new last_curriculum_update
@@ -245,8 +246,13 @@ def tolerance_curriculum(
     gate to a subset of envs (e.g. the reaching envs in a co-training
     setup). When the mask is empty, no update is made.
 
-    `success_threshold` overrides the default `min(3.0, 0.8 *
+    `success_threshold` overrides the default `min(3.0, threshold_scale *
     max_consecutive_successes)` gate value when provided.
+
+    `threshold_scale` is the multiplier on `max_consecutive_successes`
+    inside the default formula (capped at 3.0). Lower values loosen the
+    gate for sparse-success modes — e.g. with max=1, scale=0.5 gates at
+    50% of episodes succeeding instead of 80%.
     """
     if frames_since_restart - last_curriculum_update < curriculum_interval:
         return success_tolerance, last_curriculum_update
@@ -261,7 +267,7 @@ def tolerance_curriculum(
     if success_threshold is not None:
         threshold = float(success_threshold)
     else:
-        threshold = min(3.0, 0.8 * max_consecutive_successes)
+        threshold = min(3.0, threshold_scale * max_consecutive_successes)
     if mean_successes_per_episode < threshold:
         # this policy is not good enough with the previous tolerance value, keep training for now...
         return success_tolerance, last_curriculum_update

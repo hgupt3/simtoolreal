@@ -105,6 +105,14 @@ env:
   finalGoalToleranceCurriculumInterval: 3000   # env steps between updates
   finalGoalToleranceCurriculumSuccessThreshold: 0.8  # min all_goals_hit_ratio to trigger decay
   maxConsecutiveSuccesses: 50
+  # Multiplier on maxConsecutiveSuccesses inside the tolerance-curriculum
+  # gate `mean_successes_per_episode >= min(3.0, scale * max)`. Default
+  # 0.8 reproduces the historical behavior (sparse modes get a tight gate,
+  # dense modes capped at 3.0). Lower values loosen the gate — e.g. with
+  # maxConsecutiveSuccesses=1, scale=0.5 → gate at 50% of episodes
+  # succeeding instead of 80%. Has no effect on dense mode (max≥4) where
+  # the 3.0 cap dominates.
+  toleranceCurriculumSuccessScale: 0.8
   successSteps: 10  # how many steps we should be within the tolerance before we declare a success
   forceConsecutiveNearGoalSteps: False  # If True, require near goal consecutively for successSteps
 

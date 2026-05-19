@@ -1582,6 +1582,9 @@ class SimToolReal(VecTask):
             self.max_consecutive_successes,
             eligible_mask=self._curriculum_eligible_mask(),
             success_threshold=self._curriculum_success_threshold(),
+            threshold_scale=float(
+                self.cfg["env"].get("toleranceCurriculumSuccessScale", 0.8)
+            ),
         )
 
         if self.cfg["env"].get("finalGoalToleranceCurriculumEnabled", False):
