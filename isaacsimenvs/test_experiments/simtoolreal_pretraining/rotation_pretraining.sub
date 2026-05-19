@@ -3,7 +3,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=12
 #SBATCH --get-user-env
-#SBATCH --mem=500000
+#SBATCH --mem=200000
 #SBATCH -t 7-00:00:00
 #SBATCH --partition=portal
 #SBATCH --exclude=portal-compute-01
