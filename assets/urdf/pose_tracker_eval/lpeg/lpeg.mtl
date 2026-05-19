@@ -1,0 +1,7 @@
+newmtl lpeg_mat
+Ka 0.2 0.2 0.2
+Kd 0.8000 0.1569 0.1569
+Ks 0.0 0.0 0.0
+d 1.0
+illum 2
+map_Kd lpeg.png
