@@ -12,8 +12,11 @@ import sys
 import datetime as _dt
 import importlib.util
 import json
+import multiprocessing as _mp
+import threading
 import time
 from contextlib import contextmanager
+from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 
 import numpy as np
@@ -113,6 +116,130 @@ def read_zed_stereo_frame(zed, runtime_parameters, left_mat, right_mat,
     left = _zed_view_to_rgb(left_mat, width, height, camera_upsidedown)
     right = _zed_view_to_rgb(right_mat, width, height, camera_upsidedown)
     return left, right
+
+
+# ----------------------------- async ZED producer ----------------------------
+
+class ZedCaptureThread(threading.Thread):
+    """Producer thread that owns the camera handle and continuously grabs
+    frames into a single shared slot, decoupling the camera's tick from the
+    consumer loop.
+
+    Why threading (not multiprocessing): the pyzed binding releases the GIL
+    on `grab` / `retrieve_image` / `retrieve_measure` (`with nogil:` blocks
+    in src/pyzed/sl.pyx). While the producer waits for the next camera tick
+    inside `grab()`, the main thread runs Python/CUDA work in parallel.
+    Stereolabs' own zed-ros2-wrapper is structured the same way (one
+    process, multiple threads with SCHED_FIFO priorities). They also
+    explicitly recommend keeping `grab` + `retrieve_*` on a single thread.
+
+    Why no multiprocessing: forces start_method='spawn' (CUDA can't survive
+    fork), 5 s producer cold-start to re-init CUDA / TRT / ZED, and IPC of
+    a 12 MB stereo pair through `multiprocessing.Queue` pickles to 30-80 ms
+    (worse than the camera-tick problem). `shared_memory` is zero-copy but
+    adds buffer-lifetime management.
+
+    Layout per backend:
+      - ``backend='zed_neural'`` -> slot is (ts_ns, rgb_uint8, depth_m_f32)
+      - ``backend='fast_fs'``    -> slot is (ts_ns, left_rgb, right_rgb)
+        with stereo-to-depth inference left to the consumer (CUDA context
+        affinity).
+    """
+
+    def __init__(self, zed, runtime, mat_a, mat_b, backend, fp_size,
+                 camera_upsidedown=False):
+        super().__init__(daemon=True, name='ZedCapture')
+        if backend not in ('zed_neural', 'fast_fs'):
+            raise ValueError(f'unknown backend {backend!r}')
+        self.zed = zed
+        self.runtime = runtime
+        self.mat_a = mat_a
+        self.mat_b = mat_b
+        self.backend = backend
+        self.fp_size = tuple(fp_size)
+        self.camera_upsidedown = camera_upsidedown
+        self._shutdown = threading.Event()
+        self._cv = threading.Condition()
+        self._slot = None      # (ts_ns, frame_a, frame_b)
+        self._error = None
+        self._n_grabbed = 0
+        self._n_delivered = 0
+
+    def stop_capture(self):
+        self._shutdown.set()
+        with self._cv:
+            self._cv.notify_all()
+
+    def latest(self, since_ts_ns=0, timeout=2.0):
+        """Return the most recent (ts_ns, frame_a, frame_b) with
+        ts_ns > since_ts_ns. Blocks up to `timeout` seconds; returns None
+        on timeout, producer error, or stop."""
+        with self._cv:
+            ok = self._cv.wait_for(
+                lambda: (
+                    self._shutdown.is_set() or self._error is not None
+                    or (self._slot is not None and self._slot[0] > since_ts_ns)
+                ),
+                timeout=timeout)
+            if not ok or self._shutdown.is_set() or self._error is not None:
+                return None
+            self._n_delivered += 1
+            return self._slot
+
+    @property
+    def n_grabbed(self):
+        return self._n_grabbed
+
+    @property
+    def n_delivered(self):
+        return self._n_delivered
+
+    @property
+    def error(self):
+        return self._error
+
+    def run(self):
+        W, H = self.fp_size
+        try:
+            while not self._shutdown.is_set():
+                err = self.zed.grab(self.runtime)
+                if err != sl.ERROR_CODE.SUCCESS:
+                    continue
+                ts_ns = self.zed.get_timestamp(
+                    sl.TIME_REFERENCE.IMAGE).get_nanoseconds()
+
+                # MEM.CPU avoids CUDA-stream contention with the main
+                # thread's torch / TRT work (we resize on CPU anyway).
+                self.zed.retrieve_image(self.mat_a, sl.VIEW.LEFT, sl.MEM.CPU)
+                rgb = _zed_view_to_rgb(self.mat_a, W, H,
+                                       self.camera_upsidedown)
+
+                if self.backend == 'zed_neural':
+                    self.zed.retrieve_measure(
+                        self.mat_b, sl.MEASURE.DEPTH, sl.MEM.CPU)
+                    depth_mm = self.mat_b.get_data()
+                    if self.camera_upsidedown:
+                        depth_mm = cv2.flip(depth_mm, -1)
+                    depth_mm = cv2.resize(depth_mm, (W, H),
+                                          interpolation=cv2.INTER_NEAREST)
+                    depth_m = depth_mm.astype(np.float32) / 1000.0
+                    depth_m[(depth_m < 0.001) | (~np.isfinite(depth_m))] = 0.0
+                    payload = (rgb, depth_m)
+                else:
+                    self.zed.retrieve_image(self.mat_b, sl.VIEW.RIGHT,
+                                            sl.MEM.CPU)
+                    right = _zed_view_to_rgb(self.mat_b, W, H,
+                                             self.camera_upsidedown)
+                    payload = (rgb, right)
+
+                with self._cv:
+                    self._slot = (ts_ns,) + payload
+                    self._n_grabbed += 1
+                    self._cv.notify_all()
+        except Exception as e:
+            with self._cv:
+                self._error = e
+                self._cv.notify_all()
 
 
 # ----------------------------- SAM mask --------------------------------------
@@ -218,6 +345,10 @@ def _swap_in_fast_fs_utils(fast_fs_dir: Path):
 
 
 DEFAULT_FAST_FS_MODEL = _FAST_FS_DIR / 'weights' / '23-36-37' / 'model_best_bp2_serialize.pth'
+# Preferred TRT engine dir — used when --depth_backend=fast_fs is selected
+# and no explicit --fast_fs_trt_dir is given. 8 iters trades ~1 ms for
+# better depth fidelity vs the 4-iter engine.
+DEFAULT_FAST_FS_TRT_DIR = _FAST_FS_DIR / 'weights' / '23-36-37' / 'onnx_384x224_iters8'
 
 
 class FastFsDepth:
@@ -326,6 +457,324 @@ class FastFsDepth:
         depth_small[valid] = (self.fx_fs * self.baseline_m) / disp[valid]
 
         return cv2.resize(depth_small, self.fp_size, interpolation=cv2.INTER_NEAREST)
+
+
+# ----------------------------- async ZED producer (process) -----------------
+
+class ZedCaptureProcess:
+    """Producer in a *separate* process, communicating via shared_memory.
+
+    Use this when the producer must do GPU work (e.g. ZED's NEURAL depth)
+    and you don't want that work to serialize on the same CUDA context as
+    the consumer's torch / TRT work. Each process holds its own CUDA
+    context; the GPU driver multiplexes them.
+
+    Layout (sized at construction):
+      - `rgb_shm`   :  H*W*3 uint8     (left RGB)
+      - `d_shm`     :  H*W*4 float32   (depth, zed_neural)
+                       OR  H*W*3 uint8 (right RGB, fast_fs)
+      - `meta_shm`  :  4*int64 = [ts_ns, seq, error_flag, pad]
+
+    Communication: parent reads `meta[1]` (sequence number) to detect new
+    frames. Under `lock` it copies rgb + depth out; consumer never holds a
+    raw view to shared memory (the producer overwrites them).
+
+    Spawn (not fork) is mandatory: the main process has a live CUDA
+    context (from torch / FP), and `fork()` would inherit a corrupted one
+    in the child. Spawn costs ~1-3 s startup for the pyzed + camera open
+    in the child.
+    """
+
+    def __init__(self, zed_kwargs, fp_size, backend,
+                 camera_upsidedown=False):
+        if backend not in ('zed_neural', 'fast_fs'):
+            raise ValueError(f'unknown backend {backend!r}')
+        self.backend = backend
+        self.fp_size = tuple(fp_size)
+        self.camera_upsidedown = camera_upsidedown
+
+        W, H = self.fp_size
+        rgb_size = H * W * 3
+        d_size = H * W * (4 if backend == 'zed_neural' else 3)
+        meta_size = 32  # 4 int64
+
+        self.rgb_shm = SharedMemory(create=True, size=rgb_size)
+        self.d_shm = SharedMemory(create=True, size=d_size)
+        self.meta_shm = SharedMemory(create=True, size=meta_size)
+
+        self.rgb_view = np.ndarray((H, W, 3), dtype=np.uint8,
+                                   buffer=self.rgb_shm.buf)
+        if backend == 'zed_neural':
+            self.d_view = np.ndarray((H, W), dtype=np.float32,
+                                     buffer=self.d_shm.buf)
+        else:
+            self.d_view = np.ndarray((H, W, 3), dtype=np.uint8,
+                                     buffer=self.d_shm.buf)
+        self.meta = np.ndarray((4,), dtype=np.int64, buffer=self.meta_shm.buf)
+        self.meta[:] = 0
+
+        ctx = _mp.get_context('spawn')
+        self._stop_evt = ctx.Event()
+        self._ready_evt = ctx.Event()
+        self._lock = ctx.Lock()
+        self._info_queue = ctx.Queue(maxsize=1)
+        self.K = None              # filled in by start() from child
+        self.baseline_m = None     # filled in by start() from child
+
+        # Lazily import here so the parent doesn't depend on the child
+        # module's full import graph at top-level.
+        import live_tracking_capture_proc as cap_mod
+        self._proc = ctx.Process(
+            target=cap_mod.producer_main,
+            args=(
+                {
+                    'rgb': self.rgb_shm.name,
+                    'd': self.d_shm.name,
+                    'meta': self.meta_shm.name,
+                },
+                self._stop_evt, self._lock, self._ready_evt,
+                self._info_queue, zed_kwargs, self.fp_size,
+                backend, camera_upsidedown,
+            ),
+            daemon=True,
+        )
+
+    def start(self, ready_timeout=20.0):
+        """Spawn the child and block until it has produced one frame
+        (or set the error flag). Raises on camera-open failure. Populates
+        `self.K` and `self.baseline_m` from the child's camera info."""
+        self._proc.start()
+        # Pick up intrinsics first (sent before the first frame).
+        try:
+            info = self._info_queue.get(timeout=ready_timeout)
+        except Exception as e:
+            self._stop_evt.set()
+            raise RuntimeError(
+                f'capture child did not publish camera info within '
+                f'{ready_timeout:.1f}s: {e}')
+        if 'error' in info:
+            self._stop_evt.set()
+            self._proc.join(timeout=2.0)
+            raise RuntimeError(
+                f'capture child failed to open ZED: {info["error"]}')
+        self.K = np.asarray(info['K'], dtype=np.float64)
+        self.baseline_m = float(info['baseline_m'])
+        if not self._ready_evt.wait(timeout=ready_timeout):
+            self._stop_evt.set()
+            raise RuntimeError(
+                f'capture child opened the camera but produced no frame '
+                f'within {ready_timeout:.1f}s')
+        if int(self.meta[2]) != 0:
+            self._stop_evt.set()
+            self._proc.join(timeout=2.0)
+            raise RuntimeError('capture child failed to grab a frame')
+
+    def latest(self, since_seq=0, timeout=2.0, poll_s=0.001):
+        """Return (seq, ts_ns, rgb_copy, depth_copy) once a frame with
+        seq > since_seq is available. Frames are *copied* out of shared
+        memory so the consumer can hold them safely while the producer
+        overwrites the next one. Returns None on timeout / error / stop."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self._proc.is_alive() or int(self.meta[2]) != 0:
+                return None
+            cur = int(self.meta[1])
+            if cur > since_seq:
+                with self._lock:
+                    cur = int(self.meta[1])
+                    if cur <= since_seq:
+                        continue
+                    ts_ns = int(self.meta[0])
+                    rgb = self.rgb_view.copy()
+                    depth = self.d_view.copy()
+                return cur, ts_ns, rgb, depth
+            time.sleep(poll_s)
+        return None
+
+    def stop_capture(self):
+        self._stop_evt.set()
+        # Producer publishes its per-stage stats on the info_queue before
+        # exiting; pick that up so the parent can log it.
+        self.producer_stats = None
+        try:
+            msg = self._info_queue.get(timeout=3.0)
+            if isinstance(msg, dict):
+                self.producer_stats = msg.get('producer_stats')
+        except Exception:
+            pass
+        if self._proc.is_alive():
+            self._proc.join(timeout=3.0)
+        for shm in (self.rgb_shm, self.d_shm, self.meta_shm):
+            try:
+                shm.close()
+                shm.unlink()
+            except FileNotFoundError:
+                pass
+
+
+# ----------------------------- viser replay ----------------------------------
+
+def unproject_strided(rgb_s, depth_s, K, stride, max_depth_m=3.0):
+    """Unproject already-stride-sampled arrays. `rgb_s` and `depth_s` are
+    sub-sampled from full resolution at `stride` (e.g. `rgb[::stride, ::stride]`);
+    `K` is the FULL-resolution intrinsics matrix. Pixels with depth above
+    `max_depth_m` are dropped (Fast-FS occasionally hallucinates depths in
+    the 10-20 m range from low-texture regions, and they wreck viser's
+    auto-camera). Returns (points (N,3) float32, colors (N,3) float32 in [0,1])."""
+    H_s, W_s = depth_s.shape
+    vs_s, us_s = np.mgrid[0:H_s, 0:W_s]
+    valid = (depth_s > 0) & np.isfinite(depth_s) & (depth_s <= max_depth_m)
+    vs_s = vs_s[valid]
+    us_s = us_s[valid]
+    ds = depth_s[valid]
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+    us = us_s * stride
+    vs = vs_s * stride
+    xs = (us - cx) * ds / fx
+    ys = (vs - cy) * ds / fy
+    points = np.stack([xs, ys, ds], axis=-1).astype(np.float32)
+    colors = rgb_s[vs_s, us_s].astype(np.float32) / 255.0
+    return points, colors
+
+
+def _free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
+
+
+def save_viz_data(run_dir, viz_log, pose_log, K, stride, mesh_path,
+                  timestamps=None):
+    """Stash the strided RGB/depth + poses + intrinsics into
+    `viz_data.npz` inside `run_dir`, so the run can be replayed in viser
+    later via `live_tracking_viz_replay.py <run_dir>`.
+
+    Saving the *strided* arrays (not the unprojected points) keeps the
+    file small and lets the replay pick its own stride/point_size.
+    """
+    if not viz_log:
+        return None
+    rgb_s = np.stack([r for r, _ in viz_log], axis=0)
+    depth_s = np.stack([d for _, d in viz_log], axis=0)
+    n = len(pose_log)
+    poses = np.full((n, 4, 4), np.nan, dtype=np.float64)
+    for i, p in enumerate(pose_log):
+        if p is not None:
+            poses[i] = p
+    ts = (np.asarray(timestamps, dtype=np.int64)
+          if timestamps is not None else np.zeros(n, dtype=np.int64))
+    path = os.path.join(run_dir, 'viz_data.npz')
+    np.savez_compressed(
+        path,
+        rgb=rgb_s, depth=depth_s, poses=poses,
+        K=np.asarray(K, dtype=np.float64),
+        stride=np.int64(stride),
+        mesh_path=str(mesh_path or ''),
+        timestamps=ts,
+    )
+    print(f'[viz] saved viz data to {path}  '
+          f'({rgb_s.shape[0]} frames, '
+          f'{rgb_s.nbytes/1e6 + depth_s.nbytes/1e6:.1f} MB raw)')
+    return path
+
+
+def launch_viser_replay(pc_log, pose_log, K, mesh_path=None,
+                        point_size=0.01, port=None):
+    """Open a viser server showing the recorded run. Blocks until interrupt.
+
+    pc_log: list of (points (N,3) float32, colors (N,3) float32 in [0,1])
+    pose_log: list of (4,4) float64 or None per frame
+    K: (3,3) intrinsics (unused here but kept for downstream consumers)
+    """
+    import viser
+    if not pc_log:
+        print('[viser] no point clouds logged — skipping replay.')
+        return
+    if port is None:
+        port = _free_port()
+    server = viser.ViserServer(port=port)
+    print(f'[viser] replay at http://localhost:{port}  (Ctrl+C to stop)')
+
+    n_frames = len(pc_log)
+
+    # ROS-style camera frame: +Z forward, +X right, +Y down. viser default is
+    # +Z up; just leave the scene in camera coords. The user can re-orient.
+    points0, colors0 = pc_log[0]
+    pc_handle = server.scene.add_point_cloud(
+        '/scene/points', points=points0, colors=colors0,
+        point_size=point_size,
+    )
+
+    # Object pose axes — defer wxyz computation to update fn.
+    pose_handle = server.scene.add_frame(
+        '/object', show_axes=True, axes_length=0.1, axes_radius=0.003,
+    )
+
+    # Optional mesh at the tracked pose.
+    mesh_handle = None
+    if mesh_path is not None:
+        try:
+            mesh = trimesh.load(mesh_path, process=False)
+            if hasattr(mesh, 'vertices') and hasattr(mesh, 'faces'):
+                mesh_handle = server.scene.add_mesh_simple(
+                    '/object/mesh',
+                    vertices=np.asarray(mesh.vertices, dtype=np.float32),
+                    faces=np.asarray(mesh.faces, dtype=np.uint32),
+                    color=(180, 180, 220), opacity=0.6,
+                )
+        except Exception as e:
+            print(f'[viser] mesh load failed ({e}); continuing without it.')
+
+    # Pose trajectory polyline (positions only).
+    positions = np.array([p[:3, 3] for p in pose_log if p is not None],
+                         dtype=np.float32)
+    if len(positions) >= 2:
+        # add_spline_catmull_rom needs (N, 3); thin tube.
+        try:
+            server.scene.add_spline_catmull_rom(
+                '/trajectory', positions=positions, color=(255, 80, 80),
+                line_width=2.0,
+            )
+        except Exception:
+            pass
+
+    def _apply_pose(i):
+        T = pose_log[i]
+        if T is None:
+            pose_handle.visible = False
+            if mesh_handle is not None:
+                mesh_handle.visible = False
+            return
+        pose_handle.visible = True
+        pose_handle.position = tuple(float(x) for x in T[:3, 3])
+        quat = trimesh.transformations.quaternion_from_matrix(T)
+        pose_handle.wxyz = (float(quat[0]), float(quat[1]),
+                            float(quat[2]), float(quat[3]))
+        if mesh_handle is not None:
+            mesh_handle.visible = True
+            mesh_handle.position = pose_handle.position
+            mesh_handle.wxyz = pose_handle.wxyz
+
+    slider = server.gui.add_slider(
+        'frame', min=0, max=n_frames - 1, step=1, initial_value=0)
+
+    @slider.on_update
+    def _on_frame(_):
+        i = int(slider.value)
+        pts, cols = pc_log[i]
+        pc_handle.points = pts
+        pc_handle.colors = cols
+        _apply_pose(i)
+
+    _apply_pose(0)
+
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print('[viser] shutting down')
 
 
 # ----------------------------- run output ------------------------------------

@@ -28,10 +28,9 @@ import trimesh
 import nvdiffrast.torch as dr
 
 from live_tracking_utils import (
-    construct_camera_intrinsics, init_zed,
-    read_zed_depth_frame, read_zed_stereo_frame,
     select_mask_with_sam, RosPosePublisher,
-    FastFsDepth, DEFAULT_FAST_FS_MODEL, save_run,
+    FastFsDepth, DEFAULT_FAST_FS_MODEL, DEFAULT_FAST_FS_TRT_DIR, save_run,
+    ZedCaptureProcess, unproject_strided, launch_viser_replay, save_viz_data,
 )
 from estimater import ScorePredictor, PoseRefinePredictor, FoundationPose
 
@@ -82,10 +81,19 @@ def _build_parser():
                         help='Fast-FS processing width (forced to engine size in TRT mode).')
     parser.add_argument('--fast_fs_height', type=int, default=224,
                         help='Fast-FS processing height (forced to engine size in TRT mode).')
-    parser.add_argument('--fast_fs_trt_dir', type=str, default=None,
+    parser.add_argument('--fast_fs_trt_dir', type=str,
+                        default=str(DEFAULT_FAST_FS_TRT_DIR),
                         help='Directory with feature_runner.engine, post_runner.engine, '
                              'and onnx.yaml from docs/venv_isaacsim_install.md §2c. '
-                             'When set, uses TRT (~4 ms vs ~27 ms PyTorch).')
+                             'Defaults to the 8-iter engine; pass an empty string to '
+                             'fall back to the PyTorch path.')
+    parser.add_argument('--visualize', action='store_true',
+                        help='After the episode, launch a viser server replaying '
+                             'the recorded run with per-frame point clouds, the '
+                             'tracked pose, and the object mesh overlay.')
+    parser.add_argument('--viz_stride', type=int, default=4,
+                        help='Stride for the per-frame point cloud sampling '
+                             '(higher = sparser; only used with --visualize).')
     return parser
 
 
@@ -104,40 +112,48 @@ def main():
     ros_pub = RosPosePublisher(args.frame_id, publish_robot_frame=(T_RC is not None)) \
               if args.ros else None
 
-    # Backend dispatch.
-    if args.depth_backend == 'zed_neural':
-        depth_mode = sl.DEPTH_MODE.NEURAL
-        coord_units = sl.UNIT.MILLIMETER
-    else:
-        depth_mode = sl.DEPTH_MODE.NONE
-        coord_units = sl.UNIT.METER
-
-    zed, runtime_parameters, mat_a, mat_b = init_zed(
-        args.serial_number, args.exposure, args.gain,
-        resolution=args.camera_resolution, camera_fps=args.camera_fps,
-        depth_mode=depth_mode, coordinate_units=coord_units)
-
     os.makedirs(args.save_dir, exist_ok=True)
     raw_frames = []
     pose_log = []
     frame_times = []
-    stage_times = {'grab': [], 'track': [], 'publish': [], 'total': []}
+    stage_times = {'grab': [], 'depth': [], 'track': [], 'publish': [], 'total': []}
+    # Strided slices (rgb[::s, ::s].copy(), depth[::s, ::s].copy()) per
+    # frame. Always recorded so the run can be replayed in viser later
+    # via `live_tracking_viz_replay.py <run_dir>` — the --visualize flag
+    # only controls whether we *auto-launch* viser at the end.
+    viz_log = []
     K = None
     loop_start_time = None
     backend_tag = args.depth_backend
+    capture = None
 
     try:
-        camera_info = zed.get_camera_information()
-        left_cam_params = camera_info.camera_configuration.calibration_parameters.left_cam
-        K = construct_camera_intrinsics(left_cam_params, args.width, args.height,
-                                        args.camera_upsidedown)
+        # Producer process owns the camera. Spawn cost ~10 s; thereafter
+        # `latest()` returns the freshest frame instantly. Critically, the
+        # child has its OWN CUDA context, so ZED's NEURAL depth doesn't
+        # serialize behind FoundationPose's track_one in the main process.
+        t_spawn = time.time()
+        capture = ZedCaptureProcess(
+            zed_kwargs={
+                'resolution': args.camera_resolution,
+                'camera_fps': args.camera_fps,
+                'serial_number': args.serial_number,
+                'exposure': args.exposure,
+                'gain': args.gain,
+            },
+            fp_size=(args.width, args.height),
+            backend=args.depth_backend,
+            camera_upsidedown=args.camera_upsidedown,
+        )
+        capture.start(ready_timeout=30.0)
+        K = capture.K
+        baseline_m = capture.baseline_m
+        print(f'[capture] producer ready in {time.time()-t_spawn:.2f}s; '
+              f'K[0,0]={K[0,0]:.1f}, baseline={baseline_m*1000:.2f}mm')
+        last_seq = 0
 
         fast_fs = None
         if args.depth_backend == 'fast_fs':
-            baseline_m = abs(camera_info.camera_configuration
-                             .calibration_parameters.get_camera_baseline())
-            print(f'ZED stereo: fx={K[0,0]:.2f} px at {args.width}x{args.height}, '
-                  f'baseline={baseline_m*1000:.2f} mm')
             fast_fs = FastFsDepth(
                 model_path=args.fast_fs_model,
                 iters=args.fast_fs_iters,
@@ -157,16 +173,23 @@ def main():
             print(f'Fast-FS backend: {fast_fs.backend} at {fast_fs.fs_size}; '
                   f'depth upsampled to {fast_fs.fp_size}')
 
-        def grab_rgb_depth():
-            """Return (rgb, depth_m) for whichever backend is active."""
+        def fetch():
+            """Block until a fresh frame is ready; return (rgb, depth_m,
+            ts_ns, grab_s, depth_s). For fast_fs, depth_s isolates the
+            stereo-to-depth TRT inference cost (run on the consumer side)."""
+            nonlocal last_seq
+            t0 = time.time()
+            out = capture.latest(since_seq=last_seq, timeout=2.0)
+            if out is None:
+                raise RuntimeError('capture process delivered no frame')
+            seq, ts_ns, a, b = out
+            last_seq = seq
+            grab_s = time.time() - t0
             if args.depth_backend == 'zed_neural':
-                return read_zed_depth_frame(zed, runtime_parameters, mat_a, mat_b,
-                                            args.width, args.height,
-                                            args.camera_upsidedown)
-            left, right = read_zed_stereo_frame(zed, runtime_parameters, mat_a, mat_b,
-                                                args.width, args.height,
-                                                args.camera_upsidedown)
-            return left, fast_fs(left, right)
+                return a, b, ts_ns, grab_s, 0.0
+            t1 = time.time()
+            depth = fast_fs(a, b)
+            return a, depth, ts_ns, grab_s, time.time() - t1
 
         mesh = trimesh.load(args.mesh_path, process=False)
         scorer = ScorePredictor()
@@ -178,7 +201,7 @@ def main():
             debug=0, glctx=glctx, debug_dir=args.save_dir,
         )
 
-        rgb, depth = grab_rgb_depth()
+        rgb, depth, _, _, _ = fetch()
         mask = select_mask_with_sam(rgb)
         if mask is None or mask.sum() == 0:
             print('Empty ROI selected. Exiting.')
@@ -205,9 +228,7 @@ def main():
         while keep_running():
             loop_start = time.time()
 
-            t0 = time.time()
-            rgb, depth = grab_rgb_depth()
-            t_grab = time.time() - t0
+            rgb, depth, _ts, t_grab, t_depth = fetch()
 
             t0 = time.time()
             pose = est.track_one(rgb=rgb, depth=depth, K=K,
@@ -223,10 +244,13 @@ def main():
             # Buffer raw RGB + pose; overlay rendering deferred to save_run().
             raw_frames.append(rgb)
             pose_log.append(pose)
+            s = args.viz_stride
+            viz_log.append((rgb[::s, ::s].copy(), depth[::s, ::s].copy()))
 
             elapsed = time.time() - loop_start
             frame_times.append(elapsed)
             stage_times['grab'].append(t_grab)
+            stage_times['depth'].append(t_depth)
             stage_times['track'].append(t_track)
             stage_times['publish'].append(t_publish)
             stage_times['total'].append(elapsed)
@@ -235,9 +259,29 @@ def main():
                 time.sleep(sleep_time)
 
     finally:
-        zed.close()
+        producer_stats = None
+        if capture is not None:
+            capture.stop_capture()
+            producer_stats = capture.producer_stats
+        if producer_stats:
+            lines = ['--- Producer per-stage timings (ms) ---',
+                     f"  frames: {producer_stats['n_frames']}",
+                     '              mean    p50    p95    p99    min    max']
+            for stage in ('grab', 'left',
+                          'depth' if args.depth_backend == 'zed_neural'
+                          else 'right',
+                          'publish_lock'):
+                s = producer_stats.get(stage)
+                if not s:
+                    continue
+                lines.append(
+                    f"  {stage:<12s}"
+                    f"{s['mean_ms']:7.1f}{s['p50_ms']:7.1f}"
+                    f"{s['p95_ms']:7.1f}{s['p99_ms']:7.1f}"
+                    f"{s['min_ms']:7.1f}{s['max_ms']:7.1f}")
+            print('\n'.join(lines))
         cv2.destroyAllWindows()
-        save_run(
+        run_dir = save_run(
             save_dir=args.save_dir,
             backend_name=backend_tag,
             resolution=args.camera_resolution,
@@ -249,6 +293,21 @@ def main():
             stage_times=stage_times,
             target_fps=args.fps,
         )
+
+        if viz_log and K is not None and run_dir:
+            # Always stash to disk so the run can be replayed any time via
+            # `python third_party/FoundationPose/live_tracking_viz_replay.py <run_dir>`.
+            save_viz_data(run_dir, viz_log, pose_log, K,
+                          args.viz_stride, args.mesh_path)
+            if args.visualize:
+                print(f'[viser] preparing replay ({len(viz_log)} frames at '
+                      f'stride={args.viz_stride}) ...')
+                pc_log = [
+                    unproject_strided(rgb_s, depth_s, K, stride=args.viz_stride)
+                    for rgb_s, depth_s in viz_log
+                ]
+                launch_viser_replay(pc_log, pose_log, K,
+                                    mesh_path=args.mesh_path)
 
 
 if __name__ == '__main__':
