@@ -20,7 +20,7 @@ from matplotlib.ticker import NullFormatter
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-INPUT_DIR = ROOT_DIR / "inputs" / "fig1"
+INPUT_DIR = ROOT_DIR / "inputs"
 OUT_DIR = Path(__file__).resolve().parent / "outputs"
 METHODS = ("Play-only", "Play2Win")
 TOLERANCE_ROWS = (

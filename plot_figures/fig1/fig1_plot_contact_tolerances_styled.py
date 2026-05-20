@@ -18,6 +18,7 @@ Output: ``outputs/fig1_contact_tolerances_styled.png`` at dpi=600.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -29,11 +30,13 @@ import numpy as np
 from matplotlib.patches import FancyArrowPatch
 from matplotlib.ticker import NullFormatter
 
+# _style.py lives one directory up (plot_figures/), shared across all figs.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _style import COLORS, configure_rcparams, panel_label, save_figure, style_axis
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-INPUT_DIR = ROOT_DIR / "inputs" / "fig1"
+INPUT_DIR = ROOT_DIR / "inputs"
 OUT_PATH = ROOT_DIR / "outputs" / "fig1_contact_tolerances_styled.png"
 
 METHODS = ("Play-only", "Play2Win")

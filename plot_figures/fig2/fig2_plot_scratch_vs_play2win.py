@@ -25,7 +25,7 @@ import numpy as np
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-INPUT_DIR = ROOT_DIR / "inputs" / "fig2"
+INPUT_DIR = ROOT_DIR / "inputs"
 OUT_DIR = ROOT_DIR / "outputs"
 
 METHODS = ("Play2Win", "Scratch task", "Scratch multi-stage")

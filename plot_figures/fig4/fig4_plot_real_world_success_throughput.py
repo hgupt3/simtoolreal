@@ -24,7 +24,7 @@ import numpy as np
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-INPUT_DIR = ROOT_DIR / "inputs" / "fig4"
+INPUT_DIR = ROOT_DIR / "inputs"
 OUT_DIR = ROOT_DIR / "outputs"
 
 TASKS = ("PegInHole", "FabricaAssembly", "FurnitureBench")

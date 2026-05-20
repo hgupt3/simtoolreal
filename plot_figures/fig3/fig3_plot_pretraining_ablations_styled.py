@@ -13,6 +13,7 @@ Output: ``outputs/fig3_pretraining_ablations_styled.png`` at dpi=600.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -22,6 +23,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+# _style.py lives one directory up (plot_figures/), shared across all figs.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _style import (
     DIVERSITY_RAMP,
     STYLES,
@@ -35,6 +38,7 @@ from _style import (
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+OUT_DIR = ROOT_DIR / "outputs"
 
 TASKS = (
     "FMB Triangle Peg",
@@ -206,7 +210,7 @@ def _draw_full_figure() -> plt.Figure:
 def main() -> None:
     configure_rcparams()
     fig = _draw_full_figure()
-    save_figure(fig, "fig3_pretraining_ablations_styled")
+    save_figure(fig, "fig3_pretraining_ablations_styled", out_dir=OUT_DIR)
     plt.close(fig)
 
 

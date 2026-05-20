@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -139,7 +139,7 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--output-dir",
-        default=str(REPO_ROOT / "plot_figures" / "inputs" / "fig1"),
+        default=str(REPO_ROOT / "plot_figures" / "fig1" / "inputs"),
     )
     p.add_argument(
         "--worker-python",

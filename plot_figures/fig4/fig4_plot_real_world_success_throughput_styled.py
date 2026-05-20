@@ -15,6 +15,7 @@ Output: ``outputs/fig4_real_world_success_throughput_styled.png`` at dpi=600.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -25,11 +26,14 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
+# _style.py lives one directory up (plot_figures/), shared across all figs.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _style import COLORS, configure_rcparams, panel_label, save_figure, style_axis
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-INPUT_DIR = ROOT_DIR / "inputs" / "fig4"
+INPUT_DIR = ROOT_DIR / "inputs"
+OUT_DIR = ROOT_DIR / "outputs"
 
 TASKS = ("PegInHole", "FabricaAssembly", "FurnitureBench")
 TASK_TICK_LABELS = ("Peg-in-Hole", "Fabrica", "Furniture")
@@ -278,7 +282,7 @@ def main() -> None:
     configure_rcparams()
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     fig = _draw_full_figure()
-    save_figure(fig, "fig4_real_world_success_throughput_styled")
+    save_figure(fig, "fig4_real_world_success_throughput_styled", out_dir=OUT_DIR)
     plt.close(fig)
 
 
