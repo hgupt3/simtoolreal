@@ -22,6 +22,42 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HOLES_DIR = _REPO_ROOT / "assets" / "urdf" / "peg_in_hole" / "holes"
 
 
+def _dense_insert_sequence(final_pose, pre_insert_offsets_m=(0.15, 0.05)):
+    """3+ pose insertion sequence with multiple pre-insert waypoints above
+    the final pose. Each entry in ``pre_insert_offsets_m`` is a metric
+    distance above the final pose (assumes vertical insertion); poses are
+    emitted from farthest to closest, then the final pose. So the default
+    ``(0.15, 0.05)`` yields (15 cm above, 5 cm above, final).
+    """
+    x, y, z, qx, qy, qz, qw = (float(v) for v in final_pose)
+    poses = []
+    for offset in sorted(pre_insert_offsets_m, reverse=True):
+        poses.append((x, y, z + float(offset), qx, qy, qz, qw))
+    poses.append((x, y, z, qx, qy, qz, qw))
+    return tuple(poses)
+
+
+# Receptive-frame coordinates for the peg's canonical start pose (computed
+# from peg world start (0.135, 0.08, 0.54), default hole world position
+# (-0.05, 0.08, 0.53) -> peg-start-rel-hole ~ (0.185, 0.0, 0.01)). The lift
+# waypoint sits 10 cm above start at flat (identity) orientation: the same
+# motion the play-only policy was trained to execute on the reorientation
+# task. Subsequent waypoints carry the policy through the rotate-then-
+# descend phase.
+_PLAYNATURAL_LIFT_POSE = (0.185, 0.0, 0.11, 0.0, 0.0, 0.0, 1.0)
+
+
+def _playnatural_insert_sequence(final_pose, pre_insert_offsets_m=(0.15, 0.05)):
+    """4+ pose sequence matching the play policy's lift-then-rotate-then-
+    descend natural trajectory. Order: lift-at-start (flat orientation),
+    then standard pre-insert waypoints above the hole (vertical), then
+    final.
+    """
+    poses = [_PLAYNATURAL_LIFT_POSE]
+    poses.extend(_dense_insert_sequence(final_pose, pre_insert_offsets_m))
+    return tuple(poses)
+
+
 def _register_all() -> None:
     if not _HOLES_DIR.is_dir():
         return
@@ -49,6 +85,34 @@ def _register_all() -> None:
                 insertion_object_name=object_name,
                 receptive_urdf=urdf_rel,
                 insert_pose_rel_receptive=make_pre_insert_sequence(_PEG_INSERT_POSE),
+            )
+            # Dense variant: two pre-insert waypoints (15 cm + 5 cm above
+            # final) before the final pose, giving the policy more
+            # intermediate guidance during insertion. Used by Play-only
+            # evals to test whether dense subgoals help an
+            # never-trained-on-insertion baseline.
+            dense_name = f"{prefix}_dense.{tag}"
+            PROBLEM_REGISTRY[dense_name] = Problem(
+                name=dense_name,
+                insertion_object_name=object_name,
+                receptive_urdf=urdf_rel,
+                insert_pose_rel_receptive=_dense_insert_sequence(
+                    _PEG_INSERT_POSE, pre_insert_offsets_m=(0.15, 0.05),
+                ),
+            )
+            # Playnatural variant: starts with a "lift at start pose"
+            # waypoint (flat orientation) matching the play-only policy's
+            # natural lift-then-rotate motion, then the standard dense
+            # descent. Gives the play-only baseline credit for the lift
+            # phase it actually knows how to execute.
+            playnatural_name = f"{prefix}_playnatural.{tag}"
+            PROBLEM_REGISTRY[playnatural_name] = Problem(
+                name=playnatural_name,
+                insertion_object_name=object_name,
+                receptive_urdf=urdf_rel,
+                insert_pose_rel_receptive=_playnatural_insert_sequence(
+                    _PEG_INSERT_POSE, pre_insert_offsets_m=(0.15, 0.05),
+                ),
             )
 
 

@@ -51,7 +51,15 @@ HOLE_SLOT_CORE_Y = 0.03
 HOLE_FLOOR_THICKNESS = 0.01
 HOLE_DEPTH = 0.05
 
-TOLERANCES_MM = [0.1, 0.5, 1.0, 5.0, 10.0, 20.0]
+TOLERANCES_MM = [
+    # Original reference grid.
+    0.1, 0.5, 1.0, 5.0, 10.0, 20.0,
+    # Fig-1 v4 sweep grid (np.geomspace(0.1, 20.0, 10), per-side;
+    # reports as diameter geomspace(0.2, 40.0, 10) mm). 0.10 and 20.0
+    # already exist in the reference grid; the 8 interior points are added
+    # here. Values are exactly np.round(np.geomspace(0.1, 20.0, 10), 2).
+    0.18, 0.32, 0.58, 1.05, 1.9, 3.42, 6.16, 11.1,
+]
 
 PEG_COLOR = (204, 40, 40)
 HOLE_COLOR = (120, 120, 120)
