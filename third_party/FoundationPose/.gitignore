@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.so
+*.egg-info
+
+# CUDA / pybind11 build outputs
+mycpp/build/
+
+# Model weights (~1.5 GB; download per install doc)
+weights/*
+!weights/.gitkeep
+
+# Local outputs from live_tracking / debug runs
+live_tracking_results/
+debug/

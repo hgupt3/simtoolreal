@@ -139,6 +139,7 @@ celerybeat.pid
 .envrc
 .venv
 .venv-*
+.venv_*
 env/
 venv/
 ENV/
@@ -228,8 +229,10 @@ outputs/
 # Isaac Gym (proprietary, not redistributable)
 isaacgym
 
-# FoundationPose (separate repo)
-FoundationPose/
+# FoundationPose (legacy: when a sibling clone lived at repo root).
+# The vendored slim copy at third_party/FoundationPose/ is anchored, so we
+# only ignore a top-level FoundationPose/ here.
+/FoundationPose/
 
 # Claude Code
 .claude/

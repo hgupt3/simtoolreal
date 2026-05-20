@@ -1,6 +1,6 @@
-# Unified `.venv_isaacsim` install (Isaac Sim + Fast-FoundationStereo + ROS Noetic)
+# Unified `.venv_isaacsim` install (Isaac Sim + Fast-FoundationStereo + FoundationPose + pyzed + ROS Noetic)
 
-The depth-student pipeline under `isaacsimenvs/`, `peg_in_hole_dynamic/`, and `deployment/` runs out of a **single Python 3.11 venv** at `.venv_isaacsim/`. Isaac Sim, Fast-FoundationStereo, and ROS 1 (Noetic) clients all coexist in this one venv as long as packages are installed in the order below. No apt, no separate conda env.
+The depth-student pipeline under `isaacsimenvs/`, `peg_in_hole_dynamic/`, `deployment/`, and `third_party/FoundationPose/` runs out of a **single Python 3.11 venv** at `.venv_isaacsim/`. Isaac Sim, Fast-FoundationStereo, FoundationPose, pyzed, and ROS 1 (Noetic) clients all coexist in this one venv as long as packages are installed in the order below. No apt, no conda env.
 
 The main [docs/installation.md](installation.md) still covers the original Isaac Gym (Python 3.8) workflow — that env is independent and should remain separate.
 
@@ -233,6 +233,174 @@ export ROS_IP=<this-host-ip>
 .venv_isaacsim/bin/python deployment/your_node.py
 ```
 
+## 4. FoundationPose
+
+Slim FoundationPose (live 6-DoF pose tracking + ROS publishing) is vendored at `third_party/FoundationPose/`. Source upstream: [kushal2000/FoundationPose](https://github.com/kushal2000/FoundationPose) (a fork of NVlabs/FoundationPose); only the files needed for the live ROS flow were copied — see `third_party/FoundationPose/`.
+
+Upstream pins `torch==2.0.0+cu118`. We do **not** match that pin: we run FoundationPose on top of Isaac Sim's `torch 2.7+cu126`, rebuilding PyTorch3D, nvdiffrast, and `mycpp` against the modern CUDA. This is the only reason we don't follow the upstream conda recipe.
+
+### 4a. Python deps
+
+```bash
+uv pip install --python .venv_isaacsim/bin/python \
+  kornia open3d pyrender PyOpenGL PyOpenGL_accelerate \
+  fvcore opencv-contrib-python scikit-learn scikit-image \
+  ninja pybind11 ruamel.yaml colorama joblib roma transformations
+```
+
+**Then re-pin numpy<2.** The packages above resolve numpy ≥ 2.0 by default, but `numba==0.59.1` (already installed via Isaac Sim's `warp-lang` dependency tree) hard-errors against numpy 2.x:
+
+```bash
+uv pip install --python .venv_isaacsim/bin/python "numpy<2"
+```
+
+Versions already in the venv from §1 (Isaac Sim) — `trimesh`, `transformers`, `einops`, `omegaconf`, `imageio`, `opencv-python`, `h5py`, `psutil`, `pyglet`, `xatlas`, `rtree`, `timm`, `warp-lang` — are left alone. They are all newer than FoundationPose's upstream pins but compatible.
+
+### 4b. Source-build PyTorch3D, nvdiffrast, mycpp
+
+```bash
+export CUDA_HOME=/usr/local/cuda          # system CUDA 12.x — no conda needed
+export PATH=$CUDA_HOME/bin:$PATH
+export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+
+# PyTorch3D against torch 2.7+cu126. Slow (~5-10 min); compiles CUDA kernels.
+uv pip install --python .venv_isaacsim/bin/python --no-build-isolation \
+  "git+https://github.com/facebookresearch/pytorch3d.git"
+
+# nvdiffrast — fast (~1 min). Version-flexible.
+uv pip install --python .venv_isaacsim/bin/python --no-build-isolation \
+  "git+https://github.com/NVlabs/nvdiffrast"
+
+# mycpp (FoundationPose's pose-clustering pybind11 extension). Builds with
+# system gcc-13 + system CUDA 12.x; no CUDA 11.8 / gcc-11 required despite
+# what upstream FoundationPose's readme says.
+PYTHON=.venv_isaacsim/bin/python bash third_party/FoundationPose/build_all.sh
+```
+
+`mycpp` output lands at `third_party/FoundationPose/mycpp/build/mycpp*.so`. `Utils.py:46` imports it as `mycpp.build.mycpp` — the build directory is the import path; don't move the `.so`.
+
+### 4c. Download FoundationPose weights
+
+Fetch the two pretrained checkpoint folders from upstream [NVlabs/FoundationPose](https://github.com/NVlabs/FoundationPose#model-weights) (Google Drive folder `1DFezOAD0oD1BblsXVxqDsl8fj0qzB82i`):
+
+```bash
+.venv_isaacsim/bin/python -m gdown --folder \
+    'https://drive.google.com/drive/folders/1DFezOAD0oD1BblsXVxqDsl8fj0qzB82i' \
+    -O third_party/FoundationPose/weights/
+
+# gdown unpacks into weights/no_diffusion/<timestamp>/; flatten one level so
+# the layout matches what FP expects (predict_score.py:123, predict_pose_refine.py:99).
+cd third_party/FoundationPose/weights
+mv no_diffusion/2023-10-28-18-33-37 . && \
+mv no_diffusion/2024-01-11-20-02-45 . && \
+rmdir no_diffusion
+cd -
+```
+
+Final layout (~248 MB; both gitignored):
+
+```
+third_party/FoundationPose/weights/
+  ├── 2023-10-28-18-33-37/   # scorer  — 66 MB
+  │   ├── config.yml
+  │   └── model_best.pth
+  └── 2024-01-11-20-02-45/   # refiner — 182 MB
+      ├── config.yml
+      └── model_best.pth
+```
+
+Verify both checkpoints load under our torch 2.7+cu126:
+
+```bash
+.venv_isaacsim/bin/python -c "
+import sys; sys.path.insert(0, 'third_party/FoundationPose')
+from estimater import ScorePredictor, PoseRefinePredictor
+ScorePredictor(); PoseRefinePredictor()
+print('FP weights load OK')
+"
+```
+
+### 4d. Smoke test (no camera required)
+
+```bash
+.venv_isaacsim/bin/python -c "
+import sys; sys.path.insert(0, 'third_party/FoundationPose')
+import torch, pytorch3d, nvdiffrast.torch as dr
+print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available())
+print('pytorch3d:', pytorch3d.__version__)
+from Utils import mycpp
+assert mycpp is not None, 'mycpp .so missing — re-run build_all.sh'
+print('mycpp ok')
+from estimater import FoundationPose, ScorePredictor, PoseRefinePredictor
+print('FoundationPose imports ok')
+"
+```
+
+### 4e. Notes / gotchas
+
+- **Do NOT `pip install pyzed`.** The PyPI package by that name is a squatter and lacks `pyzed.sl`. See §5 for the correct path.
+- **Re-pin numpy<2 after FP deps.** `numba` (Isaac Sim transitive) refuses numpy 2.x.
+- **`mycpp` import path is hard-coded** as `mycpp.build.mycpp` (see `Utils.py:46`). The `try/except` wrap means missing `.so` silently disables pose clustering — re-run `build_all.sh` if the smoke test prints `mycpp .so missing`.
+- **`transformers` pin.** Upstream FoundationPose leaves `transformers` unconstrained but the upstream-tested torch is 2.0; under torch 2.7 here, the Isaac Sim `transformers>=5.x` already in the venv works fine. The vendored `requirements.txt` no longer pins `transformers==4.41.2` (the pin we'd need under torch 2.0).
+- **GPU-arch-specific.** PyTorch3D / nvdiffrast / mycpp builds work for the GPU arches listed in `TORCH_CUDA_ARCH_LIST` above (Ampere through Hopper); rebuild for older arches if you target them.
+
+## 5. ZED SDK + `pyzed` (FoundationPose camera input)
+
+`pyzed` is only used by `third_party/FoundationPose/live_tracking_with_ros.py`. **Stereolabs's `pyzed` is NOT on PyPI** — the PyPI package by that name is unrelated and lacks the `.sl` submodule. The real wrapper ships *inside the ZED SDK installer*.
+
+### 5a. Install the ZED SDK (system-wide, requires sudo)
+
+Pick the SDK build that matches the system CUDA (12.x here) and Ubuntu version. Browse <https://www.stereolabs.com/developers/release> for the current URL.
+
+```bash
+wget -O /tmp/zed_sdk.run https://download.stereolabs.com/zedsdk/<version>/cu12/ubuntu24
+sudo bash /tmp/zed_sdk.run
+```
+
+### 5b. Install the matching `pyzed` wheel into the venv
+
+```bash
+source .venv_isaacsim/bin/activate
+python /usr/local/zed/get_python_api.py
+```
+
+The script fetches a wheel matching the active Python interpreter (3.11 here) and runs `pip install` against it.
+
+### 5c. Verify
+
+```bash
+.venv_isaacsim/bin/python -c \
+  "import pyzed.sl as sl; print('SDK', sl.Camera.get_sdk_version())"
+```
+
+If you see `ModuleNotFoundError: No module named 'pyzed.sl'`, you installed the PyPI squatter — uninstall (`uv pip uninstall pyzed`) and rerun `get_python_api.py`.
+
+## 6. Run FoundationPose live tracking + ROS publishing
+
+Once §1–§5 are in place:
+
+```bash
+# Local roscore (or set ROS_MASTER_URI to a remote one).
+.venv_isaacsim/bin/rosmaster --core -p 11311 &
+export ROS_MASTER_URI=http://localhost:11311
+
+.venv_isaacsim/bin/python third_party/FoundationPose/live_tracking_with_ros.py \
+    --mesh_path /path/to/object.obj \
+    --serial_number 15107 \
+    --fps 40
+```
+
+On the first frame an OpenCV window opens for SAM bounding-box selection — click 4 corners around the object; FoundationPose registers the initial pose and tracks from there.
+
+Published topics:
+
+| topic                                  | type           | when                            |
+|----------------------------------------|----------------|---------------------------------|
+| `camera_frame/current_object_pose`     | `PoseStamped`  | always                          |
+| `robot_frame/current_object_pose`      | `PoseStamped`  | only if `--calibration` passed  |
+
+`--calibration` is **optional** in our vendored copy (upstream made it required). Pass a 4x4 `T_RC` matrix (`.txt` or `.npy`) for robot-frame output; omit during bring-up.
+
 ## Quick reference — full unified install from scratch
 
 ```bash
@@ -254,6 +422,33 @@ uv pip install --python .venv_isaacsim/bin/python \
   --extra-index-url https://rospypi.github.io/simple/ \
   rospy rosgraph rosmaster std_msgs sensor_msgs geometry_msgs \
   nav_msgs tf2_ros tf2_msgs cv_bridge
+
+# 4. FoundationPose deps + source builds
+uv pip install --python .venv_isaacsim/bin/python \
+  kornia open3d pyrender PyOpenGL PyOpenGL_accelerate \
+  fvcore opencv-contrib-python scikit-learn scikit-image \
+  ninja pybind11 ruamel.yaml colorama joblib roma transformations
+uv pip install --python .venv_isaacsim/bin/python "numpy<2"
+export CUDA_HOME=/usr/local/cuda
+export PATH=$CUDA_HOME/bin:$PATH
+export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+uv pip install --python .venv_isaacsim/bin/python --no-build-isolation \
+  "git+https://github.com/facebookresearch/pytorch3d.git" \
+  "git+https://github.com/NVlabs/nvdiffrast"
+PYTHON=.venv_isaacsim/bin/python bash third_party/FoundationPose/build_all.sh
+
+# 5. ZED SDK (system, sudo) then pyzed wheel into the venv
+sudo bash zed_sdk.run                       # URL per §5a
+.venv_isaacsim/bin/python /usr/local/zed/get_python_api.py
 ```
 
-Then download Fast-FS weights + build TRT engines per §2b–2c above if needed.
+# 6. Download FP weights
+.venv_isaacsim/bin/python -m gdown --folder \
+    'https://drive.google.com/drive/folders/1DFezOAD0oD1BblsXVxqDsl8fj0qzB82i' \
+    -O third_party/FoundationPose/weights/
+( cd third_party/FoundationPose/weights && \
+  mv no_diffusion/2023-10-28-18-33-37 no_diffusion/2024-01-11-20-02-45 . && \
+  rmdir no_diffusion )
+```
+
+Then download Fast-FS weights + build TRT engines per §2b–2c.
