@@ -13,6 +13,9 @@ import re
 import sys
 import time
 import argparse
+from pathlib import Path
+
+_FP_DIR = Path(__file__).resolve().parent
 
 # rospy MUST be imported BEFORE live_tracking_utils (which loads the FP stack)
 # — see the segfault note in live_tracking_utils.py. Gated on --ros so non-ROS
@@ -94,6 +97,12 @@ def _build_parser():
     parser.add_argument('--viz_stride', type=int, default=4,
                         help='Stride for the per-frame point cloud sampling '
                              '(higher = sparser; only used with --visualize).')
+    parser.add_argument('--fp_refiner_trt', type=str,
+                        default=str(_FP_DIR / 'weights' / '2023-10-28-18-33-37'
+                                    / 'refine_net_fp16.plan'),
+                        help='Path to a TensorRT engine (.plan) for the FP '
+                             'refiner. Defaults to the bundled fp16 engine. '
+                             'Pass an empty string to fall back to PyTorch.')
     return parser
 
 
@@ -193,7 +202,8 @@ def main():
 
         mesh = trimesh.load(args.mesh_path, process=False)
         scorer = ScorePredictor()
-        refiner = PoseRefinePredictor()
+        refiner = PoseRefinePredictor(
+            trt_engine_path=(args.fp_refiner_trt or None))
         glctx = dr.RasterizeCudaContext()
         est = FoundationPose(
             model_pts=mesh.vertices, model_normals=mesh.vertex_normals,
