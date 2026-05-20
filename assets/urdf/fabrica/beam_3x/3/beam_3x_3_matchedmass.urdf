@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<!--
+  beam_3x/3 with PHYSICALLY-MATCHED mass + mesh-derived inertia tensor.
+
+  Geometry is mirror-image of beam_3x/2; mass shared with /2 (both physically
+  identical parts in the assembly).
+
+  Mass: 0.06857 kg  (= 68.57 g)
+    Same physical mass as beam_3x/2 (2026-05-20, Cornell lab). Density 335.2.
+
+  Inertia: trimesh from this part's own mesh × (mass / V). Differs from
+  beam_3x/2 only in sign of ixz (mirror image).
+
+    V_mesh = 204.541 cm^3 (watertight)
+
+  Use this URDF instead of beam_3x_3.urdf (which uses <density value=1250/>;
+  Isaac silently ignores <density>).
+-->
+<robot name="beam_3x_3_matchedmass">
+  <link name="beam_3x_3_matchedmass">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="3_canonical.obj" scale="1 1 1"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><mesh filename="3_canonical.obj" scale="1 1 1"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.068570"/>
+      <origin xyz="0.002767 0.000000 -0.000034" rpy="0 0 0"/>
+      <inertia ixx="1.322114e-05" ixy="9.675922e-13" ixz="-9.878862e-08"
+               iyy="2.235268e-04" iyz="-4.966800e-13" izz="2.249660e-04"/>
+    </inertial>
+  </link>
+</robot>

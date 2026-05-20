@@ -1,0 +1,33 @@
+{
+  "hole_xy_canonical": [
+    -0.084375,
+    0.08530125000000001
+  ],
+  "hole_xy_size_canonical": [
+    0.016175999999999996,
+    0.014980499999999999
+  ],
+  "active_corner_pos_yup_obj": [
+    -0.084375,
+    0.0703125,
+    -0.084375
+  ],
+  "active_corner_rpy_yup": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "leg_centroid_in_src": [
+    0.0,
+    -0.018750000000000003,
+    -0.00092625
+  ],
+  "pos_canonical_centroid": [
+    -0.084375,
+    0.08530125000000001,
+    0.05156249999999998
+  ],
+  "parent_part": "square_table_top_1p5x",
+  "child_part": "square_table_leg4_1p5x",
+  "receptive_urdf": "urdf/furniture_bench/square_table_1p5x/insertion_fixtures/one_leg.urdf"
+}

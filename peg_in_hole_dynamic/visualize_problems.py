@@ -140,6 +140,16 @@ def _parse_fixture_urdf(urdf_path: Path) -> List[Tuple[str, Tuple[float, float, 
         if box_tag is not None:
             size = [float(x) for x in box_tag.get("size", "0 0 0").split()]
             return trimesh.creation.box(extents=size)
+        cyl_tag = geom.find("cylinder")
+        if cyl_tag is not None:
+            r = float(cyl_tag.get("radius", "0"))
+            L = float(cyl_tag.get("length", "0"))
+            # URDF cylinders are oriented along the local Z axis.
+            return trimesh.creation.cylinder(radius=r, height=L)
+        sph_tag = geom.find("sphere")
+        if sph_tag is not None:
+            r = float(sph_tag.get("radius", "0"))
+            return trimesh.creation.icosphere(radius=r)
         return None
 
     SDF_BLACK = (15, 15, 15)   # near-black so SDF regions are visually obvious

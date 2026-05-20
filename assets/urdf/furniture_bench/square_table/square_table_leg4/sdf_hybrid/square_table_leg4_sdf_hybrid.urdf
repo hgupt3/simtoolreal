@@ -34,19 +34,33 @@
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
   <link name="body_link">
-    <visual>
-      <origin xyz="0.012500 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <box size="0.062500 0.030001 0.030000"/>
-      </geometry>
-      <material name="body"/>
-    </visual>
-    <collision>
-      <origin xyz="0.012500 0.000000 0.000000" rpy="0.000000 0.000000 0.000000"/>
-      <geometry>
-        <box size="0.062500 0.030001 0.030000"/>
-      </geometry>
-    </collision>
+    <!-- Per-hull visual+collision pairs (12 CoACD decomp pieces). Mirrors
+         the convention in fabrica/beam_3x/*/sdf_hybrid so visualize_problems
+         renders each hull as its own colored chunk. -->
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_0.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_0.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_1.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_1.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_2.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_2.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_3.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_3.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_4.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_4.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_5.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_5.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_6.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_6.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_7.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_7.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_8.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_8.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_9.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_9.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_10.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_10.obj" scale="1 1 1"/></geometry></collision>
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_11.obj" scale="1 1 1"/></geometry><material name="body"/></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="body_coacd/decomp_11.obj" scale="1 1 1"/></geometry></collision>
   </link>
   <joint name="base_to_body" type="fixed">
     <parent link="base_link"/>

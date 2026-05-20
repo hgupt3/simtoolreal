@@ -164,6 +164,40 @@ def _register_assembly_problems(assembly: str, pre_insert_offset: float = 0.025)
                 pre_insert_offset=pre_insert_offset,
             )
 
+        # Matched-mass sibling — same receptive URDF as the baseline (the
+        # fixture's per-part masses don't matter dynamically), only the
+        # inserter object is swapped to its `_matchedmass_coacd` variant so
+        # the grasped part carries measured mass + mesh-derived inertia.
+        matched_obj_key = f"{assembly}_{inserter_id}_matchedmass_coacd"
+        if matched_obj_key in NAME_TO_OBJECT:
+            matched_name = f"{name}_matchedmass"
+            PROBLEM_REGISTRY[matched_name] = Problem(
+                name=matched_name,
+                insertion_object_name=matched_obj_key,
+                receptive_urdf=receptive_rel,
+                insert_pose_rel_receptive=make_pre_insert_sequence(
+                    pose_ins, pre_insert_offset=pre_insert_offset
+                ),
+                hole_z_offset=0.0,
+                pre_insert_offset=pre_insert_offset,
+            )
+
+        # Matched-mass × SDF-hybrid sibling: SDF-hybrid receptive URDF +
+        # matched-mass inserter. Only registered when both pieces exist.
+        matched_sdfh_key = f"{assembly}_{inserter_id}_matchedmass_sdf_hybrid"
+        if hybrid_recv.is_file() and matched_sdfh_key in NAME_TO_OBJECT:
+            matched_sdfh_name = f"{name}_matchedmass_sdf_hybrid"
+            PROBLEM_REGISTRY[matched_sdfh_name] = Problem(
+                name=matched_sdfh_name,
+                insertion_object_name=matched_sdfh_key,
+                receptive_urdf=hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix(),
+                insert_pose_rel_receptive=make_pre_insert_sequence(
+                    pose_ins, pre_insert_offset=pre_insert_offset
+                ),
+                hole_z_offset=0.0,
+                pre_insert_offset=pre_insert_offset,
+            )
+
 
 _register_assembly_problems("beam_2x")
 # beam_3x pillars / caps are 1.5x larger than beam_2x's, so the tip SDF

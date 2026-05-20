@@ -20,7 +20,8 @@ ASSETS_FB = get_repo_root_dir() / "assets" / "urdf" / "furniture_bench"
 # Pieces that may contain re-baked parts. Mirrors the directory layout
 # under assets/urdf/furniture_bench/<piece>/<part>/.
 PIECES = ["cabinet", "chair", "desk", "drawer", "lamp",
-          "round_table", "square_table", "stool"]
+          "round_table", "square_table",
+          "square_table_1p5x", "square_table_2x", "stool"]
 
 
 def _register_one_part(piece: str, part_name: str) -> None:
@@ -44,6 +45,18 @@ def _register_one_part(piece: str, part_name: str) -> None:
     if sdf_hybrid_urdf.is_file():
         NAME_TO_OBJECT[f"{key}_sdf_hybrid"] = Object(
             urdf_path=sdf_hybrid_urdf, scale=scale, need_vhacd=False,
+        )
+    # Physically-matched-mass siblings: explicit <mass>+<inertia> from
+    # measured part mass (Isaac silently ignores URDF <density>).
+    matched_coacd = part_dir / "coacd" / f"{part_name}_matchedmass_coacd.urdf"
+    if matched_coacd.is_file():
+        NAME_TO_OBJECT[f"{key}_matchedmass_coacd"] = Object(
+            urdf_path=matched_coacd, scale=scale, need_vhacd=False,
+        )
+    matched_sdf_hybrid = part_dir / "sdf_hybrid" / f"{part_name}_matchedmass_sdf_hybrid.urdf"
+    if matched_sdf_hybrid.is_file():
+        NAME_TO_OBJECT[f"{key}_matchedmass_sdf_hybrid"] = Object(
+            urdf_path=matched_sdf_hybrid, scale=scale, need_vhacd=False,
         )
 
 
