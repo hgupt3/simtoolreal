@@ -346,7 +346,7 @@ print('FoundationPose imports ok')
 
 ## 5. ZED SDK + `pyzed` (FoundationPose camera input)
 
-`pyzed` is only used by `third_party/FoundationPose/live_tracking_with_ros.py`. **Stereolabs's `pyzed` is NOT on PyPI** — the PyPI package by that name is unrelated and lacks the `.sl` submodule. The real wrapper ships *inside the ZED SDK installer*.
+`pyzed` is used by the two live tracking scripts under `third_party/FoundationPose/` (`live_tracking_zed_depth.py` and `live_tracking_fast_fs.py`). **Stereolabs's `pyzed` is NOT on PyPI** — the PyPI package by that name is unrelated and lacks the `.sl` submodule. The real wrapper ships *inside the ZED SDK installer*.
 
 ### 5a. Install the ZED SDK (system-wide, requires sudo)
 
@@ -375,20 +375,74 @@ The script fetches a wheel matching the active Python interpreter (3.11 here) an
 
 If you see `ModuleNotFoundError: No module named 'pyzed.sl'`, you installed the PyPI squatter — uninstall (`uv pip uninstall pyzed`) and rerun `get_python_api.py`.
 
-## 6. Run FoundationPose live tracking + ROS publishing
+## 6. Run FoundationPose live tracking
 
-Once §1–§5 are in place:
+Two entry points share the same FoundationPose pipeline; they differ only in
+where depth comes from:
+
+| script                       | depth source                                                         |
+|------------------------------|----------------------------------------------------------------------|
+| `live_tracking_zed_depth.py` | ZED SDK neural depth (`sl.DEPTH_MODE.NEURAL`)                        |
+| `live_tracking_fast_fs.py`   | Fast-FoundationStereo on the ZED's left+right rectified RGB (§2)     |
+
+Both accept `--ros` as an optional flag. Without it, the script just runs the
+FoundationPose pipeline (debug overlays via `--debug 1`); useful for bring-up
+without a ROS master. Pass `--ros` to publish `PoseStamped` on the topics
+listed below.
+
+### 6a. ZED depth
 
 ```bash
-# Local roscore (or set ROS_MASTER_URI to a remote one).
+# Optional: ROS master on this host, or point at an existing one.
 .venv_isaacsim/bin/rosmaster --core -p 11311 &
 export ROS_MASTER_URI=http://localhost:11311
 
-.venv_isaacsim/bin/python third_party/FoundationPose/live_tracking_with_ros.py \
+.venv_isaacsim/bin/python third_party/FoundationPose/live_tracking_zed_depth.py \
     --mesh_path /path/to/object.obj \
     --serial_number 15107 \
-    --fps 40
+    --fps 40 \
+    --ros
 ```
+
+### 6b. Fast-FoundationStereo depth
+
+Requires the Fast-FS weights from §2b. Fast-FS runs at 384×224 (the size the
+TRT engine recipe is built for; depth is upsampled to `--width × --height`
+for FoundationPose). Two backends:
+
+**PyTorch path** (slower, ~27 ms / forward on RTX 6000 Ada):
+```bash
+.venv_isaacsim/bin/python third_party/FoundationPose/live_tracking_fast_fs.py \
+    --mesh_path /path/to/object.obj \
+    --serial_number 15107 \
+    --fps 40 \
+    --ros
+```
+
+**TRT path** (~4 ms / forward — recommended; requires engines built per §2c):
+```bash
+.venv_isaacsim/bin/python third_party/FoundationPose/live_tracking_fast_fs.py \
+    --mesh_path /path/to/object.obj \
+    --serial_number 15107 \
+    --fps 40 --ros \
+    --fast_fs_trt_dir third_party/Fast-FoundationStereo/weights/23-36-37/onnx_384x224_iters4 \
+    --track_refine_iter 1
+```
+
+`--fast_fs_trt_dir` must contain `feature_runner.engine`, `post_runner.engine`,
+and `onnx.yaml`. With TRT enabled, `--fast_fs_width`, `--fast_fs_height`, and
+`--fast_fs_iters` are ignored (engine bakes them in). Drop
+`--track_refine_iter` to 1 to push the combined pipeline above 30 Hz; see
+the table below for measured budgets.
+
+Measured throughput on RTX 6000 Ada at 384×224 (synthetic inputs):
+
+| config                            | per-frame | rate    |
+|-----------------------------------|-----------|---------|
+| FP iter=1 + TRT FS 4-iter         | 20.6 ms   | 48.5 Hz |
+| FP iter=2 + TRT FS 4-iter         | 34.3 ms   | 29.1 Hz |
+| FP iter=1 + PyTorch FS            | 43.2 ms   | 23.1 Hz |
+| FP iter=2 + PyTorch FS            | 56.9 ms   | 17.6 Hz |
 
 On the first frame an OpenCV window opens for SAM bounding-box selection — click 4 corners around the object; FoundationPose registers the initial pose and tracks from there.
 
