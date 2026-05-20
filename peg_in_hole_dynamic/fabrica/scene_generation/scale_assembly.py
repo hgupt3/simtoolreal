@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 ASSETS_DIR = REPO_ROOT / "assets" / "urdf" / "fabrica"
 
 

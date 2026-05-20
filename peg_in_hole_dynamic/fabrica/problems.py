@@ -53,7 +53,7 @@ def _assembled_pose(transforms: dict, part_id: str
     )
 
 
-def _register_assembly_problems(assembly: str) -> None:
+def _register_assembly_problems(assembly: str, pre_insert_offset: float = 0.025) -> None:
     transforms_path = _FABRICA_DIR / assembly / "canonical_transforms.json"
     order_path = _FABRICA_DIR / assembly / "assembly_order.json"
     if not transforms_path.is_file() or not order_path.is_file():
@@ -139,10 +139,10 @@ def _register_assembly_problems(assembly: str) -> None:
             insertion_object_name=f"{assembly}_{inserter_id}_coacd",
             receptive_urdf=receptive_rel,
             insert_pose_rel_receptive=make_pre_insert_sequence(
-                pose_ins, pre_insert_offset=0.025
+                pose_ins, pre_insert_offset=pre_insert_offset
             ),
             hole_z_offset=0.0,
-            pre_insert_offset=0.025,
+            pre_insert_offset=pre_insert_offset,
         )
 
         # Optional hybrid sibling — registered only when both the receiver
@@ -158,11 +158,15 @@ def _register_assembly_problems(assembly: str) -> None:
                 insertion_object_name=hybrid_obj_key,
                 receptive_urdf=hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix(),
                 insert_pose_rel_receptive=make_pre_insert_sequence(
-                    pose_ins, pre_insert_offset=0.025
+                    pose_ins, pre_insert_offset=pre_insert_offset
                 ),
                 hole_z_offset=0.0,
-                pre_insert_offset=0.025,
+                pre_insert_offset=pre_insert_offset,
             )
 
 
 _register_assembly_problems("beam_2x")
+# beam_3x pillars / caps are 1.5x larger than beam_2x's, so the tip SDF
+# (TIP_HEIGHT_M in beam_3x_problem_setup) and the pre-insert clearance both
+# scale by 1.5x: 0.025 m -> 0.0375 m.
+_register_assembly_problems("beam_3x", pre_insert_offset=0.0375)
