@@ -123,25 +123,28 @@ def _load_sim_results(path: Path, *, prefer_filtered: bool = True) -> dict:
 # ----------------------------------------------------------------------------
 # Layout constants (all in figure-relative coordinates unless noted)
 # ----------------------------------------------------------------------------
-FIG_W_IN = 7.8
-FIG_H_IN = 4.2
+FIG_W_IN = 9.5
+FIG_H_IN = 3.7
 
-LEFT_X0, LEFT_X1 = 0.05, 0.66
-RIGHT_X0, RIGHT_X1 = 0.74, 0.95
+# Left panel width is tuned so the cells come out roughly square at the same
+# vertical extent as the right plots' axes boxes (1.27 in tall). Right panel
+# is unchanged.
+LEFT_X0, LEFT_X1 = 0.05, 0.74
+RIGHT_X0, RIGHT_X1 = 0.82, 0.99
 
-HEADER_TOP = 0.92  # column-header row top (no panel-label above)
+# Image cell grid is aligned vertically with the right axes boxes (top=0.87,
+# bottom=0.13), so the two halves of the figure read as a single horizontal
+# band. Column headers ("Hole", "Play-only", "Play2Win") sit above the cells
+# in their own strip, analogous to how the legend rides above the right plots.
+CELL_TOP = 0.87
+CELL_BOTTOM = 0.13
+HEADER_TOP = 0.95
+HEADER_BOTTOM = 0.88
 
-# Image grid fills the full left-panel height to match the right plot column.
-# Cells are portrait (taller than wide); panel heights between (a) and (b)
-# match so the figure reads as visually balanced. The leftmost tolerance-
-# label column is dropped — the 2 mm / 0.5 mm dimension is conveyed by the
-# hole-image renders themselves.
-HEADER_ROW_WEIGHT = 0.22
-CELL_ROW_WEIGHT = 1.0
-CELL_COL_WEIGHT = 1.0
-INTRA_ROW_GAP = 0.15
-INTRA_COL_GAP = 0.12
-GRID_BOTTOM = 0.13
+# Tighter intra-grid gaps reduce inter-cell whitespace.
+INTRA_ROW_GAP = 0.10
+INTRA_COL_GAP = 0.10
+GRID_BOTTOM = CELL_BOTTOM
 
 
 _X_TICKS = [40.0, 20.0, 10.0, 4.0, 2.0, 1.0, 0.4, 0.2]
@@ -187,10 +190,11 @@ def _plot_success_rate(ax: plt.Axes, sim_results: dict) -> None:
             zorder=3,
         )
 
+    ax.set_title("Success Rate (Sim)", fontsize=11, fontweight="bold", pad=4)
     ax.set_ylabel("Success rate (%)")
     ax.set_ylim(0.0, 104.0)
     ax.set_yticks([0, 50, 100])
-    _style_tolerance_axis(ax, all_tols, show_xlabel=False)
+    _style_tolerance_axis(ax, all_tols, show_xlabel=True)
     style_axis(ax)
 
 
@@ -220,6 +224,7 @@ def _plot_throughput_line(ax: plt.Axes, sim_results: dict) -> None:
             zorder=3,
         )
 
+    ax.set_title("Throughput (Sim)", fontsize=11, fontweight="bold", pad=4)
     ax.set_ylabel("Successes / min")
     y_max = float(all_thr.max()) if all_thr.size else 1.0
     # Nudge the top so the highest marker isn't flush with the spine; choose a
@@ -268,15 +273,25 @@ def _draw_image_cell(
 
 
 def _build_left_panel(fig: plt.Figure) -> None:
-    grid = fig.add_gridspec(
-        3,
+    # Separate gridspecs for headers vs cells so the cell grid can be
+    # pinned to the right plots' vertical extent without the header strip
+    # eating into that range.
+    header_grid = fig.add_gridspec(
+        1,
         5,
         left=LEFT_X0,
         right=LEFT_X1,
         top=HEADER_TOP,
-        bottom=GRID_BOTTOM,
-        height_ratios=[HEADER_ROW_WEIGHT, CELL_ROW_WEIGHT, CELL_ROW_WEIGHT],
-        width_ratios=[CELL_COL_WEIGHT] * 5,
+        bottom=HEADER_BOTTOM,
+        wspace=INTRA_COL_GAP,
+    )
+    cell_grid = fig.add_gridspec(
+        2,
+        5,
+        left=LEFT_X0,
+        right=LEFT_X1,
+        top=CELL_TOP,
+        bottom=CELL_BOTTOM,
         hspace=INTRA_ROW_GAP,
         wspace=INTRA_COL_GAP,
     )
@@ -287,13 +302,13 @@ def _build_left_panel(fig: plt.Figure) -> None:
         (3, 5, "Play2Win", METHOD_COLOR["Play2Win"]),
     ]
     for col_start, col_end, title, color in headers:
-        ax = fig.add_subplot(grid[0, col_start:col_end])
+        ax = fig.add_subplot(header_grid[0, col_start:col_end])
         ax.axis("off")
-        ax.text(0.5, 0.5, title, ha="center", va="center",
+        ax.text(0.5, 0.4, title, ha="center", va="center",
                 fontsize=13, fontweight="bold", color=color)
 
-    for row_idx, (_label, suffix) in enumerate(TOLERANCE_ROWS, start=1):
-        hole_ax = fig.add_subplot(grid[row_idx, 0])
+    for row_idx, (_label, suffix) in enumerate(TOLERANCE_ROWS):
+        hole_ax = fig.add_subplot(cell_grid[row_idx, 0])
         # Hole cells: show the placeholder image (it carries the tolerance label
         # baked into the render); real hole-CAD images can drop in unchanged.
         _draw_image_cell(
@@ -309,7 +324,7 @@ def _build_left_panel(fig: plt.Figure) -> None:
             (4, "play2win", "Play2Win", "2"),
         ]
         for col, file_prefix, method, _image_label in policy_specs:
-            ax = fig.add_subplot(grid[row_idx, col])
+            ax = fig.add_subplot(cell_grid[row_idx, col])
             # Policy cells: clean tinted background until real workspace photos
             # are added. Avoids the placeholder PNG's baked-in text overlapping
             # the cell. Flip ``show_placeholder_image=True`` once real renders
@@ -328,9 +343,13 @@ def _build_right_panel(fig: plt.Figure) -> tuple[plt.Axes, plt.Axes]:
         1,
         left=RIGHT_X0,
         right=RIGHT_X1,
-        top=HEADER_TOP - 0.07,
+        # Top of the gridspec sits below the legend with breathing room.
+        # Vertical stack from figure top down: legend (y≈0.96) → gap →
+        # title (above the top plot) → top plot.
+        top=0.87,
         bottom=GRID_BOTTOM,
-        hspace=0.85,
+        # Gap now only holds: top plot's x-axis ticks + label + bottom title.
+        hspace=0.7,
     )
     sim_ax = fig.add_subplot(grid[0, 0])
     throughput_ax = fig.add_subplot(grid[1, 0])
@@ -413,13 +432,42 @@ def main() -> None:
     sim_results = _load_sim_results(INPUT_DIR / "sim_results.json")
     _plot_success_rate(sim_ax, sim_results)
     _plot_throughput_line(throughput_ax, sim_results)
+    # Align the two y-axis labels — without this, "Success rate (%)" sits
+    # further left than "Successes / min" because the y-tick numbers "100"
+    # are wider than "20".
+    fig.align_ylabels([sim_ax, throughput_ax])
 
+    # Divider between the qualitative section (left, image grid) and the
+    # quantitative section (right, sim plots). Sits just past the right
+    # edge of the image grid (LEFT_X1) so it lands to the LEFT of the right
+    # plots' y-axis labels and tick labels (which live in [LEFT_X1, RIGHT_X0]).
+    _div_x = LEFT_X1 + 0.003
+    # Y-extent is symmetric about the figure center so the divider has equal
+    # padding from the topmost and bottommost edges of the saved PNG.
+    # bbox_inches="tight" pads pad_inches on each side equally, so as long as
+    # the line is the topmost/bottommost figure-edge artist (or matches the
+    # outermost ink on both sides), the visible top/bottom padding matches.
+    _div_pad = 0.02
+    fig.add_artist(
+        plt.Line2D(
+            [_div_x, _div_x],
+            [_div_pad, 1.0 - _div_pad],
+            transform=fig.transFigure,
+            color="#888888",
+            linestyle="-",
+            linewidth=1.2,
+        )
+    )
+
+    # Legend sits at the very top of the right column, above the top plot's
+    # "Success Rate (Sim)" title. HEADER_TOP - 0.025 leaves a small padding
+    # above the legend and keeps it inside the figure bounds.
     handles, labels = sim_ax.get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
         loc="center",
-        bbox_to_anchor=(0.5 * (RIGHT_X0 + RIGHT_X1), HEADER_TOP - 0.03),
+        bbox_to_anchor=(0.5 * (RIGHT_X0 + RIGHT_X1) - 0.015, 0.96),
         ncol=2,
         frameon=False,
         handlelength=1.4,
@@ -438,7 +486,7 @@ def main() -> None:
         OUT_PATH,
         dpi=600,
         bbox_inches="tight",
-        pad_inches=0.18,
+        pad_inches=0.02,
         facecolor="white",
         edgecolor="none",
     )
