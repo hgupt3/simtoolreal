@@ -1,8 +1,8 @@
 # https://github.com/mikedh/trimesh
 
 newmtl material_0
-Ka 0.40000000 0.40000000 0.40000000
-Kd 0.81960784 0.12156863 0.12156863
+Ka 0.1514 0.0361 0.0243
+Kd 0.7569 0.1804 0.1216
 Ks 0.40000000 0.40000000 0.40000000
 Ns 1.00000000
 map_Kd fabrica_pillar.png
