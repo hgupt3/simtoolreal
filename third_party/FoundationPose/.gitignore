@@ -13,3 +13,4 @@ weights/*
 # Local outputs from live_tracking / debug runs
 live_tracking_results/
 debug/
+videos/
