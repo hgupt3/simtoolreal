@@ -13,7 +13,7 @@ Reads:
     outputs/fig2_panel_bcd/panel_b_curves.json
 
 Writes:
-    outputs/fig2_panel_bcd/panel_b_draft.png
+    plot_figures/fig2/outputs/panel_b_draft.png
 """
 
 import json
@@ -24,7 +24,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[2]
-OUT = REPO / "outputs" / "fig2_panel_bcd"
+DATA_DIR = REPO / "outputs" / "fig2_panel_bcd"
+OUT = REPO / "plot_figures" / "fig2" / "outputs"
 
 LABELS = {
     "Play2Win":           ("Play2Win",                "#2C7BB6"),
@@ -36,7 +37,7 @@ LW = 1.5
 
 
 def main():
-    curves = json.load(open(OUT / "panel_b_curves.json"))
+    curves = json.load(open(DATA_DIR / "panel_b_curves.json"))
     target_ratio = curves["Scratch_multistage"][-1][1]
     x_cross = next(t for t, s in curves["Play2Win"] if s >= target_ratio)
     speedup = curves["Scratch_multistage"][-1][0] / x_cross

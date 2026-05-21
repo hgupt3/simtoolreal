@@ -12,7 +12,7 @@ Reads (per method, per force scale):
     outputs/fig2_panel_bcd/panel_c_{play2win,scratch_multistage}_fs{N}.json
 
 Writes:
-    outputs/fig2_panel_bcd/panel_c_draft.png
+    plot_figures/fig2/outputs/panel_c_draft.png
 """
 
 import json
@@ -24,7 +24,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO = Path(__file__).resolve().parents[2]
-OUT = REPO / "outputs" / "fig2_panel_bcd"
+DATA_DIR = REPO / "outputs" / "fig2_panel_bcd"
+OUT = REPO / "plot_figures" / "fig2" / "outputs"
 
 LABELS = {
     "play2win":           ("Play2Win",                "#2C7BB6"),
@@ -35,7 +36,7 @@ LABELS = {
 def load_curve(method):
     pts = []
     for p in sorted(
-        OUT.glob(f"panel_c_{method}_fs*.json"),
+        DATA_DIR.glob(f"panel_c_{method}_fs*.json"),
         key=lambda q: int(re.search(r"fs(\d+)", q.stem).group(1)),
     ):
         d = json.load(open(p))

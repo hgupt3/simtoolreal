@@ -29,7 +29,8 @@ from matplotlib import gridspec
 from matplotlib.patches import Rectangle
 
 REPO = Path(__file__).resolve().parents[2]
-OUT = REPO / "outputs" / "fig2_panel_bcd"
+DATA_DIR = REPO / "outputs" / "fig2_panel_bcd"
+OUT = REPO / "plot_figures" / "fig2" / "outputs"
 
 COLORS = {
     "Play2Win": "#2C7BB6",
@@ -53,7 +54,7 @@ LABEL_PC = {
 def load_panel_c(method):
     pts = []
     for p in sorted(
-        OUT.glob(f"panel_c_{method}_fs*.json"),
+        DATA_DIR.glob(f"panel_c_{method}_fs*.json"),
         key=lambda q: int(re.search(r"fs(\d+)", q.stem).group(1)),
     ):
         d = json.load(open(p))
@@ -64,8 +65,8 @@ def load_panel_c(method):
 
 
 def main():
-    panel_a = json.load(open(OUT / "panel_a_curves.json"))
-    panel_b = json.load(open(OUT / "panel_b_curves.json"))
+    panel_a = json.load(open(DATA_DIR / "panel_a_curves.json"))
+    panel_b = json.load(open(DATA_DIR / "panel_b_curves.json"))
 
     fig = plt.figure(figsize=(7.2, 5.6))
     outer = gridspec.GridSpec(
