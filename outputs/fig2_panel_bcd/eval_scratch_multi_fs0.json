@@ -1,0 +1,15 @@
+{
+  "ckpt_dir": "train_dir/PEG_IN_HOLE_TRAINING/peg_fixtured_from_scratch/peg_fixtured_dense_scratch_2026-04-28_23-50-46/runs/00_peg_fixtured_dense_scratch_2026-04-28_23-50-46",
+  "num_envs": 128,
+  "max_steps": 600,
+  "force_scales": [
+    0.0
+  ],
+  "results": {
+    "0.0": {
+      "success_rate": 0.0,
+      "success_count": 0,
+      "num_envs": 128
+    }
+  }
+}

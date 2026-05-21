@@ -1,0 +1,19 @@
+{
+  "ckpt_dir": "/share/portal/kk837/depthbasedRL/hardware_rollouts/May01_pegInHole_fixtured/peg_fixtured_dense_scratch",
+  "num_envs": 128,
+  "max_steps": 600,
+  "goal_mode": "dense",
+  "scene_idx": 0,
+  "peg_idx": 0,
+  "tol_slot_idx": 0,
+  "force_scales": [
+    5.0
+  ],
+  "results": {
+    "5.0": {
+      "success_rate": 0.828125,
+      "success_count": 106,
+      "num_envs": 128
+    }
+  }
+}

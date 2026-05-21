@@ -1,0 +1,9 @@
+{"label": "scratch_multistage", "ckpt_dir": "/share/portal/kk837/depthbasedRL/hardware_rollouts/May01_pegInHole_fixtured/peg_fixtured_dense_scratch", "goal_mode": "dense", "per_force": {
+  "0": null
+,  "1": null
+,  "2": null
+,  "4": null
+,  "6": null
+,  "8": null
+,  "10": null
+}}

@@ -1,0 +1,2 @@
+{"label": "play2win", "ckpt_dir": "/share/portal/kk837/depthbasedRL/hardware_rollouts/May01_pegInHole_fixtured/peg_fixtured_preinsfinal_pretrained", "goal_mode": "preInsertAndFinal", "per_force": {
+  "0": {"success_rate": 1.0, "success_count": 128, "num_envs": 128}
