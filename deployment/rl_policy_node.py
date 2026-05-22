@@ -1,11 +1,19 @@
 #!/usr/bin/env python
 
+import sys
+
+from pathlib import Path
+root_dir = Path(__file__).parent.parent
+print(f"Adding {root_dir} to path")
+sys.path.insert(0, str(root_dir))
+
 import copy
 import datetime
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional, Tuple
+
 
 import numpy as np
 import rospy
@@ -17,9 +25,11 @@ from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import JointState
 from termcolor import colored
 
-from dextoolbench.objects import (
-    NAME_TO_OBJECT,
-)
+# from dextoolbench.objects import (
+#     NAME_TO_OBJECT,
+# )
+
+from peg_in_hole_dynamic.fabrica.objects import NAME_TO_OBJECT
 from isaacgymenvs.utils.observation_action_utils_sharpa import (
     Q_LOWER_LIMITS_restricted_np as Q_LOWER_LIMITS_np,
 )
@@ -1457,7 +1467,8 @@ class RLPolicyNodeArgs:
 def main():
     args: RLPolicyNodeArgs = tyro.cli(RLPolicyNodeArgs)
 
-    config_path = args.policy_path / "config.yaml"
+    # config_path = args.policy_path / "config.yaml"
+    config_path = Path("/juno/u/kedia/depthbasedRL/pretrained_policy/config.yaml")
     checkpoint_path = args.policy_path / "model.pth"
     assert config_path.exists(), f"Config path not found: {config_path}"
     assert checkpoint_path.exists(), f"Checkpoint path not found: {checkpoint_path}"

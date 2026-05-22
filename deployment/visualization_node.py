@@ -1,6 +1,12 @@
 #!/usr/bin/env python
 
 from __future__ import annotations
+import sys
+
+from pathlib import Path
+root_dir = Path(__file__).parent.parent
+print(f"Adding {root_dir} to path")
+sys.path.insert(0, str(root_dir))
 
 import time
 from dataclasses import dataclass
@@ -282,7 +288,8 @@ class VisualizationNode:
 
         # Load the object mesh
         FAR_AWAY_OBJECT_POSITION = np.ones(3)
-        from dextoolbench.objects import NAME_TO_OBJECT
+        # from dextoolbench.objects import NAME_TO_OBJECT
+        from peg_in_hole_dynamic.fabrica.objects import NAME_TO_OBJECT
 
         object_urdf = NAME_TO_OBJECT[object_name].urdf_path
         goal_object_urdf = object_urdf

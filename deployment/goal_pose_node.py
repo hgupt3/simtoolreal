@@ -301,6 +301,40 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
+    OVERWRITE = True
+    if OVERWRITE:
+# header: 
+#   seq: 5187
+#   stamp: 
+#     secs: 1779411367
+#     nsecs: 892217874
+#   frame_id: "robot_frame"
+# pose: 
+#   position: 
+#     x: -0.135109180002013
+#     y: -0.8024520397556991
+#     z: 0.7497952765966722
+#   orientation: 
+#     x: 0.4848967734996167
+#     y: 0.5206709941845085
+#     z: 0.5061193434414826
+#     w: 0.4874628653127735
+        # x, y, z, qx, qy, qz, qw
+        insert_pose = np.array([
+            -0.135109180002013,
+            -0.8024520397556991,
+            0.7497952765966722,
+            0.4848967734996167,
+            0.5206709941845085,
+            0.5061193434414826,
+            0.4874628653127735,
+        ])
+        preinsert_pose = insert_pose.copy()
+        print("OVERWRITING GOAL POSES WITH INSERT POSE")
+        DZ = 0.0375
+        preinsert_pose[2] += DZ
+        goal_poses_robot_frame = [preinsert_pose.tolist(), insert_pose.tolist()]
+
     try:
         # Create and run the GoalPoseNode
         node = GoalPoseNode(
