@@ -24,7 +24,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from dextoolbench.objects import NAME_TO_OBJECT
-from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem
+from peg_in_hole_dynamic import (
+    PROBLEM_REGISTRY,
+    Problem,
+    make_transport_pre_insert_sequence,
+)
 
 _LOG = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +95,7 @@ def _register_problem_variant(
     receptive_urdf: str,
     insert_poses,
     hole_z_offset: float,
+    prelude_lift_offset: float = 0.0,
 ) -> None:
     PROBLEM_REGISTRY[name] = Problem(
         name=name,
@@ -101,6 +106,7 @@ def _register_problem_variant(
         # One 25 mm thread/tenon length: with insertion_direction=(0,0,-1),
         # the pre-insert pose starts with the threaded tip at the hole entrance.
         pre_insert_offset=ONE_LEG_PRE_INSERT_OFFSET_M,
+        prelude_lift_offset=prelude_lift_offset,
     )
 
 
@@ -189,6 +195,14 @@ def _register_one_leg(
     super_dense_waypoints = _one_leg_super_dense_insert_waypoints(final_pose)
     semi_dense_waypoints = _one_leg_semi_dense_insert_waypoints(final_pose)
     sparse_waypoints = (dense_waypoints[0], dense_waypoints[-1])
+    # dense_traj: 3 hole-frame waypoints (transport_above, pre_insert, final)
+    # paired at problem-config time with a 0.20 m per-episode prelude
+    # (lift-in-place + over-hole) that the env constructs at reset.
+    dense_traj_waypoints = make_transport_pre_insert_sequence(
+        final_pose,
+        pre_insert_offset=ONE_LEG_PRE_INSERT_OFFSET_M,
+        transport_offset=0.10,
+    )
 
     base_name = f"furniture_bench.one_leg{problem_suffix}"
     if has_coacd:
@@ -268,6 +282,16 @@ def _register_one_leg(
                 insert_poses=insert_poses,
                 hole_z_offset=hole_z_offset,
             )
+        # dense_traj: 3 hole-frame waypoints + 0.20 m per-episode prelude
+        # constructed by the env at reset time.
+        _register_problem_variant(
+            name=f"{matched_sdfh_base}_dense_traj",
+            insertion_object_name=matched_sdfh_key,
+            receptive_urdf=hybrid_recv_rel,
+            insert_poses=dense_traj_waypoints,
+            hole_z_offset=hole_z_offset,
+            prelude_lift_offset=0.20,
+        )
 
 
 _register_one_leg()

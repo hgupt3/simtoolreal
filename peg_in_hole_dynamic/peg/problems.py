@@ -8,7 +8,12 @@ receptive (hole) URDF differs.
 
 from pathlib import Path
 
-from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem, make_pre_insert_sequence
+from peg_in_hole_dynamic import (
+    PROBLEM_REGISTRY,
+    Problem,
+    make_pre_insert_sequence,
+    make_transport_pre_insert_sequence,
+)
 
 
 # Canonical pose: peg handle center 13.6 cm above hole base, body +X
@@ -76,6 +81,7 @@ def _register_all() -> None:
         # 57.8 g / L-shape-inertia parameters.
         for prefix, object_name in (
             ("peg", "peg"),
+            ("peg_matchedmass", "peg_matchedmass"),
             ("Lpeg", "lpeg"),
             ("Lpeg_matchedmass", "lpeg_matchedmass"),
         ):
@@ -113,6 +119,22 @@ def _register_all() -> None:
                 insert_pose_rel_receptive=_playnatural_insert_sequence(
                     _PEG_INSERT_POSE, pre_insert_offsets_m=(0.15, 0.05),
                 ),
+            )
+            # dense_traj variant: 3 hole-frame waypoints (transport_above,
+            # pre_insert, final) paired with a per-episode prelude
+            # (lift-in-place + over-hole) constructed by the env at reset.
+            dense_traj_name = f"{prefix}_dense_traj.{tag}"
+            PROBLEM_REGISTRY[dense_traj_name] = Problem(
+                name=dense_traj_name,
+                insertion_object_name=object_name,
+                receptive_urdf=urdf_rel,
+                insert_pose_rel_receptive=make_transport_pre_insert_sequence(
+                    _PEG_INSERT_POSE,
+                    pre_insert_offset=0.05,
+                    transport_offset=0.10,
+                ),
+                pre_insert_offset=0.05,
+                prelude_lift_offset=0.20,
             )
 
 

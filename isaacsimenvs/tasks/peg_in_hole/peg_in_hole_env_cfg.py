@@ -12,7 +12,11 @@ from isaacsimenvs.tasks.simtoolreal.simtoolreal_env_cfg import (
 )
 
 
-VALID_GOAL_MODES = ("preInsertAndFinal", "finalGoalOnly")
+VALID_GOAL_MODES = (
+    "preInsertAndFinal",
+    "finalGoalOnly",
+    "transportPreInsertFinal",
+)
 
 
 @configclass
@@ -54,6 +58,12 @@ class PegInHoleCfg:
     retract_distance_threshold: float = 0.1
     retract_success_bonus: float = 1000.0
     retract_success_tolerance: float = 0.005
+
+    # When True, the lift_rew / lift_bonus terms apply to insertion-only envs
+    # (not only random-goal envs). Used by dense-trajectory experiments where
+    # the policy needs explicit Z-progress shaping during the lift-in-place
+    # prelude stage.
+    force_lift_reward_active: bool = False
 
 
 def _default_peg_in_hole_sim_cfg() -> SimulationCfg:

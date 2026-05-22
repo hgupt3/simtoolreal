@@ -133,7 +133,7 @@ class PegInHoleEnv(SimToolRealEnv):
 
         self.env_max_goals = torch.full(
             (self.num_envs,),
-            self._num_insertion_goals,
+            self._num_total_insertion_goals,
             dtype=torch.long,
             device=self.device,
         )
@@ -147,11 +147,22 @@ class PegInHoleEnv(SimToolRealEnv):
                 self.env_max_goals, int(pih_cfg.random_goal_max_successes)
             )
             insertion_max = torch.full_like(
-                self.env_max_goals, self._num_insertion_goals
+                self.env_max_goals, self._num_total_insertion_goals
             )
             self.env_max_goals[:] = torch.where(
                 self.is_random_goal_env, random_goal_max, insertion_max
             )
+
+        # Per-env world-frame prelude waypoints (lift_in_place, over_hole)
+        # rebuilt at every reset for transportPreInsertFinal mode. Stored as
+        # (pos_xyz, quat_wxyz) to match goal_viz convention.
+        self._prelude_pose_world = torch.zeros(
+            self.num_envs,
+            max(self._num_prelude_goals, 1),
+            7,
+            dtype=torch.float32,
+            device=self.device,
+        )
 
         self.prev_episode_env_max_goals = self.env_max_goals.clone()
         self.prev_episode_is_random_goal[:] = self.is_random_goal_env
@@ -183,7 +194,8 @@ class PegInHoleEnv(SimToolRealEnv):
         print(
             f"[PegInHoleEnv] problem={self._pih_problem_name} "
             f"object={cfg.assets.object_name} "
-            f"goals={self._num_insertion_goals} "
+            f"goals={self._num_total_insertion_goals} "
+            f"(prelude={self._num_prelude_goals}, tail={self._num_insertion_goals}) "
             f"goal_mode={pih_cfg.goal_mode} "
             f"random_goal_fraction={random_goal_fraction}",
             flush=True,
@@ -242,6 +254,25 @@ class PegInHoleEnv(SimToolRealEnv):
         self._pih_insert_pose_sequence = tuple(insert_pose_sequence)
         self._num_insertion_goals = len(self._pih_insert_pose_sequence)
 
+        # transportPreInsertFinal prepends two per-episode prelude waypoints
+        # (lift-in-place, over-hole) onto the hole-frame insertion sequence.
+        # The lift height is carried by the Problem (prelude_lift_offset).
+        if pih_cfg.goal_mode == "transportPreInsertFinal":
+            if float(problem.prelude_lift_offset) <= 0.0:
+                raise ValueError(
+                    f"goal_mode='transportPreInsertFinal' requires problem "
+                    f"{problem_name!r} to set prelude_lift_offset > 0; got "
+                    f"{problem.prelude_lift_offset}."
+                )
+            self._num_prelude_goals = 2
+            self._prelude_lift_offset = float(problem.prelude_lift_offset)
+        else:
+            self._num_prelude_goals = 0
+            self._prelude_lift_offset = 0.0
+        self._num_total_insertion_goals = (
+            self._num_insertion_goals + self._num_prelude_goals
+        )
+
         cfg.assets.object_name = problem.insertion_object_name
         cfg.assets.object_urdf = self._pih_object_urdf_abs
         cfg.assets.receptive_urdf = self._pih_receptive_urdf_abs
@@ -251,10 +282,10 @@ class PegInHoleEnv(SimToolRealEnv):
         random_max = int(pih_cfg.random_goal_max_successes)
         if random_goal_fraction > 0.0:
             cfg.termination.max_consecutive_successes = max(
-                self._num_insertion_goals, random_max
+                self._num_total_insertion_goals, random_max
             )
         else:
-            cfg.termination.max_consecutive_successes = self._num_insertion_goals
+            cfg.termination.max_consecutive_successes = self._num_total_insertion_goals
 
     def _setup_scene(self) -> None:
         setup_scene(self)
@@ -276,7 +307,7 @@ class PegInHoleEnv(SimToolRealEnv):
         is_random_goal = self.is_random_goal_env[env_ids]
 
         insertion_max = torch.full(
-            (n,), self._num_insertion_goals, dtype=torch.long, device=self.device
+            (n,), self._num_total_insertion_goals, dtype=torch.long, device=self.device
         )
         random_max = torch.full(
             (n,),
@@ -351,6 +382,34 @@ class PegInHoleEnv(SimToolRealEnv):
         self.retract_succeeded[env_ids] = False
         self._just_entered_retract[env_ids] = False
         self._just_retracted[env_ids] = False
+
+        # Build the per-env world-frame prelude (lift_in_place, over_hole) for
+        # insertion-only envs when goal_mode=transportPreInsertFinal. Both
+        # waypoints share the pre-insert orientation (so the policy reorients
+        # during the lift) and sit at the same height = start_z + lift_offset.
+        if self._num_prelude_goals > 0 and insertion_mask.any():
+            ins_ids = env_ids[insertion_mask]
+            # post-reset peg world position (local to env_origin)
+            start_pos = (
+                self.object.data.root_pos_w[ins_ids]
+                - self.scene.env_origins[ins_ids]
+            )
+            lift_z = start_pos[:, 2] + self._prelude_lift_offset
+            # Pre-insert orientation is the orientation of the first hole-frame
+            # tail waypoint (transport_above / pre_insert / final all share it).
+            tail0_q = self._insert_quat_wxyz[0].unsqueeze(0).expand(ins_ids.numel(), -1)
+            pre_insert_quat_world = quat_mul(self.hole_quat_wxyz[ins_ids], tail0_q)
+            # waypoint 0: lift_in_place — directly above start XY
+            self._prelude_pose_world[ins_ids, 0, 0] = start_pos[:, 0]
+            self._prelude_pose_world[ins_ids, 0, 1] = start_pos[:, 1]
+            self._prelude_pose_world[ins_ids, 0, 2] = lift_z
+            self._prelude_pose_world[ins_ids, 0, 3:7] = pre_insert_quat_world
+            # waypoint 1: over_hole — directly above hole XY, same height
+            self._prelude_pose_world[ins_ids, 1, 0] = self.hole_pos[ins_ids, 0]
+            self._prelude_pose_world[ins_ids, 1, 1] = self.hole_pos[ins_ids, 1]
+            self._prelude_pose_world[ins_ids, 1, 2] = lift_z
+            self._prelude_pose_world[ins_ids, 1, 3:7] = pre_insert_quat_world
+
         self._clear_goal_trackers(env_ids)
         self._write_goal_pose(env_ids, is_first_goal=True)
 
@@ -370,13 +429,38 @@ class PegInHoleEnv(SimToolRealEnv):
             subgoal_idx = (
                 self._successes[ins_ids] % self.env_max_goals[ins_ids]
             ).long()
-            hole_q = self.hole_quat_wxyz[ins_ids]
-            insert_pos = self._insert_pos_rel[subgoal_idx]
-            insert_q = self._insert_quat_wxyz[subgoal_idx]
-            pos_local[insertion_mask] = (
-                self.hole_pos[ins_ids] + quat_apply(hole_q, insert_pos)
+            ins_pos_local = torch.zeros(
+                ins_ids.numel(), 3, dtype=torch.float32, device=self.device
             )
-            quat[insertion_mask] = quat_mul(hole_q, insert_q)
+            ins_quat = torch.zeros(
+                ins_ids.numel(), 4, dtype=torch.float32, device=self.device
+            )
+            ins_quat[:, 0] = 1.0
+
+            # Prelude path: world-frame poses prebuilt at reset.
+            in_prelude = subgoal_idx < self._num_prelude_goals
+            if in_prelude.any():
+                pre_ids = ins_ids[in_prelude]
+                pre_idx = subgoal_idx[in_prelude]
+                pre_pose = self._prelude_pose_world[pre_ids, pre_idx]
+                ins_pos_local[in_prelude] = pre_pose[:, 0:3]
+                ins_quat[in_prelude] = pre_pose[:, 3:7]
+
+            # Tail path: hole-frame poses, transformed by current hole pose.
+            in_tail = ~in_prelude
+            if in_tail.any():
+                tail_ids = ins_ids[in_tail]
+                tail_idx = subgoal_idx[in_tail] - self._num_prelude_goals
+                hole_q = self.hole_quat_wxyz[tail_ids]
+                insert_pos = self._insert_pos_rel[tail_idx]
+                insert_q = self._insert_quat_wxyz[tail_idx]
+                ins_pos_local[in_tail] = (
+                    self.hole_pos[tail_ids] + quat_apply(hole_q, insert_pos)
+                )
+                ins_quat[in_tail] = quat_mul(hole_q, insert_q)
+
+            pos_local[insertion_mask] = ins_pos_local
+            quat[insertion_mask] = ins_quat
 
         if is_random_goal.any():
             rg_ids = env_ids[is_random_goal]
@@ -436,36 +520,63 @@ class PegInHoleEnv(SimToolRealEnv):
         self._near_goal_steps[env_ids] = 0
 
     def _keypoint_success_tolerance_m(self) -> torch.Tensor:
-        fixed_insertion_tol = (
-            self.cfg.peg_in_hole.insertion_success_tolerance
-            * self.cfg.reward.keypoint_scale
-        )
+        pih_cfg = self.cfg.peg_in_hole
+        keypoint_scale = self.cfg.reward.keypoint_scale
+        fixed_insertion_tol = pih_cfg.insertion_success_tolerance * keypoint_scale
+        curriculum_tol = self._current_success_tolerance * keypoint_scale
+
         tol = torch.full(
             (self.num_envs,),
             float(fixed_insertion_tol),
             dtype=torch.float32,
             device=self.device,
         )
-        if float(self.cfg.peg_in_hole.random_goal_fraction) > 0.0:
-            curriculum_tol = (
-                self._current_success_tolerance * self.cfg.reward.keypoint_scale
-            )
+        if float(pih_cfg.random_goal_fraction) > 0.0:
             tol = torch.where(
                 self.is_random_goal_env,
                 torch.full_like(tol, float(curriculum_tol)),
                 tol,
             )
+
+        # In transportPreInsertFinal mode the coarse waypoints (prelude +
+        # transport_above) use the curriculum tolerance (starts at
+        # success_tolerance, shrinks toward target_success_tolerance), while
+        # pre_insert and final keep the tight fixed insertion_success_tolerance.
+        # The number of "coarse" stages is the prelude (2) plus the leading
+        # transport_above pose (1) in the hole-frame tail = 3.
+        if (
+            self._num_prelude_goals > 0
+            and pih_cfg.goal_mode == "transportPreInsertFinal"
+        ):
+            num_coarse = self._num_prelude_goals + 1  # +1 = transport_above
+            subgoal_idx = (self._successes % self.env_max_goals).long()
+            is_coarse = (subgoal_idx < num_coarse) & ~self.is_random_goal_env
+            if is_coarse.any():
+                tol = torch.where(
+                    is_coarse,
+                    torch.full_like(tol, float(curriculum_tol)),
+                    tol,
+                )
         return tol
 
     def _curriculum_eligible_mask(self) -> torch.Tensor | None:
-        if float(self.cfg.peg_in_hole.random_goal_fraction) <= 0.0:
+        pih_cfg = self.cfg.peg_in_hole
+        if pih_cfg.goal_mode == "transportPreInsertFinal":
+            # Drive the curriculum off insertion-only envs in dense-traj mode.
+            return ~self.is_random_goal_env
+        if float(pih_cfg.random_goal_fraction) <= 0.0:
             return None
         return self.is_random_goal_env
 
     def _curriculum_success_threshold(self) -> float | None:
-        if float(self.cfg.peg_in_hole.random_goal_fraction) <= 0.0:
+        pih_cfg = self.cfg.peg_in_hole
+        if pih_cfg.goal_mode == "transportPreInsertFinal":
+            # 5 subgoals; require averaging the 3 coarse waypoints before
+            # we tighten — keeps the curriculum from shrinking on partial lifts.
+            return float(self._num_prelude_goals + 1)
+        if float(pih_cfg.random_goal_fraction) <= 0.0:
             return None
-        return float(self.cfg.peg_in_hole.random_goal_curriculum_success_threshold)
+        return float(pih_cfg.random_goal_curriculum_success_threshold)
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         update_tolerance_curriculum(self)
@@ -562,7 +673,12 @@ class PegInHoleEnv(SimToolRealEnv):
             self.lift_bonus_active = False
 
         if self.lift_bonus_active:
-            lift_mask = self.is_random_goal_env.float()
+            if pih_cfg.force_lift_reward_active:
+                lift_mask = torch.ones(
+                    self.num_envs, dtype=torch.float32, device=self.device
+                )
+            else:
+                lift_mask = self.is_random_goal_env.float()
         else:
             lift_mask = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 

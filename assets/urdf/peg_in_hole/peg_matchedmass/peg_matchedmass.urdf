@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<!--
+  peg variant with PHYSICALLY-MATCHED mass + true T-shape inertia tensor.
+
+  Identical geometry to peg.urdf (same two visuals + colliders for the
+  T-shape: handle + perpendicular head), but:
+    - mass changed from 0.237500 kg -> 0.079000 kg
+      Real 3D-printed peg measured at 79 g (Cornell lab).
+      The original 0.2375 kg assumed solid PLA at 1250 kg/m^3 instead of
+      the as-printed effective density ~416 kg/m^3 for this part.
+    - inertia tensor recomputed as the parallel-axis sum of the two
+      collision boxes about the T-shape's center of mass, with the
+      corrected mass. The original peg.urdf used the handle-only formula
+      (m_total / 12) * (h_y^2+h_z^2, h_x^2+h_z^2, h_x^2+h_y^2), which
+      dropped the head's contribution entirely.
+
+  Derivation (uniform density, vol-weighted mass split):
+    V_h = 0.250 * 0.030 * 0.020 = 1.5e-4   m^3   (handle)
+    V_d = 0.020 * 0.100 * 0.020 = 4.0e-5   m^3   (head)
+    rho_eff = 0.079 / (V_h + V_d) = 415.79  kg/m^3
+    m_h = rho_eff * V_h = 0.062368  kg
+    m_d = rho_eff * V_d = 0.016632  kg
+    CoM = (m_d * 0.115) / m_total = (0.024211, 0, 0) m
+    I_about_CoM = sum_i  I_local_i  +  m_i * (||d_i||^2 I - d_i d_i^T)
+    -> Ixx = 2.117e-05, Iyy = 5.017e-04, Izz = 5.176e-04
+    -> Ixy = Ixz = Iyz = 0 (T-peg is symmetric in y and z)
+
+  Use this URDF (via PROBLEM_REGISTRY["peg_matchedmass.tolXmm"]) to
+  ablation-test whether policies trained on the original (3x too heavy,
+  handle-only inertia) peg generalise to the physically realistic T.
+-->
+<robot name="peg_matchedmass">
+  <material name="peg_red">
+    <color rgba="0.8000 0.1569 0.1569 1.0"/>
+  </material>
+  <link name="peg_matchedmass">
+    <visual>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0 0 0"/>
+      <geometry><box size="0.250000 0.030000 0.020000"/></geometry>
+      <material name="peg_red"/>
+    </visual>
+    <visual>
+      <origin xyz="0.115000 0.000000 0.000000" rpy="0 0 0"/>
+      <geometry><box size="0.020000 0.100000 0.020000"/></geometry>
+      <material name="peg_red"/>
+    </visual>
+    <collision>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0 0 0"/>
+      <geometry><box size="0.250000 0.030000 0.020000"/></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.115000 0.000000 0.000000" rpy="0 0 0"/>
+      <geometry><box size="0.020000 0.100000 0.020000"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.079000"/>
+      <origin xyz="0.024211 0.000000 0.000000" rpy="0 0 0"/>
+      <inertia ixx="2.117e-05" ixy="0" ixz="0" iyy="5.017e-04" iyz="0" izz="5.176e-04"/>
+    </inertial>
+  </link>
+</robot>
