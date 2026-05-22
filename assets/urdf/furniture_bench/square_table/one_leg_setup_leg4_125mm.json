@@ -1,0 +1,34 @@
+{
+  "hole_xy_canonical": [
+    -0.05625,
+    0.05686750000000001
+  ],
+  "hole_xy_size_canonical": [
+    0.010783999999999998,
+    0.009987
+  ],
+  "active_corner_pos_yup_obj": [
+    -0.05625,
+    0.046875,
+    -0.05625
+  ],
+  "active_corner_rpy_yup": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "leg_centroid_in_src": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "pos_canonical_centroid": [
+    -0.05625,
+    0.05686750000000001,
+    0.065625
+  ],
+  "parent_part": "square_table_top",
+  "child_part": "square_table_leg4_125mm",
+  "receptive_urdf": "urdf/furniture_bench/square_table/insertion_fixtures/one_leg.urdf",
+  "_derivation": "pos_canonical_centroid.z = original (0.034375) + (new_half_len 0.075 - original_half_len 0.04375) = 0.065625. Thread tip world-z (= bbox_bottom_z relative to receiver) preserved at -0.009375 m so the same 25 mm of thread engages the same hole."
+}
