@@ -25,7 +25,10 @@ from termcolor import colored
 # from dextoolbench.objects import (
 #     NAME_TO_OBJECT,
 # )
-from fabrica.objects import (
+# from fabrica.objects import (
+#     NAME_TO_OBJECT,
+# )
+from peg_in_hole_dynamic.fmb.objects import (
     NAME_TO_OBJECT,
 )
 # from peg_in_hole.objects import (
@@ -1527,7 +1530,8 @@ class RLPolicyNodeArgs:
 def main():
     args: RLPolicyNodeArgs = tyro.cli(RLPolicyNodeArgs)
 
-    config_path = args.policy_path / "config.yaml"
+    # config_path = args.policy_path / "config.yaml"
+    config_path = Path("/juno/u/kedia/depthbasedRL/pretrained_policy/config.yaml")
     checkpoint_path = args.policy_path / "model.pth"
     assert config_path.exists(), f"Config path not found: {config_path}"
     assert checkpoint_path.exists(), f"Checkpoint path not found: {checkpoint_path}"

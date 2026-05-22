@@ -54,7 +54,13 @@ class RlPlayer:
             "rlgpu", {"env_creator": lambda **kwargs: self, "vecenv_type": "RLGPU"}
         )
 
-        config = self.cfg["train"]
+        if "train" in self.cfg:
+            config = self.cfg["train"]
+        elif "agent" in self.cfg:
+            raise ValueError(f"No train in self.cfg: {self.cfg}")
+            # config = self.cfg["agent"]
+        else:
+            raise ValueError(f"No train or agent in self.cfg: {self.cfg}")
 
         # Do we need this?
         if self.device == "cpu":

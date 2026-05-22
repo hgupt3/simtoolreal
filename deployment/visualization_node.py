@@ -23,7 +23,12 @@ from termcolor import colored
 from viser.extras import ViserUrdf
 
 from dextoolbench.metadata import ALL_OBJECT_NAMES
+from dextoolbench.objects import NAME_TO_OBJECT
 from isaacgymenvs.utils.utils import get_repo_root_dir
+import peg_in_hole.objects  # noqa: F401 - registers peg/peg_L into NAME_TO_OBJECT
+import peg_in_hole_dynamic.fmb.objects  # noqa: F401 - registers FMB objects into NAME_TO_OBJECT
+
+VISUALIZATION_OBJECT_NAMES = sorted(set(ALL_OBJECT_NAMES) | set(NAME_TO_OBJECT))
 
 T_W_R = np.eye(4)
 T_W_R[:3, 3] = np.array([0.0, 0.8, 0.0])
@@ -288,16 +293,12 @@ class VisualizationNode:
 
         # Load the object mesh
         FAR_AWAY_OBJECT_POSITION = np.ones(3)
-        # from dextoolbench.objects import NAME_TO_OBJECT
-        from fabrica.objects import NAME_TO_OBJECT
-        # from peg_in_hole.objects import NAME_TO_OBJECT
 
         if object_name not in NAME_TO_OBJECT:
-            available_object_names = sorted(NAME_TO_OBJECT.keys())
             raise KeyError(
                 "Object name not found in NAME_TO_OBJECT. "
                 f"Searched for: {object_name!r}. "
-                f"Available object names ({len(available_object_names)}): {available_object_names}"
+                f"Available object names ({len(VISUALIZATION_OBJECT_NAMES)}): {VISUALIZATION_OBJECT_NAMES}"
             )
 
         object_urdf = NAME_TO_OBJECT[object_name].urdf_path
@@ -359,6 +360,8 @@ class VisualizationNode:
         """ "Callback to update the current object pose."""
         msg = msg.pose
         xyz = np.array([msg.position.x, msg.position.y, msg.position.z])
+        # HACK: add 0.8 to y psiiton
+        # xyz[1] -= 0.8
         quat_xyzw = np.array(
             [
                 msg.orientation.x,
@@ -476,7 +479,7 @@ class VisualizationNode:
 @dataclass
 class VisualizationNodeArgs:
     object_name: str = "claw_hammer"
-    f"""The name of the object to visualize. Options: {", ".join(ALL_OBJECT_NAMES)}"""
+    f"""The name of the object to visualize. Options: {", ".join(VISUALIZATION_OBJECT_NAMES)}"""
 
 
 def main():

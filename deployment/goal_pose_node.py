@@ -314,7 +314,7 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
-    ONLY_LAST_TWO_GOALS = False
+    ONLY_LAST_TWO_GOALS = True
     if ONLY_LAST_TWO_GOALS:
         goal_poses_robot_frame = goal_poses_robot_frame[-2:]
 
@@ -322,7 +322,7 @@ def main():
     if ONLY_LAST_GOAL:
         goal_poses_robot_frame = [goal_poses_robot_frame[-1]]
 
-    OVERWRITE_WITH_FIXED_GOALS = True
+    OVERWRITE_WITH_FIXED_GOALS = False
     if OVERWRITE_WITH_FIXED_GOALS:
         # Hardcoded goal poses for beam_2x_2
         DZ = 0.025 # 2.5cm up
@@ -372,6 +372,33 @@ def main():
         #     z: -0.48390688127442444
         #     w: 0.5200918921854434
         # ---
+
+        # Hardcoded goal poses for fmb_peg_46
+        # DZ = 0.05 # 5cm up
+        # DZ = 0.1 # 10cm up
+        # goal_poses_robot_frame = [
+        #     # [x, y, z, qx, qy, qz, qw]
+        #     [0.1390772720043013, -0.6913498106166442, 0.6082892190227137 + DZ, 0.5, 0.5, -0.5, 0.5],
+        #     # [0.1390772720043013, -0.6913498106166442, 0.6082892190227137, 0.5, 0.5, -0.5, 0.5],
+        # ]
+        # header: 
+        #   seq: 948
+        #   stamp: 
+        #     secs: 1778119976
+        #     nsecs: 966065168
+        #   frame_id: "robot_frame"
+        # pose: 
+        #   position: 
+        #     x: 0.1390772720043013
+        #     y: -0.6913498106166442
+        #     z: 0.6082892190227137
+        #   orientation: 
+        #     x: 0.45794604135415756
+        #     y: 0.5304030214896714
+        #     z: -0.4800834584256212
+        #     w: 0.5277100822883507
+
+
 
 
 
