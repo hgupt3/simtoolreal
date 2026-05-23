@@ -1,0 +1,10 @@
+# https://github.com/mikedh/trimesh
+
+newmtl material_0
+# Bambu PLA Basic — Ash Gray (filament code 11102), ~#8B8B8B
+Ka 0.1090 0.1090 0.1090
+Kd 0.5451 0.5451 0.5451
+Ks 0.40000000 0.40000000 0.40000000
+Ns 1.00000000
+map_Kd square_table_leg4_125mm.png
+d 1.0
