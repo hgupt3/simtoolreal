@@ -289,8 +289,10 @@ class VisualizationNode:
         # Load the object mesh
         FAR_AWAY_OBJECT_POSITION = np.ones(3)
         # from dextoolbench.objects import NAME_TO_OBJECT
-        from peg_in_hole_dynamic.fabrica.objects import NAME_TO_OBJECT
+        # from peg_in_hole_dynamic.fabrica.objects import NAME_TO_OBJECT
+        from peg_in_hole_dynamic.furniture_bench.objects import NAME_TO_OBJECT
 
+        print(f"NAME_TO_OBJECT: {NAME_TO_OBJECT.keys()}")
         object_urdf = NAME_TO_OBJECT[object_name].urdf_path
         goal_object_urdf = object_urdf
         assert object_urdf.exists(), f"object_urdf does not exist: {object_urdf}"

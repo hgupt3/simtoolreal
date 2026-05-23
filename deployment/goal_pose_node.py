@@ -82,13 +82,6 @@ class GoalPoseNode:
         self.force_fixed_orientation = force_fixed_orientation
         self.current_success_steps = 0
 
-        # Force open loop mode, i.e., do not use the current object pose to update the goal pose, but update it at a fixed rate.
-        if force_open_loop:
-            self.latest_current_object_pose = Pose()
-            self.success_threshold = 10.0
-            self.keypoint_success_threshold = self.success_threshold * KEYPOINT_SCALE
-            self.success_steps = 30
-
         # Goal object pose
         self.goal_object_poses = goal_poses_robot_frame
         N = len(self.goal_object_poses)
@@ -101,6 +94,13 @@ class GoalPoseNode:
 
         # ROS msgs
         self.latest_current_object_pose = None
+
+        # Force open loop mode, i.e., do not use the current object pose to update the goal pose, but update it at a fixed rate.
+        if force_open_loop:
+            self.latest_current_object_pose = Pose()
+            self.success_threshold = 10.0
+            self.keypoint_success_threshold = self.success_threshold * KEYPOINT_SCALE
+            self.success_steps = 30
 
         # Publisher and subscriber
         self.goal_object_pose_pub = rospy.Publisher(
@@ -303,33 +303,61 @@ def main():
 
     OVERWRITE = True
     if OVERWRITE:
-# header: 
-#   seq: 191
-#   stamp: 
-#     secs: 1779412456
-#     nsecs: 322077035
-#   frame_id: "robot_frame"
-# pose: 
-#   position: 
-#     x: -0.18197880779539322
-#     y: -0.8047787093936111
-#     z: 0.7488169399253708
-#   orientation: 
-#     x: 0.5306060338313072
-#     y: -0.46672555275595295
-#     z: -0.46983925155487677
-#     w: 0.5290326766512756
+        # header: 
+        #   seq: 191
+        #   stamp: 
+        #     secs: 1779412456
+        #     nsecs: 322077035
+        #   frame_id: "robot_frame"
+        # pose: 
+        #   position: 
+        #     x: -0.18197880779539322
+        #     y: -0.8047787093936111
+        #     z: 0.7488169399253708
+        #   orientation: 
+        #     x: 0.5306060338313072
+        #     y: -0.46672555275595295
+        #     z: -0.46983925155487677
+        #     w: 0.5290326766512756
 
         # x, y, z, qx, qy, qz, qw
+        # insert_pose = np.array([
+        #     -0.18197880779539322,
+        #     -0.8047787093936111,
+        #     0.7488169399253708,
+        #     0.5306060338313072,
+        #     -0.46672555275595295,
+        #     -0.46983925155487677,
+        #     0.5290326766512756,
+        # ])
+
+        # header: 
+        #   seq: 1089
+        #   stamp: 
+        #     secs: 1779414644
+        #     nsecs: 164042472
+        #   frame_id: "robot_frame"
+        # pose: 
+        #   position: 
+        #     x: -0.1862851520025678
+        #     y: -0.8014339170234643
+        #     z: 0.6483461253694023
+        #   orientation: 
+        #     x: 0.015537815938494006
+        #     y: -0.7100282050990505
+        #     z: 0.01385806860749987
+        #     w: 0.7038653835600607
+        # x, y, z, qx, qy, qz, qw
         insert_pose = np.array([
-            -0.18197880779539322,
-            -0.8047787093936111,
-            0.7488169399253708,
-            0.5306060338313072,
-            -0.46672555275595295,
-            -0.46983925155487677,
-            0.5290326766512756,
+            -0.1862851520025678,
+            -0.8014339170234643,
+            0.6483461253694023,
+            0.015537815938494006,
+            -0.7100282050990505,
+            0.01385806860749987,
+            0.7038653835600607,
         ])
+
         preinsert_pose = insert_pose.copy()
         print("OVERWRITING GOAL POSES WITH INSERT POSE")
         DZ = 0.0375
