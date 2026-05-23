@@ -404,21 +404,62 @@ def main():
         #     y: -0.7041936115962509
         #     z: 0.031532454361913306
         #     w: 0.7083140127941535
+        # insert_pose = np.array([
+        #     -0.1838,
+        #     -0.796,
+        #     0.6505,
+        #     0.0375,
+        #     -0.704,
+        #     0.0315,
+        #     0.708,
+        # ])
+
+        # TEST 1 with leg screwing
+        # header: 
+        #   seq: 8752
+        #   stamp: 
+        #     secs: 1779501688
+        #     nsecs: 144459962
+        #   frame_id: "robot_frame"
+        # pose: 
+        #   position: 
+        #     x: -0.25324025352668666
+        #     y: -0.7569206354400362
+        #     z: 0.6569123475764651
+        #   orientation: 
+        #     x: -0.04211569574017768
+        #     y: -0.712022038003709
+        #     z: -0.01963518912163717
+        #     w: 0.7006178308589661
         insert_pose = np.array([
-            -0.1838,
-            -0.796,
-            0.6505,
-            0.0375,
-            -0.704,
-            0.0315,
-            0.708,
+            -0.2532,
+            -0.7569,
+            0.6569,
+            -0.04,
+            -0.712,
+            -0.019,
+            0.7006,
         ])
 
-        preinsert_pose = insert_pose.copy()
-        print("OVERWRITING GOAL POSES WITH INSERT POSE")
-        DZ = 0.0375
-        preinsert_pose[2] += DZ
-        goal_poses_robot_frame = [preinsert_pose.tolist(), insert_pose.tolist()]
+        goal_mode = "screw"
+        if goal_mode == "preinsert":
+            preinsert_pose = insert_pose.copy()
+            print("OVERWRITING GOAL POSES WITH INSERT POSE")
+            DZ = 0.0375
+            preinsert_pose[2] += DZ
+            goal_poses_robot_frame = [preinsert_pose.tolist(), insert_pose.tolist()]
+        elif goal_mode == "screw":
+            import sys
+
+            from pathlib import Path
+            root_dir = Path(__file__).parent.parent
+            print(f"Adding {root_dir} to path")
+            sys.path.insert(0, str(root_dir))
+            from peg_in_hole_dynamic.furniture_bench.problems import _one_leg_super_dense_insert_waypoints
+            waypoints = np.array(_one_leg_super_dense_insert_waypoints(insert_pose.tolist()))
+            goal_poses_robot_frame = waypoints.tolist()
+        else:
+            raise ValueError("Bad")
 
     try:
         # Create and run the GoalPoseNode

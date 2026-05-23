@@ -16,6 +16,34 @@ from isaacgymenvs.utils.utils import get_repo_root_dir
 from recorded_data import RecordedData
 
 
+OBJECT_SCALES = np.array([0.141, 0.03025, 0.0271]) * 25  # fixed size
+
+def keypoint_distance(
+    pose1_xyzw: np.ndarray, pose2_xyzw: np.ndarray, object_scales: np.ndarray
+) -> float:
+    """Compute the distance between two keypoints."""
+
+    from isaacgymenvs.utils.observation_action_utils_sharpa import (
+        _compute_keypoint_positions,
+    )
+    object_keypoint_positions = _compute_keypoint_positions(
+        pose=pose1_xyzw[None], scales=object_scales[None]
+    )
+    goal_keypoint_positions = _compute_keypoint_positions(
+        pose=pose2_xyzw[None], scales=object_scales[None]
+    )
+    keypoints_rel_goal = object_keypoint_positions - goal_keypoint_positions
+    N_KEYPOINTS = 4
+    N = 1
+    assert keypoints_rel_goal.shape == (N, N_KEYPOINTS, 3), (
+        f"keypoints_rel_goal.shape: {keypoints_rel_goal.shape}, expected: (N, N_KEYPOINTS, 3)"
+    )
+    keypoint_distances_l2 = np.linalg.norm(keypoints_rel_goal, axis=-1).max(axis=-1)
+    return keypoint_distances_l2
+
+
+
+
 def warn(message: str):
     print(colored(message, "yellow"))
 
@@ -27,7 +55,7 @@ GREEN_RGBA = (0, 255, 0, 0.5)
 AXES_LENGTH = 0.2
 AXES_RADIUS = 0.01
 
-DISABLE_AXES = True
+DISABLE_AXES = False
 if DISABLE_AXES:
     AXES_LENGTH = 0.00001
     AXES_RADIUS = 0.00001
@@ -153,7 +181,14 @@ def main():
     assert KUKA_SHARPA_URDF_PATH.exists(), (
         f"KUKA_SHARPA_URDF_PATH not found: {KUKA_SHARPA_URDF_PATH}"
     )
-    from dextoolbench.objects import NAME_TO_OBJECT
+    # from dextoolbench.objects import NAME_TO_OBJECT
+    import sys
+
+    from pathlib import Path
+    root_dir = Path(__file__).parent.parent
+    print(f"Adding {root_dir} to path")
+    sys.path.insert(0, str(root_dir))
+    from peg_in_hole_dynamic.furniture_bench.objects import NAME_TO_OBJECT
 
     if object_name is None and recorded_data.object_name is not None:
         object_name = recorded_data.object_name
@@ -416,6 +451,14 @@ def main():
             goal_frame.wxyz = xyzw_to_wxyz(
                 recorded_data.goal_root_states_array[FRAME_IDX, 3:7]
             )
+            # HACK: Print dist
+            dist = keypoint_distance(
+                pose1_xyzw=object_root_state[:7],
+                pose2_xyzw=recorded_data.goal_root_states_array[FRAME_IDX, :7],
+                object_scales=OBJECT_SCALES,
+            ) / 1.5
+            print(f"dist = {dist}")
+
 
         # Floating hand
         sharpa_joint_pos_viser_order = RecordedData.change_joint_order(
@@ -451,7 +494,7 @@ def main():
             # Keep floating sharpa hand in a fixed position
             sharpa_frame.position = recorded_data.robot_root_states_array[
                 0, :3
-            ] + np.array([-0.5, -0.8, 0.7])
+            ] + np.array([-1.5, -0.8, 0.7])
             # sharpa_frame.wxyz = np.array([1.0, 0.0, 0.0, 0.0])
             sharpa_frame.wxyz = xyzw_to_wxyz(R.from_euler("z", -np.pi / 2).as_quat())
 
