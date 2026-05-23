@@ -431,21 +431,49 @@ def main():
         #     y: -0.712022038003709
         #     z: -0.01963518912163717
         #     w: 0.7006178308589661
+        # insert_pose = np.array([
+        #     -0.2532,
+        #     -0.7569,
+        #     0.6569,
+        #     -0.04,
+        #     -0.712,
+        #     -0.019,
+        #     0.7006,
+        # ])
+
+        # header: 
+        #   seq: 2829
+        #   stamp: 
+        #     secs: 1779563912
+        #     nsecs: 454090356
+        #   frame_id: "robot_frame"
+        # pose: 
+        #   position: 
+        #     x: -0.16388481972907465
+        #     y: -0.8328256692531469
+        #     z: 0.6759608631934267
+        #   orientation: 
+        #     x: 0.0015518093301182703
+        #     y: -0.7049198991835048
+        #     z: 0.010319730097969975
+        #     w: 0.7092101457210166
         insert_pose = np.array([
-            -0.2532,
-            -0.7569,
-            0.6569,
-            -0.04,
-            -0.712,
-            -0.019,
-            0.7006,
+            -0.1638,
+            -0.8328,
+            0.6759,
+            0.0,
+            -0.707,
+            0.0,
+            0.707,
         ])
 
-        goal_mode = "screw"
+        # goal_mode = "screw"
+        goal_mode = "preinsert"
         if goal_mode == "preinsert":
             preinsert_pose = insert_pose.copy()
             print("OVERWRITING GOAL POSES WITH INSERT POSE")
-            DZ = 0.0375
+            # DZ = 0.0375
+            DZ = 0.05
             preinsert_pose[2] += DZ
             goal_poses_robot_frame = [preinsert_pose.tolist(), insert_pose.tolist()]
         elif goal_mode == "screw":
