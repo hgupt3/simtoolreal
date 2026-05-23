@@ -35,7 +35,11 @@ OBJECTS = [
     "fmb_peg_41",
     "fabrica_beam",
     "fabrica_pillar",
+    "beam_3x_part_0",
+    "beam_3x_part_2",
     "square_table_leg4",
+    "square_table_leg4_125mm",
+    "square_table_leg4_200mm",
 ]
 
 TABLE_URDF = REPO_ROOT / "assets" / "urdf" / "table_narrow.urdf"

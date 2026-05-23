@@ -39,6 +39,36 @@ def make_pre_insert_sequence(
     return pre_insert, final
 
 
+def make_transport_pre_insert_sequence(
+    final_pose: Pose7,
+    insertion_direction: Tuple[float, float, float] = (0.0, 0.0, -1.0),
+    pre_insert_offset: float = 0.025,
+    transport_offset: float = 0.10,
+) -> Tuple[Pose7, Pose7, Pose7]:
+    """Hole-frame trajectory tail: transport_above, pre_insert, final."""
+    pre_insert, final = make_pre_insert_sequence(
+        final_pose=final_pose,
+        insertion_direction=insertion_direction,
+        pre_insert_offset=pre_insert_offset,
+    )
+    px, py, pz, qx, qy, qz, qw = pre_insert
+    dx, dy, dz = (float(v) for v in insertion_direction)
+    norm = sqrt(dx * dx + dy * dy + dz * dz)
+    if norm <= 0.0:
+        raise ValueError("insertion_direction must be non-zero")
+    scale = float(transport_offset) / norm
+    transport_above = (
+        px - dx * scale,
+        py - dy * scale,
+        pz - dz * scale,
+        qx,
+        qy,
+        qz,
+        qw,
+    )
+    return transport_above, pre_insert, final
+
+
 @dataclass(frozen=True)
 class Problem:
     """A single insertion problem.
@@ -62,6 +92,10 @@ class Problem:
     hole_z_offset: float = 0.0
     insertion_direction: Tuple[float, float, float] = (0.0, 0.0, -1.0)
     pre_insert_offset: float = 0.05
+    # If set, env constructs a per-episode prelude of [lift_in_place, over_hole]
+    # at this Z lift above the start pose (with pre-insert orientation), prepended
+    # to the hole-frame insertion sequence. Only honored when goal_mode allows it.
+    prelude_lift_offset: float = 0.0
 
     def __post_init__(self) -> None:
         poses = self._normalize_pose_sequence(self.insert_pose_rel_receptive)

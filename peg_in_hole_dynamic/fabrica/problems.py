@@ -26,7 +26,12 @@ from typing import Tuple
 from scipy.spatial.transform import Rotation as R
 
 from dextoolbench.objects import NAME_TO_OBJECT
-from peg_in_hole_dynamic import PROBLEM_REGISTRY, Problem, make_pre_insert_sequence
+from peg_in_hole_dynamic import (
+    PROBLEM_REGISTRY,
+    Problem,
+    make_pre_insert_sequence,
+    make_transport_pre_insert_sequence,
+)
 from peg_in_hole_dynamic.fabrica._pose_utils import write_fixture_urdf
 
 _LOG = logging.getLogger(__name__)
@@ -53,7 +58,12 @@ def _assembled_pose(transforms: dict, part_id: str
     )
 
 
-def _register_assembly_problems(assembly: str, pre_insert_offset: float = 0.025) -> None:
+def _register_assembly_problems(
+    assembly: str,
+    pre_insert_offset: float = 0.025,
+    dense_traj_transport_offset: float = 0.10,
+    dense_traj_prelude_lift_offset: float = 0.20,
+) -> None:
     transforms_path = _FABRICA_DIR / assembly / "canonical_transforms.json"
     order_path = _FABRICA_DIR / assembly / "assembly_order.json"
     if not transforms_path.is_file() or not order_path.is_file():
@@ -187,20 +197,46 @@ def _register_assembly_problems(assembly: str, pre_insert_offset: float = 0.025)
         matched_sdfh_key = f"{assembly}_{inserter_id}_matchedmass_sdf_hybrid"
         if hybrid_recv.is_file() and matched_sdfh_key in NAME_TO_OBJECT:
             matched_sdfh_name = f"{name}_matchedmass_sdf_hybrid"
+            hybrid_recv_rel = hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix()
             PROBLEM_REGISTRY[matched_sdfh_name] = Problem(
                 name=matched_sdfh_name,
                 insertion_object_name=matched_sdfh_key,
-                receptive_urdf=hybrid_recv.relative_to(_REPO_ROOT / "assets").as_posix(),
+                receptive_urdf=hybrid_recv_rel,
                 insert_pose_rel_receptive=make_pre_insert_sequence(
                     pose_ins, pre_insert_offset=pre_insert_offset
                 ),
                 hole_z_offset=0.0,
                 pre_insert_offset=pre_insert_offset,
             )
+            # dense_traj sibling: 3 hole-frame waypoints (transport_above,
+            # pre_insert, final) paired at problem-config time with a per-
+            # episode prelude (lift-in-place + over-hole) that the env
+            # constructs at reset.
+            dense_traj_name = f"{matched_sdfh_name}_dense_traj"
+            PROBLEM_REGISTRY[dense_traj_name] = Problem(
+                name=dense_traj_name,
+                insertion_object_name=matched_sdfh_key,
+                receptive_urdf=hybrid_recv_rel,
+                insert_pose_rel_receptive=make_transport_pre_insert_sequence(
+                    pose_ins,
+                    pre_insert_offset=pre_insert_offset,
+                    transport_offset=dense_traj_transport_offset,
+                ),
+                hole_z_offset=0.0,
+                pre_insert_offset=pre_insert_offset,
+                prelude_lift_offset=dense_traj_prelude_lift_offset,
+            )
 
 
 _register_assembly_problems("beam_2x")
 # beam_3x pillars / caps are 1.5x larger than beam_2x's, so the tip SDF
 # (TIP_HEIGHT_M in beam_3x_problem_setup) and the pre-insert clearance both
-# scale by 1.5x: 0.025 m -> 0.0375 m.
-_register_assembly_problems("beam_3x", pre_insert_offset=0.0375)
+# scale by 1.5x: 0.025 m -> 0.0375 m. dense_traj transport + prelude lift
+# also scale up so the policy gets a meaningfully tall lift on the larger
+# part.
+_register_assembly_problems(
+    "beam_3x",
+    pre_insert_offset=0.0375,
+    dense_traj_transport_offset=0.15,
+    dense_traj_prelude_lift_offset=0.25,
+)

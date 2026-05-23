@@ -18,6 +18,16 @@ PEG_NAME_TO_OBJECT = {
         scale=rescale_by_factor((0.25, 0.03, 0.02), factor=25),
         need_vhacd=False,
     ),
+    # T-peg with PHYSICALLY-MATCHED mass + true T-shape inertia. Real
+    # 3D-printed peg measured at 79 g (Cornell lab); the original URDF
+    # assumed solid PLA at 1250 kg/m^3 -> 237.5 g, and used the handle-only
+    # inertia formula. Same geometry as `peg`, so existing checkpoints /
+    # problem JSONs that reference the peg insert pose are reusable.
+    "peg_matchedmass": Object(
+        urdf_path=ASSETS_DIR / "peg_matchedmass" / "peg_matchedmass.urdf",
+        scale=rescale_by_factor((0.25, 0.03, 0.02), factor=25),
+        need_vhacd=False,
+    ),
     # L-peg: same handle as peg (so scale matches), head shifted to one side.
     "lpeg": Object(
         urdf_path=ASSETS_DIR / "lpeg" / "lpeg.urdf",

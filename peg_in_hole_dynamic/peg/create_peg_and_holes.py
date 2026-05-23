@@ -59,6 +59,9 @@ TOLERANCES_MM = [
     # already exist in the reference grid; the 8 interior points are added
     # here. Values are exactly np.round(np.geomspace(0.1, 20.0, 10), 2).
     0.18, 0.32, 0.58, 1.05, 1.9, 3.42, 6.16, 11.1,
+    # Real-world 3D-print grid extension: 0.05 and 0.25 mm complete the
+    # {0.05, 0.1, 0.25, 0.5, 1, 5, 10, 20} mm set sent to the printer.
+    0.05, 0.25,
 ]
 
 PEG_COLOR = (204, 40, 40)
