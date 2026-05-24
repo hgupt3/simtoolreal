@@ -41,6 +41,19 @@ def warn_every(message: str, n_seconds: float, key=None):
         last_times[key] = time.time()
 
 
+def signed_angle_projected_new_z_to_world_x_deg(quat_xyzw):
+    q = np.asarray(quat_xyzw, dtype=float)
+    q = q / np.linalg.norm(q)
+    x, y, z, w = q
+
+    new_z_x = 2 * (x * z + y * w)
+    new_z_y = 2 * (y * z - x * w)
+
+    if np.hypot(new_z_x, new_z_y) < 1e-8:
+        raise ValueError("Projected new z axis is near zero, angle undefined")
+
+    return float(np.rad2deg(np.arctan2(new_z_y, new_z_x)))
+
 def keypoint_distance(
     pose1_xyzw: np.ndarray, pose2_xyzw: np.ndarray, object_scales: np.ndarray
 ) -> float:
@@ -169,6 +182,9 @@ class GoalPoseNode:
         print(
             f"Distance: {distance}, self.current_goal_object_pose_index/num_goals: {self.current_goal_object_pose_index}/{num_goals} = {self.current_goal_object_pose_index / num_goals:.2%}"
         )
+        print(f"current_object_pose_xyzw[3:] = {current_object_pose_xyzw[3:]}")
+        # angle = signed_angle_projected_new_z_to_world_x_deg(current_object_pose_xyzw[3:])
+        # print(f"angle = {angle}")
 
         if distance < self.keypoint_success_threshold:
             self.current_success_steps += 1
@@ -322,7 +338,9 @@ def main():
             # [x, y, z-0.005, qx, qy, qz, qw]
             # [x, y, z-0.0025, qx, qy, qz, qw]
             # [x, y, z-0.0075, qx, qy, qz, qw]
-            [x, y, z-0.01, qx, qy, qz, qw]
+            # [x, y, z-0.01, qx, qy, qz, qw]
+            # [x, y+0.002, z-0.01, qx, qy, qz, qw]
+            [x+0.005, y+0.005, z-0.01, qx, qy, qz, qw]
             for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
         ]
 
