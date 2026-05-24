@@ -401,6 +401,7 @@ def main():
     # ###########
     # Main loop
     # ###########
+    LAST_PRINT_FRAME_IDX = None
     while True:
         start_loop_time = time.time()
 
@@ -457,8 +458,9 @@ def main():
                 pose2_xyzw=recorded_data.goal_root_states_array[FRAME_IDX, :7],
                 object_scales=OBJECT_SCALES,
             ) / 1.5
-            print(f"dist = {dist}")
-
+            if LAST_PRINT_FRAME_IDX is None or LAST_PRINT_FRAME_IDX != FRAME_IDX:
+                LAST_PRINT_FRAME_IDX = FRAME_IDX
+                print(f"At frame_idx {LAST_PRINT_FRAME_IDX}, dist = {dist}, goal_pose_xyzw={recorded_data.goal_root_states_array[FRAME_IDX, :7].tolist()}")
 
         # Floating hand
         sharpa_joint_pos_viser_order = RecordedData.change_joint_order(
