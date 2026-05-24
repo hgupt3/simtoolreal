@@ -340,7 +340,7 @@ def main():
             # [x, y, z-0.0075, qx, qy, qz, qw]
             # [x, y, z-0.01, qx, qy, qz, qw]
             # [x, y+0.002, z-0.01, qx, qy, qz, qw]
-            [x+0.005, y+0.005, z-0.01, qx, qy, qz, qw]
+            [x+0.005, y+0.005, z-0.015, qx, qy, qz, qw]
             for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
         ]
 
