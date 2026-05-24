@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
 import tyro
@@ -17,11 +12,36 @@ from scipy.spatial.transform import Rotation as R
 from termcolor import colored
 from viser.extras import ViserUrdf
 
-from isaacgymenvs.utils.observation_action_utils_sharpa import (
-    _compute_keypoint_positions,
-)
 from isaacgymenvs.utils.utils import get_repo_root_dir
 from recorded_data import RecordedData
+
+
+OBJECT_SCALES = np.array([0.141, 0.03025, 0.0271]) * 25  # fixed size
+
+def keypoint_distance(
+    pose1_xyzw: np.ndarray, pose2_xyzw: np.ndarray, object_scales: np.ndarray
+) -> float:
+    """Compute the distance between two keypoints."""
+
+    from isaacgymenvs.utils.observation_action_utils_sharpa import (
+        _compute_keypoint_positions,
+    )
+    object_keypoint_positions = _compute_keypoint_positions(
+        pose=pose1_xyzw[None], scales=object_scales[None]
+    )
+    goal_keypoint_positions = _compute_keypoint_positions(
+        pose=pose2_xyzw[None], scales=object_scales[None]
+    )
+    keypoints_rel_goal = object_keypoint_positions - goal_keypoint_positions
+    N_KEYPOINTS = 4
+    N = 1
+    assert keypoints_rel_goal.shape == (N, N_KEYPOINTS, 3), (
+        f"keypoints_rel_goal.shape: {keypoints_rel_goal.shape}, expected: (N, N_KEYPOINTS, 3)"
+    )
+    keypoint_distances_l2 = np.linalg.norm(keypoints_rel_goal, axis=-1).max(axis=-1)
+    return keypoint_distances_l2
+
+
 
 
 def warn(message: str):
@@ -32,8 +52,8 @@ def warn(message: str):
 # Constants
 # ###########
 GREEN_RGBA = (0, 255, 0, 0.5)
-AXES_LENGTH = 0.1
-AXES_RADIUS = 0.005
+AXES_LENGTH = 0.2
+AXES_RADIUS = 0.01
 
 DISABLE_AXES = False
 if DISABLE_AXES:
@@ -44,34 +64,6 @@ if DISABLE_AXES:
 def xyzw_to_wxyz(xyzw: np.ndarray) -> np.ndarray:
     assert xyzw.shape[-1] == 4, f"Expected xyzw to be (..., 4), got {xyzw.shape}"
     return xyzw[..., [3, 0, 1, 2]]
-
-
-def keypoint_distance(
-    pose1_xyzw: np.ndarray, pose2_xyzw: np.ndarray, object_scales: np.ndarray
-) -> np.ndarray:
-    """Compute max keypoint L2 distance for one or more pose pairs."""
-    assert pose1_xyzw.shape == pose2_xyzw.shape, (
-        f"Expected matching pose shapes, got {pose1_xyzw.shape} and {pose2_xyzw.shape}"
-    )
-    assert pose1_xyzw.ndim == 2 and pose1_xyzw.shape[1] == 7, (
-        f"Expected pose shape (N, 7), got {pose1_xyzw.shape}"
-    )
-    n_poses = pose1_xyzw.shape[0]
-    assert object_scales.shape == (3,), (
-        f"Expected object scales shape (3,), got {object_scales.shape}"
-    )
-
-    repeated_object_scales = np.repeat(object_scales[None], n_poses, axis=0)
-    object_keypoint_positions = _compute_keypoint_positions(
-        pose=pose1_xyzw, scales=repeated_object_scales
-    )
-    goal_keypoint_positions = _compute_keypoint_positions(
-        pose=pose2_xyzw, scales=repeated_object_scales
-    )
-    keypoints_rel_goal = object_keypoint_positions - goal_keypoint_positions
-    keypoint_distances_l2 = np.linalg.norm(keypoints_rel_goal, axis=-1).max(axis=-1)
-    assert keypoint_distances_l2.shape == (n_poses,), keypoint_distances_l2.shape
-    return keypoint_distances_l2
 
 
 def find_closest_object_name(text: str) -> Optional[str]:
@@ -105,9 +97,6 @@ class VisualizeArgs:
 
     object_name: Optional[str] = None
     """The name of the object to visualize. If None, try to infer the object name from the recorded data. If can't be done, then use a default object name."""
-
-    plot_goal_distance: bool = False
-    """Plot goal-vs-object keypoint distance versus step in a separate matplotlib window."""
 
 
 def main():
@@ -193,9 +182,13 @@ def main():
         f"KUKA_SHARPA_URDF_PATH not found: {KUKA_SHARPA_URDF_PATH}"
     )
     # from dextoolbench.objects import NAME_TO_OBJECT
-    # from fabrica.objects import NAME_TO_OBJECT
-    # from peg_in_hole.objects import NAME_TO_OBJECT
-    from peg_in_hole_dynamic.fmb.objects import NAME_TO_OBJECT
+    import sys
+
+    from pathlib import Path
+    root_dir = Path(__file__).parent.parent
+    print(f"Adding {root_dir} to path")
+    sys.path.insert(0, str(root_dir))
+    from peg_in_hole_dynamic.furniture_bench.objects import NAME_TO_OBJECT
 
     if object_name is None and recorded_data.object_name is not None:
         object_name = recorded_data.object_name
@@ -226,7 +219,6 @@ def main():
 
     OBJECT_URDF_PATH = NAME_TO_OBJECT[object_name].urdf_path
     assert OBJECT_URDF_PATH.exists(), f"OBJECT_URDF_PATH not found: {OBJECT_URDF_PATH}"
-    object_scales = np.array(NAME_TO_OBJECT[object_name].scale)
     SHARPA_URDF_PATH = (
         get_repo_root_dir()
         / "assets/urdf/left_sharpa_ha4/left_sharpa_ha4_v2_1_adjusted_restricted.urdf"
@@ -288,41 +280,6 @@ def main():
                 root_node_name="/goal",
                 mesh_color_override=GREEN_RGBA,
             )
-
-    goal_distance_current_step_line = None
-    if args.plot_goal_distance:
-        if recorded_data.goal_root_states_array is None:
-            warn("Goal-distance plot requested, but goal_root_states_array is missing. Skipping plot.")
-        else:
-            try:
-                import matplotlib.pyplot as plt
-            except ImportError as exc:
-                raise ImportError(
-                    "matplotlib is required for --plot_goal_distance"
-                ) from exc
-
-            goal_distance_by_step = keypoint_distance(
-                pose1_xyzw=recorded_data.object_root_states_array[:, :7],
-                pose2_xyzw=recorded_data.goal_root_states_array[:, :7],
-                object_scales=object_scales,
-            )
-            goal_distance_steps = np.arange(len(goal_distance_by_step))
-            plt.ion()
-            goal_distance_figure, goal_distance_axes = plt.subplots()
-            goal_distance_axes.plot(goal_distance_steps, goal_distance_by_step)
-            goal_distance_axes.set_title(
-                f"Goal vs Object Keypoint Distance ({object_name})"
-            )
-            goal_distance_axes.set_xlabel("Step")
-            goal_distance_axes.set_ylabel("Keypoint Distance")
-            # goal_distance_axes.set_ylim(top=0.05)
-            goal_distance_axes.grid(True)
-            goal_distance_current_step_line = goal_distance_axes.axvline(
-                0, color="red", linestyle="--"
-            )
-            goal_distance_figure.tight_layout()
-            goal_distance_figure.canvas.draw_idle()
-            goal_distance_figure.canvas.flush_events()
 
     # Palm
     palm_frame = SERVER.scene.add_frame(
@@ -406,10 +363,6 @@ def main():
         frame_idx_slider.label = get_frame_idx_slider_text(
             recorded_data=recorded_data, idx=FRAME_IDX
         )
-        if goal_distance_current_step_line is not None:
-            goal_distance_current_step_line.set_xdata([FRAME_IDX, FRAME_IDX])
-            goal_distance_current_step_line.figure.canvas.draw_idle()
-            goal_distance_current_step_line.figure.canvas.flush_events()
 
     @pause_toggle_button.on_click
     def _(_) -> None:
@@ -448,6 +401,7 @@ def main():
     # ###########
     # Main loop
     # ###########
+    LAST_PRINT_FRAME_IDX = None
     while True:
         start_loop_time = time.time()
 
@@ -498,6 +452,15 @@ def main():
             goal_frame.wxyz = xyzw_to_wxyz(
                 recorded_data.goal_root_states_array[FRAME_IDX, 3:7]
             )
+            # HACK: Print dist
+            dist = keypoint_distance(
+                pose1_xyzw=object_root_state[:7],
+                pose2_xyzw=recorded_data.goal_root_states_array[FRAME_IDX, :7],
+                object_scales=OBJECT_SCALES,
+            ) / 1.5
+            if LAST_PRINT_FRAME_IDX is None or LAST_PRINT_FRAME_IDX != FRAME_IDX:
+                LAST_PRINT_FRAME_IDX = FRAME_IDX
+                print(f"At frame_idx {LAST_PRINT_FRAME_IDX}, dist = {dist}, goal_pose_xyzw={recorded_data.goal_root_states_array[FRAME_IDX, :7].tolist()}, object_pose_xyzw={object_root_state[:7]}")
 
         # Floating hand
         sharpa_joint_pos_viser_order = RecordedData.change_joint_order(
@@ -533,7 +496,7 @@ def main():
             # Keep floating sharpa hand in a fixed position
             sharpa_frame.position = recorded_data.robot_root_states_array[
                 0, :3
-            ] + np.array([-0.5, -0.8, 0.7])
+            ] + np.array([-1.5, -0.8, 0.7])
             # sharpa_frame.wxyz = np.array([1.0, 0.0, 0.0, 0.0])
             sharpa_frame.wxyz = xyzw_to_wxyz(R.from_euler("z", -np.pi / 2).as_quat())
 
@@ -563,9 +526,6 @@ def main():
                     frame_idx_slider.value + 1, a_min=0, a_max=len(recorded_data) - 1
                 )
             )
-
-        if goal_distance_current_step_line is not None:
-            goal_distance_current_step_line.figure.canvas.flush_events()
 
 
 if __name__ == "__main__":
