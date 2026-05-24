@@ -317,6 +317,11 @@ def main():
     ONLY_LAST_TWO_GOALS = True
     if ONLY_LAST_TWO_GOALS:
         goal_poses_robot_frame = goal_poses_robot_frame[-2:]
+        print(f"Lowering z")
+        goal_poses_robot_frame = [
+            [x, y, z-0.005, qx, qy, qz, qw]
+            for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
+        ]
 
     ONLY_LAST_GOAL = False
     if ONLY_LAST_GOAL:
