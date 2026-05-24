@@ -460,7 +460,7 @@ def main():
             ) / 1.5
             if LAST_PRINT_FRAME_IDX is None or LAST_PRINT_FRAME_IDX != FRAME_IDX:
                 LAST_PRINT_FRAME_IDX = FRAME_IDX
-                print(f"At frame_idx {LAST_PRINT_FRAME_IDX}, dist = {dist}, goal_pose_xyzw={recorded_data.goal_root_states_array[FRAME_IDX, :7].tolist()}")
+                print(f"At frame_idx {LAST_PRINT_FRAME_IDX}, dist = {dist}, goal_pose_xyzw={recorded_data.goal_root_states_array[FRAME_IDX, :7].tolist()}, object_pose_xyzw={object_root_state[:7]}")
 
         # Floating hand
         sharpa_joint_pos_viser_order = RecordedData.change_joint_order(
