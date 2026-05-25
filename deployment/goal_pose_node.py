@@ -348,9 +348,28 @@ def main():
             # [x+0.005, y+0.005, z-0.015, qx, qy, qz, qw]
             # [x+0.005, y+0.005, z, qx, qy, qz, qw]
             # [x+0.0075, y+0.01, z-0.015, qx, qy, qz, qw]
-            [x+0.0075, y+0.01, z, qx, qy, qz, qw]
+            # [x+0.0075, y+0.01, z, qx, qy, qz, qw]
+            [x, y, z, qx, qy, qz, qw]
             for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
         ]
+        # HACK: Start higher and interpolate down
+        goal_poses_robot_frame[0][2] += 0.1
+        start_x, start_y, start_z, qx, qy, qz, qw = goal_poses_robot_frame[0]
+        end_x, end_y, end_z, qx, qy, qz, qw = goal_poses_robot_frame[-1]
+        N_SUBGOALS = 5
+        goal_poses_robot_frame = [
+            [
+                start_x + (i / N_SUBGOALS ) * (end_x - start_x),
+                start_y + (i / N_SUBGOALS ) * (end_y - start_y),
+                start_z + (i / N_SUBGOALS ) * (end_z - start_z),
+                qx,
+                qy,
+                qz,
+                qw,
+            ]
+            for i in range(0, N_SUBGOALS+1)
+        ]
+
         # goal_poses_robot_frame[0][2] -= 0.005
         # goal_poses_robot_frame[1][2] += 0.005
 
