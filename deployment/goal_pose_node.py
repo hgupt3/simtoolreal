@@ -354,7 +354,7 @@ def main():
             for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
         ]
         # HACK: Start higher and interpolate down
-        goal_poses_robot_frame[0][2] += 0.1
+        goal_poses_robot_frame[0][2] += 0.05
         start_x, start_y, start_z, qx, qy, qz, qw = goal_poses_robot_frame[0]
         end_x, end_y, end_z, qx, qy, qz, qw = goal_poses_robot_frame[-1]
         N_SUBGOALS = 5
