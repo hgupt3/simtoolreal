@@ -345,11 +345,12 @@ def main():
             # [x+0.0025, y+0.005, z-0.015, qx, qy, qz, qw]
             # [x+0.005, y+0.005, z-0.015, qx, qy, qz, qw]
             # [x+0.005, y+0.005, z-0.0175, qx, qy, qz, qw]
-            [x+0.005, y+0.005, z-0.015, qx, qy, qz, qw]
+            # [x+0.005, y+0.005, z-0.015, qx, qy, qz, qw]
+            [x+0.005, y+0.005, z, qx, qy, qz, qw]
             for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
         ]
-        goal_poses_robot_frame[0][2] -= 0.005
-        goal_poses_robot_frame[1][2] += 0.005
+        # goal_poses_robot_frame[0][2] -= 0.005
+        # goal_poses_robot_frame[1][2] += 0.005
 
     ONLY_LAST_GOAL = False
     if ONLY_LAST_GOAL:
