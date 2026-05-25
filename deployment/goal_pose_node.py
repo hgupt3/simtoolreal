@@ -349,7 +349,8 @@ def main():
             # [x+0.005, y+0.005, z, qx, qy, qz, qw]
             # [x+0.0075, y+0.01, z-0.015, qx, qy, qz, qw]
             # [x+0.0075, y+0.01, z, qx, qy, qz, qw]
-            [x, y, z, qx, qy, qz, qw]
+            # [x, y, z, qx, qy, qz, qw]
+            [x-0.005, y+0.005, z, qx, qy, qz, qw]
             for x, y, z, qx, qy, qz, qw in goal_poses_robot_frame
         ]
         # HACK: Start higher and interpolate down
