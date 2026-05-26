@@ -170,7 +170,15 @@ class GoalPoseNode:
             f"Distance: {distance}, self.current_goal_object_pose_index/num_goals: {self.current_goal_object_pose_index}/{num_goals} = {self.current_goal_object_pose_index / num_goals:.2%}"
         )
 
-        if distance < self.keypoint_success_threshold:
+        # HACK: Different threshold per idx
+        threshold = self.keypoint_success_threshold
+        if self.current_goal_object_pose_index > 1:
+            threshold = self.keypoint_success_threshold * 2
+            print(f"Using LOOSER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
+        else:
+            print(f"Using TIGHTER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
+
+        if distance < threshold:
             self.current_success_steps += 1
             if self.current_success_steps >= self.success_steps:
                 info(
