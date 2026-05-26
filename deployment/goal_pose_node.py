@@ -616,7 +616,28 @@ def main():
         #     0.5,
         # ])
 
-        # 2026-05-26 furniturebench
+        # 2026-05-26 furniturebench exact xyzw
+        # pose: 
+        #   position: 
+        #     x: -0.1517542506031715
+        #     y: -0.7052946960017755
+        #     z: 0.6562456571626196
+        #   orientation: 
+        #     x: 0.011032372373913593
+        #     y: -0.71490049856128
+        #     z: 0.012174189046690287
+        #     w: 0.6990331558929752
+        # insert_pose = np.array([
+        #     -0.1517,
+        #     -0.705,
+        #     0.656,
+        #     0.011,
+        #     -0.7149,
+        #     0.0121,
+        #     0.699,
+        # ])
+
+        # 2026-05-26 furniturebench clean xyzw
         # pose: 
         #   position: 
         #     x: -0.1517542506031715
@@ -631,10 +652,10 @@ def main():
             -0.1517,
             -0.705,
             0.656,
-            0.011,
-            -0.7149,
-            0.0121,
-            0.699,
+            0.0,
+            -0.707,
+            0.0,
+            0.707,
         ])
 
         goal_mode = "screw"
@@ -654,6 +675,9 @@ def main():
             print(f"Adding {root_dir} to path")
             sys.path.insert(0, str(root_dir))
             from peg_in_hole_dynamic.furniture_bench.problems import _one_leg_super_dense_insert_waypoints
+
+            DZ = 0.005
+            insert_pose[2] -= DZ
             waypoints = np.array(_one_leg_super_dense_insert_waypoints(insert_pose.tolist()))
             goal_poses_robot_frame = waypoints.tolist()
         else:
