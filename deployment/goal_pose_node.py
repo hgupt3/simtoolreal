@@ -692,7 +692,7 @@ def main():
             from peg_in_hole_dynamic.furniture_bench.problems import _one_leg_super_dense_insert_waypoints
 
             # DZ = 0.005
-            DZ = 0.0
+            DZ = 0.005
             insert_pose[2] -= DZ
             waypoints = np.array(_one_leg_super_dense_insert_waypoints(insert_pose.tolist()))
             # waypoints[0, 2] += 
