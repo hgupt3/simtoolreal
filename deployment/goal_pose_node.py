@@ -606,18 +606,39 @@ def main():
         #     y: 0.5112655633883816
         #     z: 0.5123237615148678
         #     w: 0.493227014750875
+        # insert_pose = np.array([
+        #     -0.09546,
+        #     -0.77588,
+        #     0.7507,
+        #     0.5,
+        #     -0.5,
+        #     -0.5,
+        #     0.5,
+        # ])
+
+        # 2026-05-26 furniturebench
+        # pose: 
+        #   position: 
+        #     x: -0.1517542506031715
+        #     y: -0.7052946960017755
+        #     z: 0.6562456571626196
+        #   orientation: 
+        #     x: 0.011032372373913593
+        #     y: -0.71490049856128
+        #     z: 0.012174189046690287
+        #     w: 0.6990331558929752
         insert_pose = np.array([
-            -0.09546,
-            -0.77588,
-            0.7507,
-            0.5,
-            -0.5,
-            -0.5,
-            0.5,
+            -0.1517,
+            -0.705,
+            0.656,
+            0.011,
+            -0.7149,
+            0.0121,
+            0.699,
         ])
 
-        # goal_mode = "screw"
-        goal_mode = "preinsert"
+        goal_mode = "screw"
+        # goal_mode = "preinsert"
         if goal_mode == "preinsert":
             preinsert_pose = insert_pose.copy()
             print("OVERWRITING GOAL POSES WITH INSERT POSE")
