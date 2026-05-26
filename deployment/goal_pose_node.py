@@ -648,10 +648,25 @@ def main():
         #     y: -0.71490049856128
         #     z: 0.012174189046690287
         #     w: 0.6990331558929752
+        # insert_pose = np.array([
+        #     -0.1517,
+        #     -0.705,
+        #     0.656,
+        #     0.0,
+        #     -0.707,
+        #     0.0,
+        #     0.707,
+        # ])
+
+        # 2026-05-26 furniturebench new placement clean xyzw
+        #   position: 
+        #     x: -0.18613640514932506
+        #     y: -0.7611521573258367
+        #     z: 0.6578835843680875
         insert_pose = np.array([
-            -0.1517,
-            -0.705,
-            0.656,
+            -0.1861,
+            -0.761,
+            0.6578,
             0.0,
             -0.707,
             0.0,
@@ -676,9 +691,17 @@ def main():
             sys.path.insert(0, str(root_dir))
             from peg_in_hole_dynamic.furniture_bench.problems import _one_leg_super_dense_insert_waypoints
 
-            DZ = 0.005
+            # DZ = 0.005
+            DZ = 0.0
             insert_pose[2] -= DZ
             waypoints = np.array(_one_leg_super_dense_insert_waypoints(insert_pose.tolist()))
+            # waypoints[0, 2] += 
+            # waypoints[1:, 2] -= DZ
+            # print(f"waypoints = {waypoints}")
+            # print(f"waypoints[0] = {waypoints[0]}")
+            # print(f"waypoints[1] = {waypoints[1]}")
+            # print(f"waypoints[2] = {waypoints[2]}")
+            # breakpoint()
             goal_poses_robot_frame = waypoints.tolist()
         else:
             raise ValueError("Bad")
