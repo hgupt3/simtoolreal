@@ -173,7 +173,8 @@ class GoalPoseNode:
         # HACK: Different threshold per idx
         threshold = self.keypoint_success_threshold
         if self.current_goal_object_pose_index > 1:
-            threshold = self.keypoint_success_threshold * 2
+            # threshold = self.keypoint_success_threshold * 2
+            threshold = self.keypoint_success_threshold * 2.5
             print(f"Using LOOSER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
         else:
             print(f"Using TIGHTER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
@@ -700,7 +701,7 @@ def main():
             from peg_in_hole_dynamic.furniture_bench.problems import _one_leg_super_dense_insert_waypoints
 
             # DZ = 0.005
-            DZ = 0.005
+            DZ = 0.0025
             insert_pose[2] -= DZ
             waypoints = np.array(_one_leg_super_dense_insert_waypoints(insert_pose.tolist()))
             # waypoints[0, 2] += 
