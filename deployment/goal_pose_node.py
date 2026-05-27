@@ -715,6 +715,9 @@ def main():
             sys.path.insert(0, str(root_dir))
             from peg_in_hole_dynamic.furniture_bench.problems import _one_leg_super_dense_insert_waypoints
 
+            DY = 0.005
+            insert_pose[1] += DY
+
             DZ = 0.005
             # DZ = 0.0025
             # insert_pose[2] -= DZ
