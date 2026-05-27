@@ -672,30 +672,30 @@ def main():
         #     x: -0.18613640514932506
         #     y: -0.7611521573258367
         #     z: 0.6578835843680875
-        # insert_pose = np.array([
-        #     -0.1861,
-        #     -0.761,
-        #     0.6578,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
+        insert_pose = np.array([
+            -0.1861,
+            -0.761,
+            0.6578,
+            0.0,
+            -0.707,
+            0.0,
+            0.707,
+        ])
 
         # 2026-05-26 furniturebench other hole placement clean xyzw
         #   position: 
         #     x: -0.07333996784687341
         #     y: -0.7558690469820115
         #     z: 0.6587503847919816
-        insert_pose = np.array([
-            -0.0733,
-            -0.75586,
-            0.6587,
-            0.0,
-            -0.707,
-            0.0,
-            0.707,
-        ])
+        # insert_pose = np.array([
+        #     -0.0733,
+        #     -0.75586,
+        #     0.6587,
+        #     0.0,
+        #     -0.707,
+        #     0.0,
+        #     0.707,
+        # ])
 
         goal_mode = "screw"
         # goal_mode = "preinsert"
@@ -720,7 +720,7 @@ def main():
             # insert_pose[2] -= DZ
             waypoints = np.array(_one_leg_super_dense_insert_waypoints(insert_pose.tolist()))
             # waypoints[0, 2] += 
-            waypoints[1:, 2] -= DZ
+            # waypoints[1:, 2] -= DZ
             # print(f"waypoints = {waypoints}")
             # print(f"waypoints[0] = {waypoints[0]}")
             # print(f"waypoints[1] = {waypoints[1]}")
