@@ -51,8 +51,8 @@ def warn(message: str):
 # ###########
 # Constants
 # ###########
-GREEN_RGBA = (0, 255, 0, 0.6)
-AXES_LENGTH = 0.12
+GREEN_RGBA = (0, 255, 0, 0.5)
+AXES_LENGTH = 0.17
 AXES_RADIUS = 0.0025
 AXES_ARROWHEAD_LENGTH = 0.018
 AXES_ARROWHEAD_RADIUS = 0.005
@@ -249,10 +249,12 @@ def main():
     # Create server
     SERVER = viser.ViserServer()
     SERVER.scene.add_grid("/ground", width=2, height=2, cell_size=0.1)
+    connected_clients: list[viser.ClientHandle] = []
 
     # Set initial camera pose
     @SERVER.on_client_connect
     def _(client: viser.ClientHandle) -> None:
+        connected_clients.append(client)
         client.camera.position = (0.0, -1.0, 1.03)
         # client.camera.wxyz = (0, 0, 0, 1)
         client.camera.look_at = (0, 0, 0.53)
@@ -608,6 +610,13 @@ def main():
         object_xyz_xyzw_P = RecordedData.T_to_pose(T_P_O)
         object_in_sharpa_frame.position = object_xyz_xyzw_P[:3]
         object_in_sharpa_frame.wxyz = xyzw_to_wxyz(object_xyz_xyzw_P[3:7])
+
+        for client_idx, client in enumerate(connected_clients):
+            print(
+                f"At frame_idx {FRAME_IDX}, client[{client_idx}] "
+                f"camera_xyz={np.asarray(client.camera.position).tolist()}, "
+                f"camera_wxyz={np.asarray(client.camera.wxyz).tolist()}"
+            )
 
         # ###########
         # Sleep and update frame index
