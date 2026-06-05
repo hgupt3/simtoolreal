@@ -51,14 +51,22 @@ def warn(message: str):
 # ###########
 # Constants
 # ###########
-GREEN_RGBA = (0, 255, 0, 0.5)
-AXES_LENGTH = 0.2
-AXES_RADIUS = 0.01
+GREEN_RGBA = (0, 255, 0, 0.6)
+AXES_LENGTH = 0.12
+AXES_RADIUS = 0.0025
+AXES_ARROWHEAD_LENGTH = 0.018
+AXES_ARROWHEAD_RADIUS = 0.005
+AXES_ARROWHEAD_SEGMENTS = 16
+ADD_AXES_ARROWHEADS = True
+AXIS_COLORS = ((255, 0, 0), (0, 255, 0), (0, 0, 255))
+PALM_AXES_VISIBLE_BY_DEFAULT = False
+TARGET_ROBOT_VISIBLE_BY_DEFAULT = False
 
 DISABLE_AXES = False
 if DISABLE_AXES:
     AXES_LENGTH = 0.00001
     AXES_RADIUS = 0.00001
+AXES_SHAFT_LENGTH = max(0.0, AXES_LENGTH - AXES_ARROWHEAD_LENGTH)
 
 
 def xyzw_to_wxyz(xyzw: np.ndarray) -> np.ndarray:
@@ -88,6 +96,118 @@ def find_closest_object_name(text: str) -> Optional[str]:
             f"Multiple object names found in text '{text}': {matching_names}. Using longest match: {longest_match}"
         )
         return longest_match
+
+
+def axis_basis(axis_idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    axis = np.zeros(3)
+    axis[axis_idx] = 1.0
+    perpendicular_axis_idxs = [idx for idx in range(3) if idx != axis_idx]
+    u = np.zeros(3)
+    v = np.zeros(3)
+    u[perpendicular_axis_idxs[0]] = 1.0
+    v[perpendicular_axis_idxs[1]] = 1.0
+    return axis, u, v
+
+
+def axis_shaft_mesh(axis_idx: int) -> tuple[np.ndarray, np.ndarray]:
+    axis, u, v = axis_basis(axis_idx)
+    start_center = np.zeros(3)
+    end_center = axis * AXES_SHAFT_LENGTH
+    start_ring_vertices = []
+    end_ring_vertices = []
+    for idx in range(AXES_ARROWHEAD_SEGMENTS):
+        theta = 2.0 * np.pi * idx / AXES_ARROWHEAD_SEGMENTS
+        radial_offset = AXES_RADIUS * (np.cos(theta) * u + np.sin(theta) * v)
+        start_ring_vertices.append(start_center + radial_offset)
+        end_ring_vertices.append(end_center + radial_offset)
+
+    vertices = np.vstack(
+        [start_ring_vertices, end_ring_vertices, start_center, end_center]
+    ).astype(np.float32)
+    start_center_idx = 2 * AXES_ARROWHEAD_SEGMENTS
+    end_center_idx = start_center_idx + 1
+
+    faces = []
+    for idx in range(AXES_ARROWHEAD_SEGMENTS):
+        next_idx = (idx + 1) % AXES_ARROWHEAD_SEGMENTS
+        start_idx = idx
+        start_next_idx = next_idx
+        end_idx = idx + AXES_ARROWHEAD_SEGMENTS
+        end_next_idx = next_idx + AXES_ARROWHEAD_SEGMENTS
+        faces.append([start_idx, end_idx, end_next_idx])
+        faces.append([start_idx, end_next_idx, start_next_idx])
+        faces.append([start_center_idx, start_next_idx, start_idx])
+        faces.append([end_center_idx, end_idx, end_next_idx])
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
+def axis_arrowhead_mesh(axis_idx: int) -> tuple[np.ndarray, np.ndarray]:
+    axis, u, v = axis_basis(axis_idx)
+    base_center = axis * AXES_SHAFT_LENGTH
+    tip = axis * AXES_LENGTH
+    ring_vertices = []
+    for idx in range(AXES_ARROWHEAD_SEGMENTS):
+        theta = 2.0 * np.pi * idx / AXES_ARROWHEAD_SEGMENTS
+        ring_vertices.append(
+            base_center
+            + AXES_ARROWHEAD_RADIUS * (np.cos(theta) * u + np.sin(theta) * v)
+        )
+
+    vertices = np.vstack([ring_vertices, tip]).astype(np.float32)
+    tip_idx = AXES_ARROWHEAD_SEGMENTS
+    faces = []
+    for idx in range(AXES_ARROWHEAD_SEGMENTS):
+        faces.append([idx, (idx + 1) % AXES_ARROWHEAD_SEGMENTS, tip_idx])
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
+def add_axes_meshes(
+    server: viser.ViserServer,
+    frame_name: str,
+    opacity: Optional[float],
+) -> None:
+    axis_names = ("x", "y", "z")
+    for axis_idx, (axis_name, color) in enumerate(zip(axis_names, AXIS_COLORS)):
+        shaft_vertices, shaft_faces = axis_shaft_mesh(axis_idx)
+        server.scene.add_mesh_simple(
+            f"{frame_name}/axis_shaft_{axis_name}",
+            shaft_vertices,
+            shaft_faces,
+            color=color,
+            opacity=opacity,
+            side="double",
+        )
+
+        arrowhead_vertices, arrowhead_faces = axis_arrowhead_mesh(axis_idx)
+        server.scene.add_mesh_simple(
+            f"{frame_name}/axis_arrowhead_{axis_name}",
+            arrowhead_vertices,
+            arrowhead_faces,
+            color=color,
+            opacity=opacity,
+            side="double",
+        )
+
+
+def add_pose_frame(
+    server: viser.ViserServer,
+    name: str,
+    *,
+    show_axes: bool = True,
+    visible: bool = True,
+    axes_opacity: Optional[float] = None,
+) -> viser.FrameHandle:
+    use_custom_axes = show_axes and ADD_AXES_ARROWHEADS and not DISABLE_AXES
+    frame = server.scene.add_frame(
+        name,
+        show_axes=show_axes and not use_custom_axes,
+        axes_length=AXES_SHAFT_LENGTH,
+        axes_radius=AXES_RADIUS,
+        visible=visible,
+    )
+    if use_custom_axes:
+        add_axes_meshes(server, name, axes_opacity)
+    return frame
 
 
 @dataclass
@@ -229,23 +349,17 @@ def main():
     assert TABLE_URDF_PATH.exists(), f"TABLE_URDF_PATH not found: {TABLE_URDF_PATH}"
 
     # Robot
-    kuka_sharpa_frame = SERVER.scene.add_frame(
-        "/robot/state",
-        show_axes=True,
-        axes_length=AXES_LENGTH,
-        axes_radius=AXES_RADIUS,
-    )
+    kuka_sharpa_frame = add_pose_frame(SERVER, "/robot/state")
     kuka_sharpa_viser = ViserUrdf(
         SERVER, KUKA_SHARPA_URDF_PATH, root_node_name="/robot/state"
     )
 
     # Target robot
     if recorded_data.robot_joint_pos_targets_array is not None:
-        target_kuka_sharpa_frame = SERVER.scene.add_frame(
+        target_kuka_sharpa_frame = add_pose_frame(
+            SERVER,
             "/target_robot/state",
-            show_axes=True,
-            axes_length=AXES_LENGTH,
-            axes_radius=AXES_RADIUS,
+            visible=TARGET_ROBOT_VISIBLE_BY_DEFAULT,
         )
         BLUE_RGBA = (0, 0, 255, 0.5)
         target_kuka_sharpa_viser = ViserUrdf(
@@ -256,23 +370,17 @@ def main():
         )
 
     # Object
-    object_frame = SERVER.scene.add_frame(
-        "/object", show_axes=True, axes_length=AXES_LENGTH, axes_radius=AXES_RADIUS
-    )
+    object_frame = add_pose_frame(SERVER, "/object")
     _object_viser = ViserUrdf(SERVER, OBJECT_URDF_PATH, root_node_name="/object")
 
     # Table
     if recorded_data.table_root_states_array is not None:
-        table_frame = SERVER.scene.add_frame(
-            "/table", show_axes=True, axes_length=AXES_LENGTH, axes_radius=AXES_RADIUS
-        )
+        table_frame = add_pose_frame(SERVER, "/table")
         _table_viser = ViserUrdf(SERVER, TABLE_URDF_PATH, root_node_name="/table")
 
     # Goal
     if recorded_data.goal_root_states_array is not None:
-        goal_frame = SERVER.scene.add_frame(
-            "/goal", show_axes=True, axes_length=AXES_LENGTH, axes_radius=AXES_RADIUS
-        )
+        goal_frame = add_pose_frame(SERVER, "/goal", axes_opacity=GREEN_RGBA[3])
         INCLUDE_GOAL_OBJECT = True
         if INCLUDE_GOAL_OBJECT:
             _goal_object_viser = ViserUrdf(
@@ -283,28 +391,20 @@ def main():
             )
 
     # Palm
-    palm_frame = SERVER.scene.add_frame(
-        "/robot_palm", show_axes=True, axes_length=AXES_LENGTH, axes_radius=AXES_RADIUS
+    palm_frame = add_pose_frame(
+        SERVER,
+        "/robot_palm",
+        visible=PALM_AXES_VISIBLE_BY_DEFAULT,
     )
 
     # Floating sharpa hand
-    sharpa_frame = SERVER.scene.add_frame(
-        "/floating_sharpa_hand",
-        show_axes=True,
-        axes_length=AXES_LENGTH,
-        axes_radius=AXES_RADIUS,
-    )
+    sharpa_frame = add_pose_frame(SERVER, "/floating_sharpa_hand")
     sharpa_viser = ViserUrdf(
         SERVER, SHARPA_URDF_PATH, root_node_name="/floating_sharpa_hand"
     )
 
     # Object relative to floating sharpa hand
-    object_in_sharpa_frame = SERVER.scene.add_frame(
-        "/floating_sharpa_hand/object",
-        show_axes=True,
-        axes_length=AXES_LENGTH,
-        axes_radius=AXES_RADIUS,
-    )
+    object_in_sharpa_frame = add_pose_frame(SERVER, "/floating_sharpa_hand/object")
     _object_in_sharpa_viser = ViserUrdf(
         SERVER, OBJECT_URDF_PATH, root_node_name="/floating_sharpa_hand/object"
     )
