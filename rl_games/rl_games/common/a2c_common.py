@@ -215,6 +215,9 @@ class A2CBase(BaseAlgorithm):
 
         self.normalize_advantage = config['normalize_advantage']
         self.normalize_rms_advantage = config.get('normalize_rms_advantage', False)
+        self.advantage_reweight_mode = config.get('advantage_reweight_mode', 'none')
+        self.advantage_reweight_eps = config.get('advantage_reweight_eps', 0.1)
+        self.advantage_reweight_ema_decay = config.get('advantage_reweight_ema_decay', 0.99)
         self.normalize_input = self.config['normalize_input']
         self.normalize_value = self.config.get('normalize_value', False)
         self.truncate_grads = self.config.get('truncate_grads', False)
@@ -520,6 +523,12 @@ class A2CBase(BaseAlgorithm):
             self.current_shaped_rewards = torch.zeros(current_rewards_shape, dtype=torch.float32, device=self.ppo_device)
             self.current_lengths = torch.zeros(batch_size, dtype=torch.float32, device=self.ppo_device)
             self.dones = torch.ones((batch_size,), dtype=torch.uint8, device=self.ppo_device)
+
+        # MaxRL return-EMA tracking
+        if self.advantage_reweight_mode == 'return_ema':
+            if not hasattr(self, 'env_return_ema') or self.env_return_ema is None:
+                self.env_return_ema = torch.zeros(self.num_actors, dtype=torch.float32, device=self.ppo_device)
+                self.env_episode_return = torch.zeros(self.num_actors, dtype=torch.float32, device=self.ppo_device)
         else:
             self.current_rewards = self.current_rewards.to(self.ppo_device)
             self.current_shaped_rewards = self.current_shaped_rewards.to(self.ppo_device)
@@ -708,7 +717,11 @@ class A2CBase(BaseAlgorithm):
         state['current_rewards'] = self.current_rewards
         state['current_shaped_rewards'] = self.current_shaped_rewards
         state['current_lengths'] = self.current_lengths
-     
+
+        if self.advantage_reweight_mode == 'return_ema' and hasattr(self, 'env_return_ema'):
+            state['env_return_ema'] = self.env_return_ema
+            state['env_episode_return'] = self.env_episode_return
+
         return state
 
     def set_full_state_weights(self, weights, set_epoch=True):
@@ -758,6 +771,11 @@ class A2CBase(BaseAlgorithm):
                 self.intr_reward_model.load_state_dict(weights['intr_reward_model'])
             else:
                 print('WARNING: no intr_reward_model in checkpoint')
+
+        if 'env_return_ema' in weights and hasattr(self, 'env_return_ema'):
+            self.env_return_ema = weights['env_return_ema']
+        if 'env_episode_return' in weights and hasattr(self, 'env_episode_return'):
+            self.env_episode_return = weights['env_episode_return']
         
     def get_weights(self):
         state = self.get_stats_weights()
@@ -908,6 +926,25 @@ class A2CBase(BaseAlgorithm):
             self.current_rewards += rewards
             self.current_shaped_rewards += shaped_rewards
             self.current_lengths += 1
+
+            # MaxRL: track per-env episode returns and update EMA on done
+            if self.advantage_reweight_mode == 'return_ema':
+                step_rew = rewards.squeeze(-1) if rewards.dim() > 1 else rewards
+                # env_episode_return is per-env (num_actors), step_rew is per-agent (num_actors * num_agents)
+                # Sum rewards across agents for each env
+                step_rew_per_env = step_rew.view(self.num_actors, self.num_agents).sum(dim=1) if self.num_agents > 1 else step_rew
+                self.env_episode_return += step_rew_per_env
+                # Use per-env done mask (take every num_agents-th entry)
+                dones_flat = self.dones.bool().squeeze(-1) if self.dones.dim() > 1 else self.dones.bool()
+                done_mask = dones_flat[::self.num_agents] if self.num_agents > 1 else dones_flat
+                if done_mask.any():
+                    decay = self.advantage_reweight_ema_decay
+                    self.env_return_ema[done_mask] = (
+                        decay * self.env_return_ema[done_mask]
+                        + (1.0 - decay) * self.env_episode_return[done_mask]
+                    )
+                    self.env_episode_return[done_mask] = 0.0
+
             all_done_indices = self.dones.nonzero(as_tuple=False)
             env_done_indices = all_done_indices[::self.num_agents]
 
@@ -959,10 +996,24 @@ class A2CBase(BaseAlgorithm):
 
             batch_dict['rnn_states'] = states
         batch_dict['step_time'] = step_time
-        
+
+        # MaxRL return_ema: pre-compute per-sample weights so they survive augmentation/shuffle
+        if self.advantage_reweight_mode == 'return_ema':
+            ema = self.env_return_ema
+            if ema.abs().sum() > 0:
+                ranks = ema.argsort().argsort().float()
+                percentiles = (ranks + 1.0) / (len(ranks) + 1.0)
+                w_per_env = 1.0 / torch.clamp(percentiles, min=self.advantage_reweight_eps)
+                w_per_env = w_per_env / w_per_env.mean()
+            else:
+                w_per_env = torch.ones_like(ema)
+            # Expand to per-sample: (num_actors,) -> (num_actors * horizon_length,)
+            # After swap_and_flatten01, layout is env-major: env0_t0..env0_tH, env1_t0..env1_tH, ...
+            batch_dict['adv_weights'] = w_per_env.repeat_interleave(self.horizon_length)
+
         extras = {
-            'rewards' : mb_rewards, 
-            'obs' : self.experience_buffer.tensor_dict['obses'], 
+            'rewards' : mb_rewards,
+            'obs' : self.experience_buffer.tensor_dict['obses'],
             'last_obs' : self.obs,
             'states' : self.experience_buffer.tensor_dict.get('states', None),
             'dones' : mb_fdones,
@@ -1476,6 +1527,9 @@ class ContinuousA2CBase(A2CBase):
         rnn_states = batch_dict.get('rnn_states', None)
         rnn_masks = batch_dict.get('rnn_masks', None)
 
+        # Save pre-normalization values for MaxRL value-based reweighting
+        raw_values_for_reweight = values.clone() if self.advantage_reweight_mode == 'value' else None
+
         advantages = returns - values
 
         if self.normalize_value:
@@ -1486,6 +1540,19 @@ class ContinuousA2CBase(A2CBase):
             self.value_mean_std.eval()
 
         advantages = torch.sum(advantages, axis=1)
+
+        # MaxRL-style advantage reweighting (before normalization)
+        if self.advantage_reweight_mode == 'value':
+            v = torch.sum(raw_values_for_reweight, dim=1)
+            ranks = v.argsort().argsort().float()
+            percentiles = (ranks + 1.0) / (len(ranks) + 1.0)
+            weights = 1.0 / torch.clamp(percentiles, min=self.advantage_reweight_eps)
+            weights = weights / weights.mean()
+            advantages = advantages * weights
+        elif self.advantage_reweight_mode == 'return_ema':
+            adv_weights = batch_dict.get('adv_weights', None)
+            if adv_weights is not None:
+                advantages = advantages * adv_weights
 
         if self.normalize_advantage:
             if self.is_rnn:

@@ -1,0 +1,105 @@
+#!/bin/bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --cpus-per-task=12
+#SBATCH --get-user-env
+#SBATCH --mem=100000
+#SBATCH -t 7-00:00:00
+#SBATCH --partition=portal
+#SBATCH --exclude=portal-compute-01
+#SBATCH --gres=gpu:1
+#SBATCH -o /dev/null
+#SBATCH -e /dev/null
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  MaxRL Experiment: VALUE-BASED reweighting                   ║
+# ║  Weight transitions by inverse percentile of V(s)           ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+# ── Training Details ──────────────────────────────────────────
+NUM_ENVS=24576
+MINIBATCH_SIZE=98304
+SEED=0
+
+# ── MaxRL Config ──────────────────────────────────────────────
+ADVANTAGE_REWEIGHT_MODE=value
+ADVANTAGE_REWEIGHT_EPS=0.1
+
+# ── Weights & Biases ─────────────────────────────────────────
+WANDB_PROJECT="simtoolreal"
+WANDB_GROUP="maxrl_ablation"
+EXPERIMENT_TAG="maxrl_value"
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║         END CONFIG — generally don't edit below here        ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+set -euo pipefail
+
+REPO_ROOT="/share/portal/kk837/simtoolreal"
+
+# ── Derived: viser port (unique per SLURM job) ────────────────
+VISER_PORT=$((8082 + (SLURM_JOB_ID % 900)))
+
+# ── Derived: experiment name & logging ───────────────────────
+DATETIME=$(date +"%Y-%m-%d_%H-%M-%S")
+EXPERIMENT_NAME="${EXPERIMENT_TAG}_${DATETIME}"
+scontrol update JobId="$SLURM_JOB_ID" JobName="$EXPERIMENT_NAME"
+HYDRA_RUN_DIR="./train_dir/${WANDB_PROJECT}/${WANDB_GROUP}/${EXPERIMENT_NAME}"
+mkdir -p "$HYDRA_RUN_DIR"
+exec > "${HYDRA_RUN_DIR}/slurm.log" 2> "${HYDRA_RUN_DIR}/slurm.err"
+
+# ── GPU monitoring (background) ─────────────────────────────
+echo "=== Initial GPU State ==="
+nvidia-smi
+echo ""
+
+GPU_LOG="${HYDRA_RUN_DIR}/gpu_usage.log"
+(
+    while true; do
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$GPU_LOG"
+        nvidia-smi --query-gpu=memory.used,memory.total,memory.free,utilization.gpu,temperature.gpu \
+            --format=csv,noheader >> "$GPU_LOG" 2>&1
+        sleep 30
+    done
+) &
+GPU_MONITOR_PID=$!
+trap "kill $GPU_MONITOR_PID 2>/dev/null" EXIT
+
+# ── Launch training ──────────────────────────────────────────
+cd "$REPO_ROOT"
+source .venv/bin/activate
+
+python -u -m isaacgymenvs.train \
+    task=SimToolRealLSTMAsymmetric \
+    ++task.env.useSparseReward=False \
+    headless=True \
+    task.env.numEnvs=$NUM_ENVS \
+    train.params.config.minibatch_size=$MINIBATCH_SIZE \
+    multi_gpu=False \
+    train.params.config.good_reset_boundary=0 \
+    task.env.goodResetBoundary=0 \
+    train.params.config.use_others_experience=lf \
+    train.params.config.off_policy_ratio=1.0 \
+    train.params.config.expl_type=mixed_expl_learn_param \
+    train.params.config.expl_reward_type=entropy \
+    train.params.config.expl_coef_block_size=4096 \
+    train.params.config.expl_reward_coef_scale=0.005 \
+    train.params.network.space.continuous.fixed_sigma=coef_cond \
+    task.env.forceScale=20 \
+    task.env.torqueScale=2.0 \
+    task.env.objectAngVelPenaltyScale=0.0 \
+    "task.env.objectScaleNoiseMultiplierRange=[0.9,1.1]" \
+    task.env.forceConsecutiveNearGoalSteps=True \
+    train.params.config.advantage_reweight_mode=$ADVANTAGE_REWEIGHT_MODE \
+    train.params.config.advantage_reweight_eps=$ADVANTAGE_REWEIGHT_EPS \
+    wandb_project="$WANDB_PROJECT" \
+    wandb_entity=kk837 \
+    wandb_activate=True \
+    wandb_group="$WANDB_GROUP" \
+    "wandb_tags=[maxrl_value]" \
+    ++wandb_notes='' \
+    seed=$SEED \
+    experiment="00_$EXPERIMENT_NAME" \
+    hydra.run.dir="$HYDRA_RUN_DIR" \
+    train.params.config.max_frames=100_000_000_000_000

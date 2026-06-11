@@ -45,6 +45,9 @@ params:
     normalize_input: True # DEBUG
     normalize_value: True # DEBUG
     normalize_advantage: True # DEBUG
+    advantage_reweight_mode: 'none'   # 'none' | 'value' | 'return_ema'
+    advantage_reweight_eps: 0.1
+    advantage_reweight_ema_decay: 0.99
     reward_shaper:
       scale_value: 0.01
 
