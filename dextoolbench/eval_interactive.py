@@ -335,10 +335,15 @@ def sim_worker(conn, category, object_name, task_name, table_urdf,
 
 class InteractiveDemo:
 
-    def __init__(self, config_path: str, checkpoint_path: str, port: int = 8080):
+    def __init__(self, config_path: str, checkpoint_path: str, port: int = 8080,
+                 worker_target=None):
         self.port = port
         self.config_path = config_path
         self.checkpoint_path = checkpoint_path
+        # Simulator child-process entry point. Defaults to the Isaac Gym
+        # worker; eval_interactive_isaacsim.py passes its own. Must be a
+        # module-level function (spawn context pickles it by reference).
+        self._worker_target = worker_target if worker_target is not None else sim_worker
         self.server = viser.ViserServer(host="0.0.0.0", port=port)
 
         # Subprocess
@@ -655,7 +660,7 @@ class InteractiveDemo:
         parent_conn, child_conn = ctx.Pipe()
         self._conn = parent_conn
         self._proc = ctx.Process(
-            target=sim_worker,
+            target=self._worker_target,
             args=(child_conn, cat_key, object_name, task_name, table_urdf_rel,
                   self.config_path, self.checkpoint_path),
             daemon=True,

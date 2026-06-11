@@ -70,6 +70,12 @@ class AssetsCfg:
     table_scale_num_variants: int = 1
 
     object_name: str = "handle_head_primitives"
+    # DexToolBench eval: when object_urdf is set, load that single URDF for
+    # every env instead of generating the procedural pool. object_scale is the
+    # policy-normalized grasp-bbox scale (the NAME_TO_OBJECT[...].scale
+    # convention: metric bbox / object_base_size) and is required with it.
+    object_urdf: str = ""
+    object_scale: tuple[float, float, float] | None = None
     handle_head_types: tuple[str, ...] = (
         "hammer",
         "screwdriver",
@@ -363,6 +369,10 @@ class ResetCfg:
     reset_dof_pos_random_interval_arm: float = 0.1
     reset_dof_pos_random_interval_fingers: float = 0.1
     reset_dof_vel_random_interval: float = 0.5
+
+    # Offset the default arm pose (joint 2 -10deg, joint 4 +10deg) — matches
+    # the gym env's startArmHigher, used for DexToolBench evaluation.
+    start_arm_higher: bool = False
 
     # Table reset geometry
     table_reset_z: float = 0.38

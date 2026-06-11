@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 import tempfile
 import time
@@ -147,7 +148,14 @@ _PHYSICS_SPECS: dict[str, tuple[str, str, str]] = {
 }
 
 
-def build_robot_articulation_usd_cfg(usd_path: str) -> ArticulationCfg:
+def build_robot_articulation_usd_cfg(
+    usd_path: str, *, start_arm_higher: bool = False
+) -> ArticulationCfg:
+    arm_default = dict(ARM_DEFAULT_JOINT_POS)
+    if start_arm_higher:
+        # Matches the gym env's startArmHigher eval pose.
+        arm_default["iiwa14_joint_2"] -= math.radians(10.0)
+        arm_default["iiwa14_joint_4"] += math.radians(10.0)
     return ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot",
         spawn=UsdFileCfg(usd_path=usd_path),
@@ -155,7 +163,7 @@ def build_robot_articulation_usd_cfg(usd_path: str) -> ArticulationCfg:
             pos=(0.0, 0.8, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
-                **ARM_DEFAULT_JOINT_POS,
+                **arm_default,
                 **{name: 0.0 for name in HAND_JOINT_STIFFNESS},
             },
             joint_vel={".*": 0.0},
@@ -1565,14 +1573,26 @@ def setup_scene(env) -> None:
         f"num_assets_per_type={assets_cfg.num_assets_per_type}",
     )
 
-    # 1. Generate procedural URDFs in a per-launch temp dir.
+    # 1. Resolve the object pool: a single named URDF (DexToolBench eval) or
+    #    procedural URDFs generated in a per-launch temp dir.
     env._tmp_asset_dir = tempfile.mkdtemp(prefix="simtoolreal_assets_")
-    urdf_paths, object_scales_normalized = generate_handle_head_urdfs(
-        handle_head_types=tuple(assets_cfg.handle_head_types),
-        num_per_type=assets_cfg.num_assets_per_type,
-        out_dir=env._tmp_asset_dir,
-        shuffle=assets_cfg.shuffle_assets,
-    )
+    if assets_cfg.object_urdf:
+        if assets_cfg.object_scale is None:
+            raise ValueError(
+                "cfg.assets.object_scale must be set when object_urdf is given "
+                "(policy-normalized grasp-bbox scale, NAME_TO_OBJECT convention)."
+            )
+        urdf_paths = [Path(assets_cfg.object_urdf)]
+        if not urdf_paths[0].exists():
+            raise FileNotFoundError(f"object_urdf not found: {urdf_paths[0]}")
+        object_scales_normalized = [tuple(assets_cfg.object_scale)]
+    else:
+        urdf_paths, object_scales_normalized = generate_handle_head_urdfs(
+            handle_head_types=tuple(assets_cfg.handle_head_types),
+            num_per_type=assets_cfg.num_assets_per_type,
+            out_dir=env._tmp_asset_dir,
+            shuffle=assets_cfg.shuffle_assets,
+        )
     if not urdf_paths:
         raise ValueError(
             "No procedural object URDFs were generated. "
@@ -1677,7 +1697,10 @@ def setup_scene(env) -> None:
     _materialize_env_prims(env)
 
     # 4. Spawn assets.
-    env.robot = Articulation(build_robot_articulation_usd_cfg(robot_usd_path))
+    env.robot = Articulation(build_robot_articulation_usd_cfg(
+        robot_usd_path,
+        start_arm_higher=getattr(env.cfg.reset, "start_arm_higher", False),
+    ))
     env.table = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/Table", table_usd_paths))
     env.object = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/Object", object_usd_paths))
     env.goal_viz = RigidObject(build_rigid_object_cfg("/World/envs/env_.*/GoalViz", goalviz_usd_paths))
