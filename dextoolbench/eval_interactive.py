@@ -336,14 +336,18 @@ def sim_worker(conn, category, object_name, task_name, table_urdf,
 class InteractiveDemo:
 
     def __init__(self, config_path: str, checkpoint_path: str, port: int = 8080,
-                 worker_target=None):
+                 worker_factory=None):
         self.port = port
         self.config_path = config_path
         self.checkpoint_path = checkpoint_path
-        # Simulator child-process entry point. Defaults to the Isaac Gym
-        # worker; eval_interactive_isaacsim.py passes its own. Must be a
-        # module-level function (spawn context pickles it by reference).
-        self._worker_target = worker_target if worker_target is not None else sim_worker
+        # Optional alternative simulator backend hook. When set, called as
+        # worker_factory(category, object_name, task_name, table_urdf,
+        # config_path, checkpoint_path) and must return (proc, conn) with a
+        # Process-like proc (pid/is_alive/kill/join) already started and a
+        # Connection-like conn (send/recv/poll). Defaults to the Isaac Gym
+        # multiprocessing worker. eval_interactive_isaacsim.py passes a
+        # subprocess-based factory (Kit segfaults under multiprocessing spawn).
+        self._worker_factory = worker_factory
         self.server = viser.ViserServer(host="0.0.0.0", port=port)
 
         # Subprocess
@@ -656,17 +660,23 @@ class InteractiveDemo:
         self.ep_lengths.clear()
         self._md_stats.content = "**Stats:** No episodes yet"
 
-        ctx = multiprocessing.get_context("spawn")
-        parent_conn, child_conn = ctx.Pipe()
-        self._conn = parent_conn
-        self._proc = ctx.Process(
-            target=self._worker_target,
-            args=(child_conn, cat_key, object_name, task_name, table_urdf_rel,
-                  self.config_path, self.checkpoint_path),
-            daemon=True,
-        )
-        self._proc.start()
-        child_conn.close()
+        if self._worker_factory is not None:
+            self._proc, self._conn = self._worker_factory(
+                cat_key, object_name, task_name, table_urdf_rel,
+                self.config_path, self.checkpoint_path,
+            )
+        else:
+            ctx = multiprocessing.get_context("spawn")
+            parent_conn, child_conn = ctx.Pipe()
+            self._conn = parent_conn
+            self._proc = ctx.Process(
+                target=sim_worker,
+                args=(child_conn, cat_key, object_name, task_name, table_urdf_rel,
+                      self.config_path, self.checkpoint_path),
+                daemon=True,
+            )
+            self._proc.start()
+            child_conn.close()
         print(f"[launcher] Spawned subprocess pid={self._proc.pid}")
 
     # ── Commands to subprocess ─────────────────────────────────
