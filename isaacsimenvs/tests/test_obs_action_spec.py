@@ -26,6 +26,9 @@ def _dims_from_checkpoint(checkpoint_path: str) -> tuple[int, int]:
     import torch
 
     state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    # SAPG checkpoints are rank-keyed: {0: {...}, 1: {...}}; take rank 0.
+    if isinstance(state, dict) and 0 in state:
+        state = state[0]
     model = state["model"] if "model" in state else state
     num_obs = None
     num_act = None
