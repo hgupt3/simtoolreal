@@ -224,3 +224,6 @@ FoundationPose/
 
 # Vendored Isaac Gym binary (separate download)
 isaacgym/
+
+# Local rollout videos
+videos/
