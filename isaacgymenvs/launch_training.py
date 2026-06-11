@@ -97,7 +97,7 @@ def launch_training(args: LaunchTrainingArgs) -> None:
         "train.params.config.expl_type=mixed_expl_learn_param",
         "train.params.config.expl_reward_type=entropy",
         f"train.params.config.expl_coef_block_size={args.sapg_block_size}",
-        "train.params.config.expl_reward_coef_scale=0.005",
+        "train.params.config.expl_reward_coef_scale=0.002",
         "train.params.network.space.continuous.fixed_sigma=coef_cond",
         # === Wandb ===
         f"wandb_project={args.wandb_project}",
