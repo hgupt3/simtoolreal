@@ -34,7 +34,9 @@ simtoolreal
   ├── docs
   │   └── // Documentation
   ├── isaacgymenvs
-  │   └── // Simulation environment for training and evaluating policies
+  │   └── // Simulation environment (Isaac Gym) for training and evaluating policies
+  ├── isaacsimenvs
+  │   └── // Simulation environment (Isaac Sim / Isaac Lab) for the SimToolReal task
   ├── pretrained_policy
   │   └── // Checkpoint of the pretrained policy (needs to be downloaded)
   ├── recorded_data
@@ -50,6 +52,8 @@ simtoolreal
 # Installation
 
 Please see the [Installation](docs/installation.md) documentation for more details.
+
+For running the SimToolReal task in Isaac Sim (via `isaacsimenvs/`), see the separate [IsaacSim Installation](docs/isaacsim_installation.md) documentation — it uses its own Python 3.11 venv alongside the Isaac Gym one.
 
 # Quick Start
 
