@@ -219,3 +219,8 @@ wandb/
 
 # FoundationPose (separate repo)
 FoundationPose/
+# Claude Code session files
+.claude/
+
+# Vendored Isaac Gym binary (separate download)
+isaacgym/
