@@ -1654,7 +1654,7 @@ class SimToolReal(VecTask):
         # The head is at +x from the handle
         # There is no relative rotation between the handle and head
 
-        NUM_OBJECTS_PER_TYPE = 100
+        NUM_OBJECTS_PER_TYPE = self.cfg["env"].get("numAssetsPerType", 100)
         np.random.seed(42)
 
         from isaacgymenvs.tasks.simtoolreal.generate_objects import (
@@ -1747,7 +1747,7 @@ class SimToolReal(VecTask):
         ]
 
         # Randomize order
-        RANDOMIZE_ORDER = True
+        RANDOMIZE_ORDER = self.cfg["env"].get("randomizeAssetOrder", True)
         if RANDOMIZE_ORDER:
             indices = list(range(len(all_files)))
             np.random.shuffle(indices)

@@ -13,11 +13,35 @@ from rl_games.algos_torch import a2c_discrete
 from rl_games.algos_torch import players
 from rl_games.common.algo_observer import DefaultAlgoObserver
 from rl_games.algos_torch import sac_agent
+from rl_games.algos_torch import torch_ext
 
 
 def _restore(agent, args):
     if 'checkpoint' in args and args['checkpoint'] is not None and args['checkpoint'] !='':
-        agent.restore(args['checkpoint'])
+        load_mode = args.get('checkpoint_load_mode', 'resume')
+        if load_mode == 'resume':
+            agent.restore(args['checkpoint'])
+        elif load_mode == 'weights':
+            weights = _load_checkpoint_weights(agent, args['checkpoint'])
+            agent.set_weights(weights)
+            if getattr(agent, 'has_central_value', False) and 'assymetric_vf_nets' in weights:
+                try:
+                    agent.central_value_net.load_state_dict(weights['assymetric_vf_nets'])
+                except RuntimeError as exc:
+                    print(f"Skipping central value checkpoint weights: {exc}")
+            print(f"=> initialized model weights from '{args['checkpoint']}'")
+        else:
+            raise ValueError(f"checkpoint_load_mode must be resume/weights, got {load_mode!r}")
+
+
+def _load_checkpoint_weights(agent, checkpoint_path):
+    checkpoint = torch_ext.load_checkpoint(checkpoint_path)
+    if isinstance(checkpoint, dict):
+        if getattr(agent, 'global_rank', None) in checkpoint:
+            return checkpoint[agent.global_rank]
+        if 0 in checkpoint:
+            return checkpoint[0]
+    return checkpoint
 
 def _override_sigma(agent, args):
     if 'sigma' in args and args['sigma'] is not None:
