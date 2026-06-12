@@ -89,12 +89,15 @@ We recommend training in Isaac Sim. Training logs are tracked with [Weights & Bi
 --task Isaacsimenvs-SimToolReal-Direct-v0 \
 --agent rl_games_sapg_cfg_entry_point \
 --headless \
+--capture_viewer \
 --wandb_activate \
 --wandb_project <project> \
 --wandb_entity <entity> \
 env.scene.num_envs=24576 \
 agent.params.config.expl_coef_block_size=4096
 ```
+
+`--capture_viewer` periodically uploads an interactive 3D rollout viewer to W&B (pose-only, no cameras) so you can visually check the policy during training.
 
 To finetune from a checkpoint, add `--checkpoint pretrained_policy/model.pth --checkpoint_load_mode weights` (`resume` also restores the optimizer state). If you run out of GPU memory, reduce `env.scene.num_envs` and `expl_coef_block_size` together (`num_envs / expl_coef_block_size` is the SAPG block count — keep it at 6).
 
