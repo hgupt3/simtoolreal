@@ -6,13 +6,13 @@ https://github.com/user-attachments/assets/e2d0db98-2e31-46aa-9480-c4c6f4a48f7d
 
 # Overview
 
-This repository contains the official implementation of the SimToolReal framework, which was introduced in _SimToolReal: An Object-Centric Policy for Zero-Shot Dexterous Tool Manipulation_. It consists of:
+This repository is the official implementation of _SimToolReal: An Object-Centric Policy for Zero-Shot Dexterous Tool Manipulation_. It provides:
 
-* Simulation Environments: We support both Isaac Sim (recommended) and Isaac Gym environments for training and evaluation of dexterous tool manipulation policies.
+* Simulation environments: Isaac Sim (recommended) and Isaac Gym (legacy) environments for training and evaluating dexterous tool manipulation policies.
 
 * DexToolBench: A benchmark for dexterous tool manipulation.
 
-* Reinforcement Learning (RL) Training: RL training algorithms for training dexterous tool manipulation policies.
+* RL training: Reinforcement learning algorithms for training these policies.
 
 * Deployment: Policy deployment in simulation and the real world.
 
@@ -21,9 +21,9 @@ This repository contains the official implementation of the SimToolReal framewor
 ```
 simtoolreal
   ├── assets
-  │   └── // Assets such as robot URDF files, object models, etc.
+  │   └── // Robot URDFs, object models, and other assets
   ├── baselines
-  │   └── // Implementation of kinematic retargeting and fixed grasp
+  │   └── // Kinematic retargeting and fixed-grasp baselines
   ├── deployment
   │   └── // Sim-to-real and sim-to-sim deployment of the policy
   ├── dextoolbench
@@ -43,7 +43,6 @@ simtoolreal
   │   └── // Interface and tools for saving, loading, and visualizing recorded data
   └── rl_games
       └── // RL algorithms, including PPO and SAPG
-
 ```
 
 **External repos:**
@@ -53,11 +52,11 @@ simtoolreal
 
 The recommended setup runs SimToolReal in **Isaac Sim** (via Isaac Lab, Python 3.11, pip-installable): see the [IsaacSim Installation](docs/isaacsim_installation.md) documentation.
 
-We also provide installation options for the legacy **Isaac Gym** environment (Python 3.8, manual binary download) in the [IsaacGym Installation](docs/isaacgym_installation.md) documentation. The two environments live in separate venvs (`.venv_isaacsim` and `.venv`) and can coexist.
+The legacy **Isaac Gym** environment (Python 3.8, manual binary download) is covered in the [IsaacGym Installation](docs/isaacgym_installation.md) documentation. The two environments live in separate venvs (`.venv_isaacsim` and `.venv`) and can coexist.
 
 # Quick Start
 
-Please run all commands from the root directory of this repository. For most commands, you can add `--help` to see the available options.
+Run all commands from the repository root. Most commands accept `--help` to list available options.
 
 ## 1. Download the Pretrained Policy
 
@@ -69,7 +68,7 @@ This downloads `config.yaml` and `model.pth` into `pretrained_policy/`.
 
 ## 2. Interactive Evaluation on DexToolBench
 
-Launch the web-based interactive demo (default at `http://localhost:8080`), where you can select the tool category, object instance, and task from dropdown menus, then load the environment and run episodes:
+Launch the web-based interactive demo (default `http://localhost:8080`): pick a tool category, object instance, and task from the dropdown menus, then load the environment and run episodes.
 
 ```
 .venv_isaacsim/bin/python dextoolbench/eval_interactive_isaacsim.py \
@@ -77,13 +76,13 @@ Launch the web-based interactive demo (default at `http://localhost:8080`), wher
 --checkpoint-path pretrained_policy/model.pth
 ```
 
-If you are using the Isaac Gym setup instead, run `dextoolbench/eval_interactive.py` (same arguments) from the `.venv` environment.
+On the Isaac Gym setup, run `dextoolbench/eval_interactive.py` (same arguments) from the `.venv` environment instead.
 
 https://github.com/user-attachments/assets/58eb188b-662c-4190-8148-29710c9eb20f
 
 ## 3. Train a Policy
 
-Train in Isaac Sim (defaults already match the validated from-scratch configuration — the overrides below are shown explicitly because they are the knobs you are most likely to adjust):
+Train in Isaac Sim. The defaults already match the validated from-scratch configuration; the two overrides below are spelled out because they are the knobs you are most likely to adjust:
 
 ```
 .venv_isaacsim/bin/python isaacsimenvs/train.py \
@@ -102,7 +101,7 @@ Training-curve logging with [Weights & Biases](https://wandb.ai/) is opt-in: run
 
 ### Isaac Gym (legacy)
 
-The paper's results were trained with the Isaac Gym pipeline (training logs tracked with [Weights & Biases](https://wandb.ai/); run `wandb login` and update `wandb_entity` in `isaacgymenvs/launch_training.py` first):
+The paper's results were trained with the Isaac Gym pipeline. It logs to [Weights & Biases](https://wandb.ai/); run `wandb login` and set `wandb_entity` in `isaacgymenvs/launch_training.py` before launching:
 
 ```
 python isaacgymenvs/launch_training.py \
@@ -113,7 +112,7 @@ To finetune from a checkpoint, add `--checkpoint <checkpoint_path>` (e.g. `pretr
 
 ## 4. Evaluate a Policy on DexToolBench
 
-To numerically evaluate a policy on all 24 DexToolBench combinations:
+Evaluate a policy numerically on all 24 DexToolBench combinations:
 
 ```
 .venv_isaacsim/bin/python dextoolbench/run_all_evals_isaacsim.py
@@ -123,11 +122,11 @@ To numerically evaluate a policy on all 24 DexToolBench combinations:
 
 # DexToolBench
 
-DexToolBench covers 6 tool categories × 2 objects × 2 tasks each (hammer, marker, eraser, brush, spatula, screwdriver). See the [DexToolBench Reference](docs/dextoolbench.md) for the dataset download, visualization tooling, creating new tasks/objects, real-world data collection, and acquiring the physical objects.
+DexToolBench covers 6 tool categories (hammer, marker, eraser, brush, spatula, screwdriver) × 2 objects × 2 tasks each. See the [DexToolBench Reference](docs/dextoolbench.md) for dataset download, visualization tooling, creating new tasks and objects, real-world data collection, and acquiring the physical objects.
 
 # Deployment
 
-For Sim2Real deployment we run four nodes: an RL policy node and goal pose node (this repo), a perception node (SAM + FoundationPose, in the [FoundationPose fork](https://github.com/kushal2000/FoundationPose)), and a robot node. A Sim2Sim setup replaces the robot and perception nodes with a simulation node for safe testing. See the [Deployment](docs/deployment.md) documentation for node diagrams and step-by-step run instructions.
+Sim2Real deployment runs four nodes: an RL policy node and a goal pose node (this repo), a perception node (SAM + FoundationPose, in the [FoundationPose fork](https://github.com/kushal2000/FoundationPose)), and a robot node. For safe testing, the Sim2Sim setup replaces the robot and perception nodes with a simulation node. See the [Deployment](docs/deployment.md) documentation for node diagrams and step-by-step run instructions.
 
 # Formatting
 
@@ -145,7 +144,7 @@ URDF files:
 
 # Acknowledgements
 
-This implementation builds upon the following codebases:
+This implementation builds on the following codebases:
 
 1. [IsaacGymEnvs](https://github.com/isaac-sim/IsaacGymEnvs)
 2. [rl_games](https://github.com/Denys88/rl_games)

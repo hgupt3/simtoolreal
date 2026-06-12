@@ -228,7 +228,7 @@ def main() -> None:
 
     import os
     import sys
-    del _app
+    # Skip Kit teardown (it hangs); os._exit makes cleanup moot.
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)
