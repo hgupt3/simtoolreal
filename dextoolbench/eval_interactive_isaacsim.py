@@ -1,6 +1,6 @@
 """DexToolBench Interactive Policy Demo — Isaac Sim (Isaac Lab) backend.
 
-Same viser UI as ``eval_interactive.py`` (reused directly); only the simulator
+Same viser UI as ``eval_interactive_isaacgym.py`` (reused directly); only the simulator
 child differs: a plain subprocess running ``_isaacsim_interactive_worker.py``,
 which boots Kit via AppLauncher and runs ``Isaacsimenvs-SimToolReal-Direct-v0``.
 A plain subprocess (not multiprocessing) is required — Kit segfaults at boot
@@ -89,7 +89,7 @@ def isaacsim_worker_factory(category, object_name, task_name, table_urdf,
 
 
 if __name__ == "__main__":
-    from dextoolbench.eval_interactive import InteractiveDemo
+    from dextoolbench.eval_interactive_isaacgym import InteractiveDemo
 
     parser = argparse.ArgumentParser(
         description="DexToolBench Interactive Policy Demo (Isaac Sim backend)",

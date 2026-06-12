@@ -10,7 +10,7 @@ Each "Load Environment" kills the old subprocess and spawns a fresh one,
 sidestepping the fact that IsaacGym cannot cleanly reset within a process.
 
 Usage:
-    python dextoolbench/eval_interactive.py \
+    python dextoolbench/eval_interactive_isaacgym.py \
         --config-path pretrained_policy/config.yaml \
         --checkpoint-path pretrained_policy/model.pth
 """

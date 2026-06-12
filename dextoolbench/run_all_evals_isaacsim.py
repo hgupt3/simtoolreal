@@ -1,6 +1,6 @@
 """Batch DexToolBench evaluation over all 24 combinations — Isaac Sim backend.
 
-Clone of ``run_all_evals.py`` driving ``eval_isaacsim.py``. Each combination
+Clone of ``run_all_evals_isaacgym.py`` driving ``eval_isaacsim.py``. Each combination
 runs in a fresh subprocess (Kit cannot cleanly tear down within a process,
 same constraint as Isaac Gym). Run from the repo root:
 

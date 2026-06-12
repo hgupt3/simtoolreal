@@ -1,6 +1,6 @@
 """DexToolBench policy evaluation — Isaac Sim (Isaac Lab) backend.
 
-Clone of ``dextoolbench/eval.py`` (Isaac Gym) running on
+Clone of ``dextoolbench/eval_isaacgym.py`` (Isaac Gym) running on
 ``Isaacsimenvs-SimToolReal-Direct-v0``. Loads a specific DexToolBench object
 URDF + task trajectory, rolls the policy for N episodes, and writes the same
 ``eval.json`` schema (avg_goal_pct / avg_time_sec / per-episode lists).
@@ -120,7 +120,7 @@ def main() -> None:
         OBJECT_CATEGORY_TO_TABLE_URDF[args.object_category]
     )
 
-    # --- Env config (mirrors dextoolbench/eval.py overrides) ---
+    # --- Env config (mirrors dextoolbench/eval_isaacgym.py overrides) ---
     cfg = SimToolRealEnvCfg()
     cfg.scene.num_envs = 1
 

@@ -12,7 +12,7 @@ def log_info(text):
     print(colored(text, "cyan"))
 
 
-script_path = Path(__file__).parent / "eval.py"
+script_path = Path(__file__).parent / "eval_isaacgym.py"
 assert script_path.exists(), f"Script not found: {script_path}"
 DATE_STR = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 

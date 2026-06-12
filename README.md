@@ -76,7 +76,7 @@ Launch the web-based interactive demo (default `http://localhost:8080`): pick a 
 --checkpoint-path pretrained_policy/model.pth
 ```
 
-On the Isaac Gym setup, run `dextoolbench/eval_interactive.py` (same arguments) from the `.venv` environment instead.
+On the Isaac Gym setup, run `dextoolbench/eval_interactive_isaacgym.py` (same arguments) from the `.venv` environment instead.
 
 https://github.com/user-attachments/assets/58eb188b-662c-4190-8148-29710c9eb20f
 
@@ -117,7 +117,7 @@ Evaluate a policy numerically on all 24 DexToolBench combinations:
 .venv_isaacsim/bin/python dextoolbench/run_all_evals_isaacsim.py
 ```
 
-(Isaac Gym variant: `python dextoolbench/run_all_evals.py`.)
+(Isaac Gym variant: `python dextoolbench/run_all_evals_isaacgym.py`.)
 
 # DexToolBench
 
