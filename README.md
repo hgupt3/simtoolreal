@@ -98,6 +98,8 @@ If you run out of GPU memory, reduce `env.scene.num_envs` — but keep it divisi
 
 To finetune from a checkpoint in Isaac Sim, add `--checkpoint pretrained_policy/model.pth --checkpoint_load_mode weights` (`weights` starts a fresh run from the model weights; `resume` also restores the optimizer state).
 
+Training-curve logging with [Weights & Biases](https://wandb.ai/) is opt-in: run `wandb login` once, then add `--wandb_activate --wandb_project <project> --wandb_entity <your-entity>` to the command. Without `--wandb_activate` the run trains normally but logs no curves.
+
 ### Isaac Gym (legacy)
 
 The paper's results were trained with the Isaac Gym pipeline (training logs tracked with [Weights & Biases](https://wandb.ai/); run `wandb login` and update `wandb_entity` in `isaacgymenvs/launch_training.py` first):
