@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import time
 import urllib.request
-import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -24,7 +23,7 @@ from .utils.scene_utils import JOINT_NAMES_CANONICAL
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-FALLBACK_GITHUB_RAW_BASE = "https://raw.githubusercontent.com/tylerlum/simtoolreal/main/"
+GITHUB_RAW_BASE_MAIN = "https://raw.githubusercontent.com/tylerlum/simtoolreal/main/"
 ROBOT_URDF_RELATIVE_PATH = "assets/urdf/kuka_sharpa_description/iiwa14_left_sharpa_adjusted_restricted.urdf"
 TABLE_URDF_PATH = REPO_ROOT / "assets" / "urdf" / "table_narrow.urdf"
 
@@ -49,68 +48,10 @@ def _pose_xyzw(pos, quat_wxyz) -> np.ndarray:
     return pose
 
 
-def _git_output(args: list[str]) -> str | None:
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(REPO_ROOT), *args],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except Exception:
-        return None
-
-
-def _github_slug_from_remote(remote_url: str | None) -> str | None:
-    if not remote_url:
-        return None
-
-    remote = remote_url.strip()
-    if remote.endswith(".git"):
-        remote = remote[:-4]
-
-    prefixes = (
-        "git@github.com:",
-        "ssh://git@github.com/",
-        "https://github.com/",
-        "http://github.com/",
-    )
-    for prefix in prefixes:
-        if remote.startswith(prefix):
-            slug = remote[len(prefix):]
-            parts = slug.split("/")
-            if len(parts) >= 2:
-                return "/".join(parts[:2])
-    return None
-
-
-def _derive_github_raw_base() -> str:
-    remote_url = _git_output(["remote", "get-url", "origin"])
-    slug = _github_slug_from_remote(remote_url)
-    if slug is None:
-        print(
-            f"[pose_viewer] Could not derive GitHub origin from {remote_url!r}; "
-            f"falling back to {FALLBACK_GITHUB_RAW_BASE}",
-            flush=True,
-        )
-        return FALLBACK_GITHUB_RAW_BASE
-
-    ref = _git_output(["branch", "--show-current"])
-    if not ref:
-        ref = _git_output(["rev-parse", "HEAD"])
-    if not ref:
-        print(
-            f"[pose_viewer] Could not derive git branch/commit; falling back to {FALLBACK_GITHUB_RAW_BASE}",
-            flush=True,
-        )
-        return FALLBACK_GITHUB_RAW_BASE
-
-    raw_base = f"https://raw.githubusercontent.com/{slug}/{quote(ref, safe='')}/"
-    print(f"[pose_viewer] GitHub raw base: {raw_base}", flush=True)
-    return raw_base
-
-
 def _normalize_raw_base(github_raw_base: str | None) -> str:
-    base = github_raw_base or _derive_github_raw_base()
+    # Meshes are immutable and present on main, so a fixed main URL is
+    # the most durable link (branch/commit pins break when refs vanish).
+    base = github_raw_base or GITHUB_RAW_BASE_MAIN
     return base if base.endswith("/") else base + "/"
 
 
