@@ -3,6 +3,7 @@ import json
 import time
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import rospy
@@ -14,6 +15,8 @@ from isaacgymenvs.utils.observation_action_utils_sharpa import (
     _compute_keypoint_positions,
 )
 from isaacgymenvs.utils.utils import get_repo_root_dir
+
+HARDCODED_TRAJECTORY_PATH = Path.home() / "Downloads/brush_object_goal_poses_NEW.json"
 
 
 def info(message: str):
@@ -292,13 +295,14 @@ def main():
     args: GoalPoseNodeArgs = tyro.cli(GoalPoseNodeArgs)
 
     # Load trajectory
-    trajectory_path = (
-        get_repo_root_dir()
-        / "dextoolbench/trajectories"
-        / args.object_category
-        / args.object_name
-        / f"{args.task_name}.json"
-    )
+    trajectory_path = HARDCODED_TRAJECTORY_PATH
+    # trajectory_path = (
+    #     get_repo_root_dir()
+    #     / "dextoolbench/trajectories"
+    #     / args.object_category
+    #     / args.object_name
+    #     / f"{args.task_name}.json"
+    # )
     assert trajectory_path.exists(), f"Trajectory file not found: {trajectory_path}"
     with open(trajectory_path) as f:
         traj_data = json.load(f)
@@ -310,7 +314,7 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
-    OVERWRITE = True
+    OVERWRITE = False
     if OVERWRITE:
         # TEST 1
         # header: 

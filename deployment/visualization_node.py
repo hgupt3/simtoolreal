@@ -293,8 +293,9 @@ class VisualizationNode:
         from peg_in_hole_dynamic.furniture_bench.objects import NAME_TO_OBJECT
 
         print(f"NAME_TO_OBJECT: {NAME_TO_OBJECT.keys()}")
-        # object_urdf = NAME_TO_OBJECT[object_name].urdf_path
-        object_urdf = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/square_table_leg4_200mm_colored/square_table_leg4_200mm_tape.urdf")
+        object_urdf = NAME_TO_OBJECT[object_name].urdf_path
+        # object_urdf = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/square_table_leg4_200mm_colored/square_table_leg4_200mm_tape.urdf")
+        # object_urdf = Path("/juno/u/tylerlum/2026-06-11_meshes/20260611_110938_bbox_x663_y361_w112_h96/sam3d_output/mesh/mesh.urdf")
         goal_object_urdf = object_urdf
         assert object_urdf.exists(), f"object_urdf does not exist: {object_urdf}"
 
