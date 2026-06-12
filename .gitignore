@@ -227,3 +227,8 @@ isaacgym/
 
 # Local rollout videos
 videos/
+
+# Run outputs
+outputs/
+evals_isaacsim/
+evals/
