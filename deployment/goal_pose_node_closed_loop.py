@@ -31,7 +31,7 @@ from termcolor import colored
 
 try:
     import sys
-    sys.path.append("/home/tylerlum/github_repos/closed_loop")
+    sys.path.append("/home/tylerlum/github_repos/closed_loop/closed_loop")
     from closed_loop import (
         ClosedLoopBrushPolicy,
         default_instruction_for_control_frame,
@@ -115,6 +115,7 @@ class GoalPoseNodeClosedLoop:
         object_scales: np.ndarray,
         success_threshold: float,
         success_steps: int,
+        replan_interval_s: float = 0.0,
     ):
         rospy.init_node("goal_pose_node_closed_loop")
 
@@ -125,6 +126,8 @@ class GoalPoseNodeClosedLoop:
         self.keypoint_success_threshold = success_threshold * KEYPOINT_SCALE
         self.success_steps = success_steps
         self.current_success_steps = 0
+        self.replan_interval_s = float(replan_interval_s)
+        self._last_replan_time: Optional[float] = None
 
         self.latest_tool_pose: Optional[Pose] = None
         self.latest_material_pose: Optional[Pose] = None
@@ -176,6 +179,7 @@ class GoalPoseNodeClosedLoop:
         self.policy.reset(tool[:3], tool[3:7], mat)
         self._load_chunk_from_policy()
         self.initialized = True
+        self._last_replan_time = time.time()
         info(f"Policy initialized; chunk has {len(self.goal_poses_robot)} goals")
 
     def _load_chunk_from_policy(self):
@@ -193,9 +197,21 @@ class GoalPoseNodeClosedLoop:
         tool = pose_to_xyzw(self.latest_tool_pose)
         mat = pose_to_xyzw(self.latest_material_pose)[:3]
         self.policy.observe(tool[:3], tool[3:7], mat)
+        self._last_replan_time = time.time()
         if not self.policy.done:
             self._load_chunk_from_policy()
             info("Replanned new goal chunk from VLA")
+
+    def _maybe_timed_replan(self):
+        if self.replan_interval_s <= 0.0 or not self.initialized or self.policy.done:
+            return
+        now = time.time()
+        if self._last_replan_time is None:
+            self._last_replan_time = now
+            return
+        if now - self._last_replan_time >= self.replan_interval_s:
+            info(f"Timed replan ({self.replan_interval_s:.1f}s elapsed)")
+            self._maybe_replan()
 
     def update_goal_object_pose(self):
         if not self.initialized or self.goal_poses_robot.shape[0] == 0:
@@ -204,9 +220,10 @@ class GoalPoseNodeClosedLoop:
             return
 
         if self.current_goal_index >= self.goal_poses_robot.shape[0]:
-            self._maybe_replan()
-            if self.goal_poses_robot.shape[0] == 0:
-                return
+            if self.replan_interval_s <= 0.0:
+                self._maybe_replan()
+                if self.goal_poses_robot.shape[0] == 0:
+                    return
             if self.current_goal_index >= self.goal_poses_robot.shape[0]:
                 self.current_goal_index = self.goal_poses_robot.shape[0] - 1
 
@@ -225,8 +242,12 @@ class GoalPoseNodeClosedLoop:
                 self.current_success_steps = 0
                 self.current_goal_index += 1
                 if self.current_goal_index >= self.goal_poses_robot.shape[0]:
-                    info("Chunk complete; replanning")
-                    self._maybe_replan()
+                    if self.replan_interval_s <= 0.0:
+                        info("Chunk complete; replanning")
+                        self._maybe_replan()
+                    else:
+                        self.current_goal_index = self.goal_poses_robot.shape[0] - 1
+                        info("Chunk complete; holding last goal until timed replan")
                 else:
                     info(f"Advanced to goal index {self.current_goal_index}")
             else:
@@ -238,10 +259,7 @@ class GoalPoseNodeClosedLoop:
         if self.goal_poses_robot.shape[0] == 0:
             return
         idx = min(self.current_goal_index, self.goal_poses_robot.shape[0] - 1)
-        # self.goal_object_pose_pub.publish(xyzw_to_pose(self.goal_poses_robot[idx]))
-        pose = xyzw_to_pose(self.goal_poses_robot[idx])
-        # pose.position.y -= 0.8
-        self.goal_object_pose_pub.publish(pose)
+        self.goal_object_pose_pub.publish(xyzw_to_pose(self.goal_poses_robot[idx]))
 
     def run(self):
         self._wait_for_observations()
@@ -249,6 +267,7 @@ class GoalPoseNodeClosedLoop:
 
         while not rospy.is_shutdown():
             if self.latest_tool_pose is not None and self.latest_material_pose is not None:
+                self._maybe_timed_replan()
                 self.update_goal_object_pose()
                 self.publish_goal_object_pose()
             self.rate.sleep()
@@ -275,6 +294,14 @@ class GoalPoseNodeClosedLoopArgs:
     success_threshold: float = 0.02
     success_steps: int = 1
     tool_pose_is_root: bool = True
+    replan_interval_s: float = 5.0
+    """Wall-clock seconds between replans. When > 0, the policy replans on this
+    timer instead of when the current goal chunk is exhausted; the last goal in
+    the chunk is held until the next timed replan. Set <= 0 to replan per chunk."""
+    unflip_orientation: bool = True
+    """Un-flip a replanned tool orientation that is ~180 deg flipped from the
+    previous plan, keeping published goal poses continuous. Disable with
+    ``--no-unflip-orientation``."""
 
 
 def main():
@@ -301,6 +328,7 @@ def main():
         frame_shift=(0.0, args.y_shift, 0.0),
         chunk_size=args.chunk_size,
         tool_pose_is_root=args.tool_pose_is_root,
+        unflip_orientation=args.unflip_orientation,
     )
     policy.set_destination(np.asarray(args.fixed_destination, dtype=np.float64))
 
@@ -313,6 +341,7 @@ def main():
             object_scales=object_scales,
             success_threshold=args.success_threshold,
             success_steps=args.success_steps,
+            replan_interval_s=args.replan_interval_s,
         )
         node.run()
     except rospy.ROSInterruptException:

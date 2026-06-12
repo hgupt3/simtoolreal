@@ -339,8 +339,8 @@ def main():
         f"Object name {object_name} not found in NAME_TO_OBJECT"
     )
 
-    # OBJECT_URDF_PATH = NAME_TO_OBJECT[object_name].urdf_path
-    OBJECT_URDF_PATH = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/square_table_leg4_200mm_colored/square_table_leg4_200mm_tape.urdf")
+    OBJECT_URDF_PATH = NAME_TO_OBJECT[object_name].urdf_path
+    # OBJECT_URDF_PATH = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/square_table_leg4_200mm_colored/square_table_leg4_200mm_tape.urdf")
     assert OBJECT_URDF_PATH.exists(), f"OBJECT_URDF_PATH not found: {OBJECT_URDF_PATH}"
     SHARPA_URDF_PATH = (
         get_repo_root_dir()
