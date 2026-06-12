@@ -20,7 +20,7 @@ uv pip install --python .venv_isaacsim/bin/python torch --index-url https://down
 # Vendored rl_games + inference deps
 uv pip install --python .venv_isaacsim/bin/python -e ./rl_games/
 uv pip install --python .venv_isaacsim/bin/python \
-  omegaconf hydra-core "gym==0.23.1" scipy numpy yourdfpy requests tqdm tyro "imageio[ffmpeg]" wandb
+  omegaconf hydra-core "gym==0.23.1" scipy numpy yourdfpy requests tqdm tyro "imageio[ffmpeg]" wandb termcolor
 
 # Isaac Lab + Isaac Sim (~15 GB download; first launch builds RTX shaders, takes ~2-5 min)
 uv pip install --python .venv_isaacsim/bin/python \
