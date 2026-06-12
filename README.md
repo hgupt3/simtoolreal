@@ -96,6 +96,10 @@ agent.params.config.expl_coef_block_size=4096
 
 If you run out of GPU memory, reduce `env.scene.num_envs` — but keep it divisible by `expl_coef_block_size` (SAPG splits the environments into `num_envs / expl_coef_block_size` exploration blocks, so scale the two together). Hydra `key=value` overrides must come last on the command line — in particular, never place them after `--wandb_tags`, which greedily consumes all following arguments.
 
+To finetune from a checkpoint in Isaac Sim, add `--checkpoint pretrained_policy/model.pth --checkpoint_load_mode weights` (`weights` starts a fresh run from the model weights; `resume` also restores the optimizer state).
+
+### Isaac Gym (legacy)
+
 The paper's results were trained with the Isaac Gym pipeline (training logs tracked with [Weights & Biases](https://wandb.ai/); run `wandb login` and update `wandb_entity` in `isaacgymenvs/launch_training.py` first):
 
 ```
