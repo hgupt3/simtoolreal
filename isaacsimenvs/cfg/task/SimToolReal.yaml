@@ -30,7 +30,7 @@ sim:
 #    so asset metadata lives under `assets:` below).
 # -----------------------------------------------------------------------------
 scene:
-  num_envs: 8192
+  num_envs: 24576
   env_spacing: 1.2
   # Both must be false for MultiUsdFileCfg to spawn per-env distinct
   # handle_head USDs: replicate_physics=false makes PhysX parse each env

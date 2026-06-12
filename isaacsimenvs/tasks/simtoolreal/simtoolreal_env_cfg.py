@@ -527,6 +527,10 @@ def _default_sim_cfg() -> SimulationCfg:
             bounce_threshold_velocity=0.2,
             friction_offset_threshold=0.04,
             friction_correlation_distance=0.025,
+            # Sized for 24576-env close-contact grasping (Lab defaults
+            # overflow: "Patch buffer overflow detected" kills training).
+            gpu_max_rigid_contact_count=16777216,
+            gpu_max_rigid_patch_count=8388608,
         ),
     )
 
@@ -562,7 +566,9 @@ class SimToolRealEnvCfg(DirectRLEnvCfg):
         resolution=(640, 480),
     )
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=8192,
+        # Validated from-scratch training scale. Smaller counts must stay
+        # divisible by the SAPG expl_coef_block_size (4096).
+        num_envs=24576,
         env_spacing=1.2,
         # Per-env distinct USDs (MultiUsdFileCfg) require:
         #  - replicate_physics=False so PhysX parses each env as its own

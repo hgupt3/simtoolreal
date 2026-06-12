@@ -83,19 +83,16 @@ https://github.com/user-attachments/assets/58eb188b-662c-4190-8148-29710c9eb20f
 
 ## 3. Train a Policy
 
-Train in Isaac Sim (the validated configuration uses 24576 environments and enlarged PhysX contact buffers — config defaults are smaller and not validated for from-scratch training):
+Train in Isaac Sim (defaults are the validated from-scratch configuration: 24576 environments, enlarged PhysX contact buffers):
 
 ```
 .venv_isaacsim/bin/python isaacsimenvs/train.py \
 --task Isaacsimenvs-SimToolReal-Direct-v0 \
 --agent rl_games_sapg_cfg_entry_point \
---headless \
-env.scene.num_envs=24576 \
-env.sim.physx.gpu_max_rigid_contact_count=16777216 \
-env.sim.physx.gpu_max_rigid_patch_count=8388608
+--headless
 ```
 
-Note: the `key=value` Hydra overrides must come last — in particular, never place them after `--wandb_tags`, which greedily consumes all following arguments.
+If you run out of GPU memory, reduce the environment count with `env.scene.num_envs=<N>` (keep it divisible by the SAPG `expl_coef_block_size` of 4096). Hydra `key=value` overrides must come last on the command line — in particular, never place them after `--wandb_tags`, which greedily consumes all following arguments.
 
 The paper's results were trained with the Isaac Gym pipeline (training logs tracked with [Weights & Biases](https://wandb.ai/); run `wandb login` and update `wandb_entity` in `isaacgymenvs/launch_training.py` first):
 
