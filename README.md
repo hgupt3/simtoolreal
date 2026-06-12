@@ -82,18 +82,21 @@ https://github.com/user-attachments/assets/58eb188b-662c-4190-8148-29710c9eb20f
 
 ## 3. Train a Policy
 
-We recommend training in Isaac Sim. To log training curves to [Weights & Biases](https://wandb.ai/), run `wandb login` once and add `--wandb_activate --wandb_project <project> --wandb_entity <entity>` to the command below. We also explicitly note two more overrides because they are the knobs you are most likely to adjust:
+We recommend training in Isaac Sim. Training logs are tracked with [Weights & Biases](https://wandb.ai/); run `wandb login` before launching:
 
 ```
 .venv_isaacsim/bin/python isaacsimenvs/train.py \
 --task Isaacsimenvs-SimToolReal-Direct-v0 \
 --agent rl_games_sapg_cfg_entry_point \
 --headless \
+--wandb_activate \
+--wandb_project <project> \
+--wandb_entity <entity> \
 env.scene.num_envs=24576 \
 agent.params.config.expl_coef_block_size=4096
 ```
 
-To finetune from a checkpoint, add `--checkpoint pretrained_policy/model.pth --checkpoint_load_mode weights` (`resume` also restores the optimizer state). If you run out of GPU memory, reduce `env.scene.num_envs` and `expl_coef_block_size` together (`num_envs / expl_coef_block_size` is the SAPG block count — keep it at 6). Configuration overrides such as `env.scene.num_envs=24576` (plain `name=value` arguments) must come after all `--flag` arguments — in particular, never after `--wandb_tags`, which consumes everything that follows.
+To finetune from a checkpoint, add `--checkpoint pretrained_policy/model.pth --checkpoint_load_mode weights` (`resume` also restores the optimizer state). If you run out of GPU memory, reduce `env.scene.num_envs` and `expl_coef_block_size` together (`num_envs / expl_coef_block_size` is the SAPG block count — keep it at 6).
 
 ### Isaac Gym (legacy)
 
