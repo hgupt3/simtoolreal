@@ -1521,7 +1521,7 @@ def apply_physx_material_properties(env) -> None:
         materials = view.get_material_properties()
         materials[:] = default
         if name == "object" and obj_active:
-            obj_base = float(assets_cfg.robot_friction)
+            obj_base = float(assets_cfg.object_friction)
             bucket_vals = torch.linspace(obj_lo, obj_hi, n_buckets) * obj_base
             bucket_idx = torch.randint(0, n_buckets, (env.num_envs,))
             per_env_obj = bucket_vals[bucket_idx]  # (N_envs,)
