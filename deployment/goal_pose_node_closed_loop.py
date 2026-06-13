@@ -30,7 +30,6 @@ from geometry_msgs.msg import Pose, PoseStamped
 from termcolor import colored
 
 try:
-    import sys
     sys.path.append("/home/tylerlum/github_repos/closed_loop/closed_loop")
     from closed_loop import (
         ClosedLoopBrushPolicy,
@@ -129,6 +128,12 @@ class GoalPoseNodeClosedLoop:
         self.replan_interval_s = float(replan_interval_s)
         self._last_replan_time: Optional[float] = None
 
+        # TEMP: force the policy to never declare itself done so it always
+        # replans. Neutralizes the replan cap and the material-at-goal latch.
+        self.policy.max_replans = 10 ** 9
+        self.policy.goal_region_radius_m = -1.0
+        self._force_never_done()
+
         self.latest_tool_pose: Optional[Pose] = None
         self.latest_material_pose: Optional[Pose] = None
         self.goal_poses_robot: np.ndarray = np.zeros((0, 7), dtype=np.float64)
@@ -180,10 +185,22 @@ class GoalPoseNodeClosedLoop:
         self._load_chunk_from_policy()
         self.initialized = True
         self._last_replan_time = time.time()
-        info(f"Policy initialized; chunk has {len(self.goal_poses_robot)} goals")
+        info(
+            f"[init] policy reset; {len(self.goal_poses_robot)} goals, "
+            f"policy.done={self.policy.done}, replan_interval_s={self.replan_interval_s}"
+        )
 
     def _load_chunk_from_policy(self):
-        chunk = self.policy.plan_chunk()
+        # Timed mode steps through the full predicted plan (all 15 keypoints)
+        # until the timer fires; per-chunk mode uses the short executed chunk.
+        if self.replan_interval_s > 0.0:
+            chunk = self.policy.plan_chunk()
+            full = self.policy.last_plan_object_poses
+            chunk = full or chunk
+            info(f"[plan] timed mode: stepping full plan ({len(chunk)} keypoints)")
+        else:
+            chunk = self.policy.plan_chunk()
+            info(f"[plan] chunk mode: stepping chunk ({len(chunk)} keypoints)")
         self.goal_poses_robot = np.array(
             [np.concatenate([xyz, quat]) for xyz, quat in chunk],
             dtype=np.float64,
@@ -191,16 +208,29 @@ class GoalPoseNodeClosedLoop:
         self.current_goal_index = 0
         self.current_success_steps = 0
 
+    def _force_never_done(self):
+        # TEMP: clear the policy's internal done latch so done is never True.
+        try:
+            self.policy._done = False
+        except AttributeError:
+            pass
+
     def _maybe_replan(self):
-        if self.policy.done:
-            return
         tool = pose_to_xyzw(self.latest_tool_pose)
         mat = pose_to_xyzw(self.latest_material_pose)[:3]
+        info(
+            f"[replan] observe -> tool_xyz={np.round(tool[:3], 3)} "
+            f"mat_xyz={np.round(mat, 3)}"
+        )
         self.policy.observe(tool[:3], tool[3:7], mat)
+        self._force_never_done()
         self._last_replan_time = time.time()
-        if not self.policy.done:
-            self._load_chunk_from_policy()
-            info("Replanned new goal chunk from VLA")
+        info(f"[replan] policy.done after observe (forced) = {self.policy.done}")
+        self._load_chunk_from_policy()
+        info(
+            f"[replan] new plan loaded: {self.goal_poses_robot.shape[0]} goals, "
+            f"index reset to 0"
+        )
 
     def _maybe_timed_replan(self):
         if self.replan_interval_s <= 0.0 or not self.initialized or self.policy.done:
@@ -209,8 +239,12 @@ class GoalPoseNodeClosedLoop:
         if self._last_replan_time is None:
             self._last_replan_time = now
             return
-        if now - self._last_replan_time >= self.replan_interval_s:
-            info(f"Timed replan ({self.replan_interval_s:.1f}s elapsed)")
+        elapsed = now - self._last_replan_time
+        if elapsed >= self.replan_interval_s:
+            info(
+                f"[replan] timer cap hit ({elapsed:.1f}s >= "
+                f"{self.replan_interval_s:.1f}s) -> replanning"
+            )
             self._maybe_replan()
 
     def update_goal_object_pose(self):
@@ -220,10 +254,10 @@ class GoalPoseNodeClosedLoop:
             return
 
         if self.current_goal_index >= self.goal_poses_robot.shape[0]:
-            if self.replan_interval_s <= 0.0:
-                self._maybe_replan()
-                if self.goal_poses_robot.shape[0] == 0:
-                    return
+            info("[replan] goal index past end of plan -> replanning")
+            self._maybe_replan()
+            if self.goal_poses_robot.shape[0] == 0:
+                return
             if self.current_goal_index >= self.goal_poses_robot.shape[0]:
                 self.current_goal_index = self.goal_poses_robot.shape[0] - 1
 
@@ -231,9 +265,16 @@ class GoalPoseNodeClosedLoop:
         goal_pose = self.goal_poses_robot[self.current_goal_index]
         distance = keypoint_distance(tool_pose, goal_pose, self.object_scales)
         n = self.goal_poses_robot.shape[0]
+        since_replan = (
+            time.time() - self._last_replan_time
+            if self._last_replan_time is not None
+            else -1.0
+        )
         print(
-            f"Distance: {distance:.4f}, goal {self.current_goal_index}/{n - 1}, "
-            f"policy_done={self.policy.done}"
+            f"Distance: {distance:.4f} (thresh {self.keypoint_success_threshold:.4f}), "
+            f"goal {self.current_goal_index}/{n - 1}, policy_done={self.policy.done}, "
+            f"t_since_replan={since_replan:.1f}s, success_steps="
+            f"{self.current_success_steps}/{self.success_steps}"
         )
 
         if distance < self.keypoint_success_threshold:
@@ -242,12 +283,8 @@ class GoalPoseNodeClosedLoop:
                 self.current_success_steps = 0
                 self.current_goal_index += 1
                 if self.current_goal_index >= self.goal_poses_robot.shape[0]:
-                    if self.replan_interval_s <= 0.0:
-                        info("Chunk complete; replanning")
-                        self._maybe_replan()
-                    else:
-                        self.current_goal_index = self.goal_poses_robot.shape[0] - 1
-                        info("Chunk complete; holding last goal until timed replan")
+                    info("[replan] plan complete (all keypoints hit) -> replanning")
+                    self._maybe_replan()
                 else:
                     info(f"Advanced to goal index {self.current_goal_index}")
             else:
@@ -294,10 +331,11 @@ class GoalPoseNodeClosedLoopArgs:
     success_threshold: float = 0.02
     success_steps: int = 1
     tool_pose_is_root: bool = True
-    replan_interval_s: float = 5.0
-    """Wall-clock seconds between replans. When > 0, the policy replans on this
-    timer instead of when the current goal chunk is exhausted; the last goal in
-    the chunk is held until the next timed replan. Set <= 0 to replan per chunk."""
+    replan_interval_s: float = 10.0
+    """Wall-clock seconds between replans. When > 0, the node steps through the
+    full predicted plan (all 15 keypoints), holding the last one if reached,
+    until this timer fires a replan. Set <= 0 to use the short executed chunk and
+    replan when it is exhausted."""
     unflip_orientation: bool = True
     """Un-flip a replanned tool orientation that is ~180 deg flipped from the
     previous plan, keeping published goal poses continuous. Disable with
