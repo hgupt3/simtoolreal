@@ -1171,7 +1171,7 @@ class RLPolicyNode:
         info("=" * 100)
         # THIS IS NOT THE REAL LOOP, DON'T CARE ABOUT THESE NUMBERs
         num_steps = 0
-        NUM_WARMUP_STEPS = 100
+        NUM_WARMUP_STEPS = 10
         while not rospy.is_shutdown():
             num_steps += 1
             info(f"Warmup step {num_steps} of {NUM_WARMUP_STEPS}")
