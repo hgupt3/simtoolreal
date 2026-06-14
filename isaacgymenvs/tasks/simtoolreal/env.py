@@ -1191,7 +1191,7 @@ class SimToolReal(VecTask):
         if object_name in known_object_names:
             # One of known objects
             obj = NAME_TO_OBJECT[object_name]
-            object_asset_files = [obj.urdf_path]
+            object_asset_files = [obj.decomposed_urdf_path]
             object_asset_scales = [obj.scale]
             need_vhacds = [obj.need_vhacd]
 

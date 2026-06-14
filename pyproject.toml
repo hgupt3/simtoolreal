@@ -32,6 +32,7 @@ dependencies = [
     "pysdf==0.1.9",
     "warp-lang==0.10.1",
     "trimesh==3.23.5",
+    "coacd==1.0.5",
     "numpy==1.23.0",
     "scipy",
     "matplotlib",

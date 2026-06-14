@@ -124,7 +124,7 @@ def main() -> None:
     cfg = SimToolRealEnvCfg()
     cfg.scene.num_envs = 1
 
-    cfg.assets.object_urdf = str(obj.urdf_path)
+    cfg.assets.object_urdf = str(obj.decomposed_urdf_path)
     cfg.assets.object_scale = tuple(obj.scale)
     cfg.assets.table_urdf = table_urdf
 
@@ -173,8 +173,6 @@ def main() -> None:
         num_envs=1,
     )
 
-    max_steps = int(cfg.episode_length_s * CONTROL_HZ) + 10
-
     episode_goal_pcts: list[float] = []
     episode_lengths: list[int] = []
 
@@ -186,7 +184,12 @@ def main() -> None:
         obs, _, _, _, _ = env.step(torch.zeros((1, n_act), device=inner.device))
 
         step, done, goals_reached = 0, False, 0
-        while not done and step < max_steps:
+        # Loop on the env's own done signal only (matches eval_isaacgym.py and the
+        # interactive worker). episode_length_s is a PER-GOAL timeout that the env
+        # resets on each goal reached, so a multi-goal trajectory legitimately runs
+        # far longer than episode_length_s; a fixed max-step cap here would guillotine
+        # slow multi-goal tasks (e.g. flip_over) after the first goal's budget.
+        while not done:
             policy_obs = obs["policy"].to(args.rl_device)
             action = player.get_normalized_action(policy_obs, deterministic_actions=True)
             obs, _, terminated, truncated, _ = env.step(action.to(inner.device))

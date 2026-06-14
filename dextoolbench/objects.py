@@ -17,10 +17,18 @@ class Object:
     """Scale of the object's grasp bounding box in x, y, z directions. Note this is not metric scale but scale given to policy."""
 
     need_vhacd: bool
-    """Whether the object needs a V-HACD convex decomposition (its convex hull is very different from the original mesh)"""
+    """Legacy flag (now always False): collision is pre-decomposed offline by
+    generate_collision_meshes.py into decomposed_urdf_path, so neither backend
+    runs runtime V-HACD."""
 
     def __post_init__(self):
         assert self.urdf_path.exists(), f"Filepath {self.urdf_path} does not exist"
+
+    @property
+    def decomposed_urdf_path(self) -> Path:
+        """URDF whose collision is the offline CoACD convex parts (visual stays
+        the original mesh, inertial is explicit). Loaded by both backends."""
+        return self.urdf_path.with_name(f"{self.urdf_path.stem}_decomposed.urdf")
 
     def get_object_mesh_path_and_scale(self) -> Tuple[Path, np.ndarray]:
         from yourdfpy import URDF
@@ -78,7 +86,7 @@ HAMMER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/hammer/mallet_hammer/mallet_hammer.urdf"
         ),
         scale=rescale_by_factor((0.24, 0.03, 0.02), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
     "claw_hammer": Object(
         urdf_path=(
@@ -86,7 +94,7 @@ HAMMER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/hammer/claw_hammer/claw_hammer.urdf"
         ),
         scale=rescale_by_factor((0.10, 0.0225, 0.015), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
 }
 
@@ -101,7 +109,7 @@ SCREWDRIVER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/screwdriver/long_screwdriver/long_screwdriver.urdf"
         ),
         scale=rescale_by_factor((0.1, 0.03, 0.03), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
     "short_screwdriver": Object(
         urdf_path=(
@@ -109,7 +117,7 @@ SCREWDRIVER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/screwdriver/short_screwdriver/short_screwdriver.urdf"
         ),
         scale=rescale_by_factor((0.07, 0.035, 0.035), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
 }
 NAME_TO_OBJECT.update(SCREWDRIVER_NAME_TO_OBJECT)
@@ -121,7 +129,7 @@ ERASER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/eraser/handle_eraser/handle_eraser.urdf"
         ),
         scale=rescale_by_factor((0.09, 0.032, 0.01), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
     "flat_eraser": Object(
         urdf_path=(
@@ -129,7 +137,7 @@ ERASER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/eraser/flat_eraser/flat_eraser.urdf"
         ),
         scale=rescale_by_factor((0.10, 0.028, 0.05), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
 }
 
@@ -142,7 +150,7 @@ SPATULA_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/spatula/flat_spatula/flat_spatula.urdf"
         ),
         scale=rescale_by_factor((0.2, 0.015, 0.0075), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
     "spoon_spatula": Object(
         urdf_path=(
@@ -150,7 +158,7 @@ SPATULA_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/spatula/spoon_spatula/spoon_spatula.urdf"
         ),
         scale=rescale_by_factor((0.12, 0.02, 0.02), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
 }
 NAME_TO_OBJECT.update(SPATULA_NAME_TO_OBJECT)
@@ -162,7 +170,7 @@ MARKER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/marker/sharpie_marker/sharpie_marker.urdf"
         ),
         scale=rescale_by_factor((0.085, 0.022, 0.022), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
     "staples_marker": Object(
         urdf_path=(
@@ -170,7 +178,7 @@ MARKER_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/marker/staples_marker/staples_marker.urdf"
         ),
         scale=rescale_by_factor((0.12, 0.018, 0.018), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
 }
 NAME_TO_OBJECT.update(MARKER_NAME_TO_OBJECT)
@@ -182,7 +190,7 @@ BRUSH_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/brush/red_brush/red_brush.urdf"
         ),
         scale=rescale_by_factor((0.1, 0.02, 0.015), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
     "blue_brush": Object(
         urdf_path=(
@@ -190,7 +198,7 @@ BRUSH_NAME_TO_OBJECT = {
             / "assets/urdf/dextoolbench/brush/blue_brush/blue_brush.urdf"
         ),
         scale=rescale_by_factor((0.12, 0.035, 0.02), factor=25),
-        need_vhacd=True,
+        need_vhacd=False,
     ),
 }
 NAME_TO_OBJECT.update(BRUSH_NAME_TO_OBJECT)

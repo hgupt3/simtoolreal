@@ -169,6 +169,62 @@ python dextoolbench/interactive_adjust_object.py \
 --output_dir assets/urdf/dextoolbench/hammer/new_claw_hammer
 ```
 
+## Adding Your Own Tool
+
+To add a new tool object to the benchmark:
+
+1. **Drop in the assets.** Place the visual mesh and a URDF under
+   `assets/urdf/dextoolbench/<object_category>/<object_name>/`:
+   - `<object_name>.obj` — the visual mesh.
+   - `<object_name>.urdf` — a single link with one `<visual>` (the `.obj`), one
+     `<collision>` (the same `.obj` is fine — it gets replaced by the convex
+     decomposition below), and an `<inertial>`. Mass may be given either as an
+     explicit `<mass>` or via a `<density>` tag (see the note below).
+
+   Use `interactive_adjust_object.py` (see above) to set the origin frame and scale.
+
+2. **Register it in `dextoolbench/objects.py`.** Add an `Object(...)` entry to
+   `NAME_TO_OBJECT` with the `urdf_path` and the policy `scale`. Leave
+   `need_vhacd=False` — both backends load the pre-decomposed URDF, so no runtime
+   decomposition is needed.
+
+3. **Decompose the collision geometry (CoACD).** The original URDF's collision is
+   a single concave mesh; Isaac Sim imports it as one convex hull, which breaks
+   contact on concave tools. This step runs CoACD offline to produce convex parts
+   and writes a separate `<object_name>_decomposed.urdf` (the original URDF is
+   never modified). **Run it in the Python 3.11 `.venv_isaacsim`** (it needs
+   `xml.etree.ElementTree.indent`, Python 3.9+):
+
+   ```bash
+   .venv_isaacsim/bin/python dextoolbench/generate_collision_meshes.py \
+     --object_name <object_name>          # omit --object_name to (re)do all tools
+   ```
+
+   This writes `<object_name>_collision/decomp_*.obj` plus the decomposed URDF,
+   whose `<collision>` is the N convex parts and whose `<inertial>` is an explicit
+   `<mass>` + `<inertia>`. The run is idempotent — rerun it any time to regenerate.
+
+4. **Inspect the decomposition.** The viewer overlays the colored convex hulls on
+   the translucent original mesh — confirm the hulls hug the surface without large
+   gaps or overshoot:
+
+   ```bash
+   .venv_isaacsim/bin/python dextoolbench/visualize_decomposition.py \
+     --object_name <object_name> --port 8082
+   ```
+
+5. **Evaluate.** Add the object/tasks to the eval grids
+   (`run_all_evals_isaacsim.py` / `run_all_evals_isaacgym.py`) or run a single
+   eval as in the main [README](../README.md). Both Isaac Gym and Isaac Sim load
+   `<object_name>_decomposed.urdf`.
+
+**Why the explicit mass.** The original URDFs specify mass via a `<density>` tag,
+which Isaac Gym honors (it derives mass from the V-HACD hull volume × density) but
+Isaac Sim's URDF importer **ignores** (giving a default mass). The generator
+therefore bakes an explicit `<mass>` + `<inertia>` into the decomposed URDF,
+computed as `density × decomposed-hull-volume`, so both backends agree on the
+object's dynamics. Tools that already author an explicit `<mass>` keep theirs.
+
 ## Data Collection and Processing
 
 To collect new task demonstrations from the real world, you need a ZED camera

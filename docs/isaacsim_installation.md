@@ -26,6 +26,12 @@ uv pip install --python .venv_isaacsim/bin/python \
 uv pip install --python .venv_isaacsim/bin/python \
   "isaaclab[isaacsim,all]==2.3.2.post1" --extra-index-url https://pypi.nvidia.com
 
+# Offline collision decomposition (CoACD) + tyro CLI fix. Install AFTER isaaclab so it
+# wins the resolution: tyro.cli (used by dextoolbench/generate_collision_meshes.py) needs
+# NoExtraItems from typing_extensions>=4.13, but the isaaclab install pulls in 4.12.2.
+# typing_extensions 4.15 is verified compatible with isaaclab 2.3.2.post1.
+uv pip install --python .venv_isaacsim/bin/python coacd "typing_extensions>=4.13"
+
 # Register repo-local packages (isaacsimenvs, isaacgymenvs, deployment, ...)
 uv pip install --python .venv_isaacsim/bin/python -e . --no-deps
 ```

@@ -144,7 +144,7 @@ def sim_worker_isaacsim(conn, category, object_name, task_name, table_urdf,
 
         cfg = SimToolRealEnvCfg()
         cfg.scene.num_envs = 1
-        cfg.assets.object_urdf = str(obj.urdf_path)
+        cfg.assets.object_urdf = str(obj.decomposed_urdf_path)
         cfg.assets.object_scale = tuple(obj.scale)
         # table_urdf arrives relative to assets/ (gym convention).
         cfg.assets.table_urdf = str(REPO_ROOT / "assets" / table_urdf)

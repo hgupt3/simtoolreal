@@ -120,7 +120,18 @@ for i, (object_category, object_name, task_name, policy_name) in tqdm(
     MODE: Literal["subprocess", "os"] = "subprocess"
 
     if MODE == "subprocess":
-        subprocess.run(cmd, shell=True, check=True)
+        # Do NOT use check=True: Isaac Gym reliably segfaults (exit 139) during
+        # process teardown AFTER eval.json is written. Judge success by the
+        # output file, not the exit code.
+        result = subprocess.run(cmd, shell=True)
+        eval_json = output_dir / "eval.json"
+        if not eval_json.exists():
+            raise RuntimeError(
+                f"{object_category}/{object_name}/{task_name}: no eval.json "
+                f"(exit {result.returncode})"
+            )
+        if result.returncode not in (0, 139, -11):
+            log_info(f"  (eval.json written; ignoring teardown exit {result.returncode})")
     elif MODE == "os":
         os.system(cmd)
     else:
