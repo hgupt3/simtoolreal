@@ -75,7 +75,7 @@ class GoalPoseNode:
         force_fixed_orientation: bool = False,
     ):
         # ROS setup
-        rospy.init_node("goal_pose_node")
+        rospy.init_node("goal_pose_node", anonymous=True)
 
         KEYPOINT_SCALE = 1.5
         self.object_scales = object_scales
@@ -175,12 +175,12 @@ class GoalPoseNode:
 
         # HACK: Different threshold per idx
         threshold = self.keypoint_success_threshold
-        if self.current_goal_object_pose_index > 1:
-            # threshold = self.keypoint_success_threshold * 2
-            threshold = self.keypoint_success_threshold * 2.5
-            print(f"Using LOOSER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
-        else:
-            print(f"Using TIGHTER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
+        # if self.current_goal_object_pose_index > 1:
+        #     # threshold = self.keypoint_success_threshold * 2
+        #     threshold = self.keypoint_success_threshold * 2.5
+        #     print(f"Using LOOSER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
+        # else:
+        #     print(f"Using TIGHTER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
 
         if distance < threshold:
             self.current_success_steps += 1
@@ -316,6 +316,46 @@ def main():
 
     OVERWRITE = True
     if OVERWRITE:
+        # 2026-05-25 Second Try part 0 (horizontal), clean xyzw and adjust y since moved
+        #   position: 
+        #     x: -0.09546959035788088
+        #     y: -0.7758836238932227
+        #     z: 0.750769531407949
+        #   orientation: 
+        #     x: 0.4825546590805628
+        #     y: 0.5112655633883816
+        #     z: 0.5123237615148678
+        #     w: 0.493227014750875
+        # insert_pose = np.array([
+        #     -0.09546,
+        #     -0.77588,
+        #     0.7507,
+        #     0.5,
+        #     -0.5,
+        #     -0.5,
+        #     0.5,
+        # ])
+
+        # 2026-06-13 Part 0 (horizontal)
+        #   position: 
+        #     x: -0.0973767347325063
+        #     y: -0.7629867512826861
+        #     z: 0.7519583069115724
+        #   orientation: 
+        #     x: 0.5251723478374757
+        #     y: -0.47765058339025024
+        #     z: -0.46655969627432786
+        #     w: 0.5276039945510592
+        insert_pose = np.array([
+            -0.09737,
+            -0.76298,
+            0.75195,
+            0.5,
+            -0.5,
+            -0.5,
+            0.5,
+        ])
+
         # goal_mode = "screw"
         goal_mode = "preinsert"
         if goal_mode == "preinsert":
@@ -369,3 +409,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

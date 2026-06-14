@@ -321,14 +321,17 @@ class VisualizationNode:
         # Load the object mesh
         FAR_AWAY_OBJECT_POSITION = np.ones(3)
         # from dextoolbench.objects import NAME_TO_OBJECT
-        # from peg_in_hole_dynamic.fabrica.objects import NAME_TO_OBJECT
-        from peg_in_hole_dynamic.furniture_bench.objects import NAME_TO_OBJECT
+        from peg_in_hole_dynamic.fabrica.objects import NAME_TO_OBJECT
+        # from peg_in_hole_dynamic.furniture_bench.objects import NAME_TO_OBJECT
 
         print(f"NAME_TO_OBJECT: {NAME_TO_OBJECT.keys()}")
-        object_urdf = NAME_TO_OBJECT[object_name].urdf_path
-        object_urdf_2 = NAME_TO_OBJECT[object_name_2].urdf_path
+        # object_urdf = NAME_TO_OBJECT[object_name].urdf_path
+        # object_urdf_2 = NAME_TO_OBJECT[object_name_2].urdf_path
         # object_urdf = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/square_table_leg4_200mm_colored/square_table_leg4_200mm_tape.urdf")
         # object_urdf = Path("/juno/u/tylerlum/2026-06-11_meshes/20260611_110938_bbox_x663_y361_w112_h96/sam3d_output/mesh/mesh.urdf")
+
+        object_urdf = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/beam_3x_part_2/beam_3x_part_2.urdf")
+        object_urdf_2 = Path("/home/tylerlum/github_repos/simtoolreal/assets/urdf/pose_tracker_eval/beam_3x_part_0/beam_3x_part_0.urdf")
         goal_object_urdf = object_urdf
         goal_object_urdf_2 = object_urdf_2
         assert object_urdf.exists(), f"object_urdf does not exist: {object_urdf}"

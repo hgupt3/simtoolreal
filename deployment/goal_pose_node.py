@@ -175,12 +175,12 @@ class GoalPoseNode:
 
         # HACK: Different threshold per idx
         threshold = self.keypoint_success_threshold
-        if self.current_goal_object_pose_index > 1:
-            # threshold = self.keypoint_success_threshold * 2
-            threshold = self.keypoint_success_threshold * 2.5
-            print(f"Using LOOSER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
-        else:
-            print(f"Using TIGHTER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
+        # if self.current_goal_object_pose_index > 1:
+        #     # threshold = self.keypoint_success_threshold * 2
+        #     threshold = self.keypoint_success_threshold * 2.5
+        #     print(f"Using LOOSER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
+        # else:
+        #     print(f"Using TIGHTER threshold because self.current_goal_object_pose_index = {self.current_goal_object_pose_index}")
 
         if distance < threshold:
             self.current_success_steps += 1
@@ -314,261 +314,9 @@ def main():
         for x, y, z, qx, qy, qz, qw in goal_poses_world_frame
     ]
 
-    OVERWRITE = False
+    OVERWRITE = True
     if OVERWRITE:
-        # TEST 1
-        # header: 
-        #   seq: 191
-        #   stamp: 
-        #     secs: 1779412456
-        #     nsecs: 322077035
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.18197880779539322
-        #     y: -0.8047787093936111
-        #     z: 0.7488169399253708
-        #   orientation: 
-        #     x: 0.5306060338313072
-        #     y: -0.46672555275595295
-        #     z: -0.46983925155487677
-        #     w: 0.5290326766512756
-        # x, y, z, qx, qy, qz, qw
-        # insert_pose = np.array([
-        #     -0.18197880779539322,
-        #     -0.8047787093936111,
-        #     0.7488169399253708,
-        #     0.5306060338313072,
-        #     -0.46672555275595295,
-        #     -0.46983925155487677,
-        #     0.5290326766512756,
-        # ])
-
-        # TEST 2
-        # header: 
-        #   seq: 1089
-        #   stamp: 
-        #     secs: 1779414644
-        #     nsecs: 164042472
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.1862851520025678
-        #     y: -0.8014339170234643
-        #     z: 0.6483461253694023
-        #   orientation: 
-        #     x: 0.015537815938494006
-        #     y: -0.7100282050990505
-        #     z: 0.01385806860749987
-        #     w: 0.7038653835600607
-        # x, y, z, qx, qy, qz, qw
-        # insert_pose = np.array([
-        #     -0.1862851520025678,
-        #     -0.8014339170234643,
-        #     0.6483461253694023,
-        #     0.015537815938494006,
-        #     -0.7100282050990505,
-        #     0.01385806860749987,
-        #     0.7038653835600607,
-        # ])
-
-        # TEST 3
-        # header: 
-        #   seq: 335
-        #   stamp: 
-        #     secs: 1779497603
-        #     nsecs: 367282629
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.183538049421905
-        #     y: -0.8033540198793675
-        #     z: 0.6496437556347936
-        #   orientation: 
-        #     x: 0.020467060149254257
-        #     y: -0.6954386434303989
-        #     z: 0.039038353777513086
-        #     w: 0.717232319131587
-        # x, y, z, qx, qy, qz, qw
-        # insert_pose = np.array([
-        #     -0.1835,
-        #     -0.8033,
-        #     0.6496,
-        #     0.02046,
-        #     -0.695,
-        #     0.039038,
-        #     0.71723,
-        # ])
-
-        # TEST 5
-        # header: 
-        #   seq: 10003
-        #   stamp: 
-        #     secs: 1779500464
-        #     nsecs: 312157392
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.1838080104100469
-        #     y: -0.7962411102466086
-        #     z: 0.6505763004247016
-        #   orientation: 
-        #     x: 0.03752760301944924
-        #     y: -0.7041936115962509
-        #     z: 0.031532454361913306
-        #     w: 0.7083140127941535
-        # insert_pose = np.array([
-        #     -0.1838,
-        #     -0.796,
-        #     0.6505,
-        #     0.0375,
-        #     -0.704,
-        #     0.0315,
-        #     0.708,
-        # ])
-
-        # TEST 1 with leg screwing
-        # header: 
-        #   seq: 8752
-        #   stamp: 
-        #     secs: 1779501688
-        #     nsecs: 144459962
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.25324025352668666
-        #     y: -0.7569206354400362
-        #     z: 0.6569123475764651
-        #   orientation: 
-        #     x: -0.04211569574017768
-        #     y: -0.712022038003709
-        #     z: -0.01963518912163717
-        #     w: 0.7006178308589661
-        # insert_pose = np.array([
-        #     -0.2532,
-        #     -0.7569,
-        #     0.6569,
-        #     -0.04,
-        #     -0.712,
-        #     -0.019,
-        #     0.7006,
-        # ])
-
-        # Peg 40mm
-        # header: 
-        #   seq: 2829
-        #   stamp: 
-        #     secs: 1779563912
-        #     nsecs: 454090356
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.16388481972907465
-        #     y: -0.8328256692531469
-        #     z: 0.6759608631934267
-        #   orientation: 
-        #     x: 0.0015518093301182703
-        #     y: -0.7049198991835048
-        #     z: 0.010319730097969975
-        #     w: 0.7092101457210166
-        # insert_pose = np.array([
-        #     -0.1638,
-        #     -0.8328,
-        #     0.6759,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
-
-        # Peg 1mm
-        # header: 
-        #   seq: 13868
-        #   stamp: 
-        #     secs: 1779566626
-        #     nsecs: 699487209
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.16631540266594635
-        #     y: -0.8281532736454078
-        #     z: 0.6744182844937784
-        #   orientation: 
-        #     x: -0.7112864036424457
-        #     y: -0.019073096515772825
-        #     z: -0.7026314002854632
-        #     w: 0.004121203171993289
-        # insert_pose = np.array([
-        #     -0.1663,
-        #     -0.8281,
-        #     0.6744,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
-
-        # Peg 1mm centered
-        # header: 
-        #   seq: 4541
-        #   stamp: 
-        #     secs: 1779569015
-        #     nsecs: 145750045
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.034601964195730694
-        #     y: -0.7443723394041672
-        #     z: 0.6742140434911136
-        #   orientation: 
-        #     x: -0.0007871582548855268
-        #     y: -0.7083403727226888
-        #     z: -0.0008955728214741947
-        #     w: 0.7058700267770868
-        # insert_pose = np.array([
-        #     -0.0346,
-        #     -0.74437,
-        #     0.6742,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
-
-        # header: 
-        #   seq: 12782
-        #   stamp: 
-        #     secs: 1779569465
-        #     nsecs: 652877092
-        #   frame_id: "robot_frame"
-        # pose: 
-        #   position: 
-        #     x: -0.04742798034362555
-        #     y: -0.747396171858047
-        #     z: 0.6641372950673194
-        #   orientation: 
-        #     x: 0.007910975385667571
-        #     y: -0.707147616134106
-        #     z: 0.011970718334365336
-        #     w: 0.706920340184704
-        # insert_pose = np.array([
-        #     -0.0474,
-        #     -0.747,
-        #     0.6643,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
-
         # 2026-05-25 First Try part 2 (vertical)
-        # header: 
-        #   seq: 6956
-        #   stamp: 
-        #     secs: 1779735639
-        #     nsecs: 185767173
-        #   frame_id: "robot_frame"
-        # pose: 
         #   position: 
         #     x: -0.08844813556818426
         #     y: -0.7765577369600304
@@ -588,121 +336,28 @@ def main():
         #     0.707,
         # ])
 
-
-        # 2026-05-25 First Try part 0 (horizontal)
+        # 2026-06-13 Part 2 (vertical)
         #   position: 
-        #     x: -0.09882881915305525
-        #     y: -0.7822068467649285
-        #     z: 0.7542916312434313
+        #     x: -0.09571262756182047
+        #     y: -0.7639454461950859
+        #     z: 0.6324156484909513
         #   orientation: 
-        #     x: 0.5138757305102791
-        #     y: -0.4861300573875209
-        #     z: -0.4825875576044899
-        #     w: 0.5164480130102794
-        # insert_pose = np.array([
-        #     -0.0988,
-        #     -0.7822,
-        #     0.75429,
-        #     0.513,
-        #     -0.4861,
-        #     -0.482,
-        #     0.516,
-        # ])
-
-        # 2026-05-25 Second Try part 0 (horizontal), clean xyzw and adjust y since moved
-        #   position: 
-        #     x: -0.09546959035788088
-        #     y: -0.7758836238932227
-        #     z: 0.750769531407949
-        #   orientation: 
-        #     x: 0.4825546590805628
-        #     y: 0.5112655633883816
-        #     z: 0.5123237615148678
-        #     w: 0.493227014750875
-        # insert_pose = np.array([
-        #     -0.09546,
-        #     -0.77588,
-        #     0.7507,
-        #     0.5,
-        #     -0.5,
-        #     -0.5,
-        #     0.5,
-        # ])
-
-        # 2026-05-26 furniturebench exact xyzw
-        # pose: 
-        #   position: 
-        #     x: -0.1517542506031715
-        #     y: -0.7052946960017755
-        #     z: 0.6562456571626196
-        #   orientation: 
-        #     x: 0.011032372373913593
-        #     y: -0.71490049856128
-        #     z: 0.012174189046690287
-        #     w: 0.6990331558929752
-        # insert_pose = np.array([
-        #     -0.1517,
-        #     -0.705,
-        #     0.656,
-        #     0.011,
-        #     -0.7149,
-        #     0.0121,
-        #     0.699,
-        # ])
-
-        # 2026-05-26 furniturebench clean xyzw
-        # pose: 
-        #   position: 
-        #     x: -0.1517542506031715
-        #     y: -0.7052946960017755
-        #     z: 0.6562456571626196
-        #   orientation: 
-        #     x: 0.011032372373913593
-        #     y: -0.71490049856128
-        #     z: 0.012174189046690287
-        #     w: 0.6990331558929752
-        # insert_pose = np.array([
-        #     -0.1517,
-        #     -0.705,
-        #     0.656,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
-
-        # 2026-05-26 furniturebench new placement clean xyzw
-        #   position: 
-        #     x: -0.18613640514932506
-        #     y: -0.7611521573258367
-        #     z: 0.6578835843680875
+        #     x: 0.021573868183511386
+        #     y: -0.7199091668954553
+        #     z: 0.011502597041645
+        #     w: 0.6936375493676722
         insert_pose = np.array([
-            -0.1861,
-            -0.761,
-            0.6578,
+            -0.09571,
+            -0.76394,
+            0.63241,
             0.0,
             -0.707,
             0.0,
             0.707,
         ])
 
-        # 2026-05-26 furniturebench other hole placement clean xyzw
-        #   position: 
-        #     x: -0.07333996784687341
-        #     y: -0.7558690469820115
-        #     z: 0.6587503847919816
-        # insert_pose = np.array([
-        #     -0.0733,
-        #     -0.75586,
-        #     0.6587,
-        #     0.0,
-        #     -0.707,
-        #     0.0,
-        #     0.707,
-        # ])
-
-        goal_mode = "screw"
-        # goal_mode = "preinsert"
+        # goal_mode = "screw"
+        goal_mode = "preinsert"
         if goal_mode == "preinsert":
             preinsert_pose = insert_pose.copy()
             print("OVERWRITING GOAL POSES WITH INSERT POSE")
