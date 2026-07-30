@@ -19,6 +19,7 @@ from .utils.obs_utils import (
     compute_intermediate_values,
     compute_obs_dim,
 )
+from .utils.obs_seam import validate_latent_obs_config
 from .utils.reset_utils import allocate_state_buffers, reset_env_state
 from .utils.reward_utils import compute_rewards
 from .utils.scene_utils import apply_physx_material_properties, setup_scene
@@ -46,9 +47,15 @@ class SimToolRealEnv(DirectRLEnv):
             )
         elif not callable(cfg.action.hand_action_transform):
             raise TypeError("action.hand_action_transform must be callable or None")
+        num_latent_obs = validate_latent_obs_config(
+            cfg.obs.num_latent_obs, cfg.obs.latent_obs_fn
+        )
+        cfg.obs.num_latent_obs = num_latent_obs
         cfg.action_space = 7 + hand_action_dim
-        cfg.observation_space = compute_obs_dim(cfg.obs.obs_list)
-        cfg.state_space = compute_obs_dim(cfg.obs.state_list)
+        cfg.observation_space = compute_obs_dim(
+            cfg.obs.obs_list, num_latent_obs
+        )
+        cfg.state_space = compute_obs_dim(cfg.obs.state_list, num_latent_obs)
 
         super().__init__(cfg, render_mode, **kwargs)  # runs _setup_scene
         apply_physx_material_properties(self)

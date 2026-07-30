@@ -132,6 +132,7 @@ class ObsCfg:
         "progress",
         "successes",
         "reward",
+        "latent_state",
     )
     obs_list: tuple[str, ...] = (
         "joint_pos",
@@ -144,8 +145,13 @@ class ObsCfg:
         "keypoints_rel_palm",
         "keypoints_rel_goal",
         "object_scales",
+        "latent_state",
     )
 
+    num_latent_obs: int = 0
+    # Callable receives raw measured (N, 22) hand positions in Lab joint order
+    # and returns the adapter-defined (N, num_latent_obs) latent state.
+    latent_obs_fn: Callable[[torch.Tensor], torch.Tensor] | None = None
     clamp_abs_observations: float = 10.0
 
 

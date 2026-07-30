@@ -71,8 +71,11 @@ def main() -> None:
     cfg.scene.num_envs = args.num_envs
     cfg.assets.num_assets_per_type = args.num_assets_per_type
 
-    assert compute_obs_dim(cfg.obs.obs_list) == expected_obs, (
-        f"obs_list sums to {compute_obs_dim(cfg.obs.obs_list)}, "
+    configured_obs = compute_obs_dim(
+        cfg.obs.obs_list, cfg.obs.num_latent_obs
+    )
+    assert configured_obs == expected_obs, (
+        f"obs_list sums to {configured_obs}, "
         f"checkpoint expects {expected_obs}"
     )
 

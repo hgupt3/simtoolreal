@@ -64,10 +64,12 @@ obs:
   state_list: [joint_pos, joint_vel, prev_action_targets, palm_pos, palm_rot, palm_vel,
                object_rot, object_vel, fingertip_pos_rel_palm, keypoints_rel_palm,
                keypoints_rel_goal, object_scales, closest_keypoint_max_dist,
-               closest_fingertip_dist, lifted_object, progress, successes, reward]
+               closest_fingertip_dist, lifted_object, progress, successes, reward,
+               latent_state]
   obs_list: [joint_pos, joint_vel, prev_action_targets, palm_pos, palm_rot,
              object_rot, fingertip_pos_rel_palm, keypoints_rel_palm,
-             keypoints_rel_goal, object_scales]
+             keypoints_rel_goal, object_scales, latent_state]
+  num_latent_obs: 0
   clamp_abs_observations: 10.0
 
 # -----------------------------------------------------------------------------

@@ -8,15 +8,20 @@ import torch
 
 from isaaclab.utils.math import convert_quat, quat_apply, quat_from_angle_axis, quat_mul
 
+from .obs_seam import (
+    NUM_FINGERTIPS,
+    NUM_JOINTS,
+    NUM_KEYPOINTS,
+    OBS_FIELD_SIZES,
+    compute_latent_state,
+    compute_obs_dim,
+)
+
 
 # ----------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------
 
-
-NUM_JOINTS: int = 29
-NUM_FINGERTIPS: int = 5
-NUM_KEYPOINTS: int = 4
 
 # Policy was trained against the palm center, not the raw wrist body.
 PALM_CENTER_OFFSET: tuple[float, float, float] = (-0.0, -0.02, 0.16)
@@ -31,33 +36,6 @@ KEYPOINT_CORNERS: tuple[tuple[int, int, int], ...] = (
     (-1, -1, 1),
     (-1, -1, -1),
 )
-
-OBS_FIELD_SIZES: dict[str, int] = {
-    "joint_pos": NUM_JOINTS,
-    "joint_vel": NUM_JOINTS,
-    "prev_action_targets": NUM_JOINTS,
-    "palm_pos": 3,
-    "palm_rot": 4,
-    "palm_vel": 6,
-    "object_rot": 4,
-    "object_vel": 6,
-    "fingertip_pos_rel_palm": 3 * NUM_FINGERTIPS,  # 15
-    "keypoints_rel_palm": 3 * NUM_KEYPOINTS,  # 12
-    "keypoints_rel_goal": 3 * NUM_KEYPOINTS,  # 12
-    "object_scales": 3,
-    "closest_keypoint_max_dist": 1,
-    "closest_fingertip_dist": NUM_FINGERTIPS,  # 5
-    "lifted_object": 1,
-    "progress": 1,
-    "successes": 1,
-    "reward": 1,
-}
-
-
-def compute_obs_dim(field_list) -> int:
-    """Return total tensor dim for an ordered list of obs field names."""
-    return sum(OBS_FIELD_SIZES[f] for f in field_list)
-
 
 def _stack_obs_dict(obs_dict: dict[str, torch.Tensor], field_list) -> torch.Tensor:
     """Concatenate named tensors in config order."""
@@ -305,6 +283,18 @@ def build_observations(env) -> dict[str, torch.Tensor]:
     obj_rot_xyzw = convert_quat(obj_rot, to="xyzw")
     noisy_obj_rot_xyzw = convert_quat(noisy_obj_rot, to="xyzw")
 
+    if env.cfg.obs.num_latent_obs > 0:
+        # The joint IDs select raw measured positions in Isaac Lab order.
+        hand_joint_pos = env.robot.data.joint_pos[:, env._hand_joint_ids]
+        latent_state = compute_latent_state(
+            hand_joint_pos,
+            env.cfg.obs.num_latent_obs,
+            env.cfg.obs.latent_obs_fn,
+        )
+    else:
+        # Preserve the default RNG/data path while satisfying the zero-width term.
+        latent_state = joint_pos[:, :0]
+
     obs_clean: dict[str, torch.Tensor] = {
         "joint_pos": joint_pos,
         "joint_vel": joint_vel,
@@ -324,8 +314,12 @@ def build_observations(env) -> dict[str, torch.Tensor]:
         "progress": torch.log(env.episode_length_buf.float() / 10.0 + 1.0).unsqueeze(-1),
         "successes": torch.log(env._successes.float() + 1.0).unsqueeze(-1),
         "reward": (env.reward_buf * 0.01).unsqueeze(-1),
+        "latent_state": latent_state,
     }
 
+    # Like prev_action_targets, the derived latent is shared between clean and
+    # noisy dictionaries: no sensor-field noise is applied. The actor copy
+    # participates only in the whole-policy delay below; the critic stays current.
     obs_noisy = dict(obs_clean)
     obs_noisy["object_rot"] = noisy_obj_rot_xyzw
     obs_noisy["object_vel"] = noisy_obj_vel
