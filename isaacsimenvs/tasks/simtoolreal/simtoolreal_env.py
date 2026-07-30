@@ -47,6 +47,11 @@ class SimToolRealEnv(DirectRLEnv):
             )
         elif not callable(cfg.action.hand_action_transform):
             raise TypeError("action.hand_action_transform must be callable or None")
+        if (
+            cfg.action.hand_state_reset_fn is not None
+            and not callable(cfg.action.hand_state_reset_fn)
+        ):
+            raise TypeError("action.hand_state_reset_fn must be callable or None")
         num_latent_obs = validate_latent_obs_config(
             cfg.obs.num_latent_obs, cfg.obs.latent_obs_fn
         )
@@ -67,11 +72,15 @@ class SimToolRealEnv(DirectRLEnv):
     def _reset_idx(self, env_ids) -> None:
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
-        super()._reset_idx(env_ids)
-        reset_env_state(
-            self,
-            torch.as_tensor(env_ids, device=self.device, dtype=torch.long),
+        env_ids = torch.as_tensor(
+            env_ids,
+            device=self.device,
+            dtype=torch.long,
         )
+        super()._reset_idx(env_ids)
+        reset_env_state(self, env_ids)
+        if self.cfg.action.hand_state_reset_fn is not None:
+            self.cfg.action.hand_state_reset_fn(env_ids)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         apply_action_pipeline(self, actions)

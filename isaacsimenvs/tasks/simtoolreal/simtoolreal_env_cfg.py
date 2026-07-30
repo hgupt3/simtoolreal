@@ -336,6 +336,9 @@ class ActionCfg:
     hand_action_transform: (
         Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None
     ) = None
+    # Optional adapter reset notification. Receives the one-dimensional int64
+    # tensor of environment indices after their hand positions/targets reset.
+    hand_state_reset_fn: Callable[[torch.Tensor], None] | None = None
 
 
 # ----------------------------------------------------------------------------
