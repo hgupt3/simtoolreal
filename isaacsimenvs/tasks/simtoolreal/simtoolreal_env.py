@@ -34,8 +34,19 @@ class SimToolRealEnv(DirectRLEnv):
     def __init__(
         self, cfg: SimToolRealEnvCfg, render_mode: str | None = None, **kwargs
     ) -> None:
-        # Override obs/state space from configured field lists before
+        # Override spaces from configured field lists before
         # DirectRLEnv / rl_games observes the configclass.
+        hand_action_dim = int(cfg.action.hand_action_dim)
+        if hand_action_dim < 1:
+            raise ValueError("action.hand_action_dim must be positive")
+        if cfg.action.hand_action_transform is None:
+            assert hand_action_dim == 22, (
+                "action.hand_action_dim must be 22 when "
+                "action.hand_action_transform is None"
+            )
+        elif not callable(cfg.action.hand_action_transform):
+            raise TypeError("action.hand_action_transform must be callable or None")
+        cfg.action_space = 7 + hand_action_dim
         cfg.observation_space = compute_obs_dim(cfg.obs.obs_list)
         cfg.state_space = compute_obs_dim(cfg.obs.state_list)
 

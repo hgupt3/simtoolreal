@@ -32,6 +32,10 @@ all DirectRLEnv hooks raise NotImplementedError. Phases B–H populate them.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import torch
+
 from isaaclab.envs import DirectRLEnvCfg, ViewerCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
@@ -320,6 +324,12 @@ class ActionCfg:
     arm_moving_average: float = 0.1
     hand_moving_average: float = 0.1
     dof_speed_scale: float = 1.5
+    hand_action_dim: int = 22
+    # Callable receives (raw policy hand actions, Lab-order previous hand targets)
+    # and returns 22 absolute Lab-order hand joint targets.
+    hand_action_transform: (
+        Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None
+    ) = None
 
 
 # ----------------------------------------------------------------------------
@@ -546,7 +556,8 @@ class SimToolRealEnvCfg(DirectRLEnvCfg):
     # --- DirectRLEnvCfg required fields ---
     decimation: int = 2  # 2 physics substeps per policy step
     episode_length_s: float = 10.0  # 600 policy steps * 2 * (1/120) = 10s
-    action_space: int = 29  # 7-DOF IIWA + 22-DOF SHARPA hand
+    # Re-derived as 7 + action.hand_action_dim in SimToolRealEnv.__init__.
+    action_space: int = 29
     # Obs/state sizes are derived from obs.obs_list / obs.state_list at env init.
     # Placeholder keeps the configclass instantiable before the env computes the
     # final spaces.

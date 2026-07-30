@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 decimation: 2
 episode_length_s: 10.0
-action_space: 29
+# action_space is derived as 7 + action.hand_action_dim by SimToolRealEnv.
 # observation_space / state_space are computed in SimToolRealEnv.__init__ from
 # obs.obs_list / obs.state_list (see Phase D). Configclass defaults (140/140)
 # act only as transient placeholders before __init__ overwrites them.
@@ -77,6 +77,7 @@ action:
   arm_moving_average: 0.1
   hand_moving_average: 0.1
   dof_speed_scale: 1.5
+  hand_action_dim: 22
 
 # -----------------------------------------------------------------------------
 # 5) reward — keypoint + lifting + distance-delta + reach-goal + action penalties

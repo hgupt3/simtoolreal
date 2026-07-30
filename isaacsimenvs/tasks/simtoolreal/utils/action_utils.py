@@ -7,6 +7,39 @@ import math
 import torch
 
 
+NUM_HAND_JOINTS = 22
+
+
+def compute_hand_raw_targets(
+    hand_actions: torch.Tensor,
+    prev_hand_targets: torch.Tensor,
+    hand_lower: torch.Tensor,
+    hand_upper: torch.Tensor,
+    hand_action_transform=None,
+) -> torch.Tensor:
+    """Decode policy hand actions into absolute Lab-order hand joint targets.
+
+    A custom transform receives the raw policy-order ``(N, K)`` hand slice and
+    Lab-order ``(N, 22)`` previous hand targets. The default path instead
+    receives an already canonical-to-Lab-permuted ``(N, 22)`` hand slice.
+    """
+    if hand_action_transform is None:
+        assert hand_actions.shape[-1] == NUM_HAND_JOINTS, (
+            "hand_action_dim must be 22 when hand_action_transform is None"
+        )
+        return hand_lower + 0.5 * (hand_actions + 1.0) * (
+            hand_upper - hand_lower
+        )
+
+    hand_targets = hand_action_transform(hand_actions, prev_hand_targets)
+    if hand_targets.shape != prev_hand_targets.shape:
+        raise ValueError(
+            "hand_action_transform must return shape "
+            f"{tuple(prev_hand_targets.shape)}, got {tuple(hand_targets.shape)}"
+        )
+    return hand_targets
+
+
 def sample_log_uniform(lo_hi: tuple[float, float], n: int) -> torch.Tensor:
     """Log-uniform sample on CPU (caller moves to device)."""
     lo, hi = lo_hi
@@ -17,7 +50,8 @@ def sample_log_uniform(lo_hi: tuple[float, float], n: int) -> torch.Tensor:
 
 def apply_action_pipeline(env, actions: torch.Tensor) -> None:
     """Apply delay, canonical-to-Lab mapping, smoothing, and target clamps."""
-    # Debug replay path accepts an already Lab-order target.
+    # Debug replay accepts an already Lab-order target and intentionally bypasses
+    # action delay, hand transformation, smoothing, and clamping.
     replay_target = getattr(env, "_replay_target_lab_order", None)
     if replay_target is not None:
         env._cur_targets[:] = replay_target
@@ -29,9 +63,6 @@ def apply_action_pipeline(env, actions: torch.Tensor) -> None:
     dt = env.step_dt  # policy step (= decimation * sim.dt = 1/60 s)
 
     actions = actions.clone().to(env.device)
-
-    # Canonical policy order -> Lab parser order.
-    actions = actions[:, env._perm_canon_to_lab]
 
     # Action delay.
     if dr.use_action_delay and dr.action_delay_max > 0:
@@ -48,23 +79,31 @@ def apply_action_pipeline(env, actions: torch.Tensor) -> None:
         ]
 
     # Arm: velocity-delta accumulator.
-    arm_action = actions[:, :7]
-    arm_raw = env._prev_targets[:, :7] + act_cfg.dof_speed_scale * dt * arm_action
+    arm_action = actions[:, env._arm_action_ids]
+    prev_arm_targets = env._prev_targets[:, env._arm_joint_ids]
+    arm_raw = prev_arm_targets + act_cfg.dof_speed_scale * dt * arm_action
     arm_raw = torch.clamp(arm_raw, env._arm_lower, env._arm_upper)
     arm_smoothed = (
         act_cfg.arm_moving_average * arm_raw
-        + (1.0 - act_cfg.arm_moving_average) * env._prev_targets[:, :7]
+        + (1.0 - act_cfg.arm_moving_average) * prev_arm_targets
     )
     arm_smoothed = torch.clamp(arm_smoothed, env._arm_lower, env._arm_upper)
 
-    # Hand: absolute [-1, 1] scale.
+    # Hand: configurable policy slice -> absolute Lab-order targets.
     hand_action = actions[:, 7:]
-    hand_raw = env._hand_lower + 0.5 * (hand_action + 1.0) * (
-        env._hand_upper - env._hand_lower
+    prev_hand_targets = env._prev_targets[:, env._hand_joint_ids]
+    if act_cfg.hand_action_transform is None:
+        hand_action = hand_action[:, env._hand_action_ids]
+    hand_raw = compute_hand_raw_targets(
+        hand_action,
+        prev_hand_targets,
+        env._hand_lower,
+        env._hand_upper,
+        act_cfg.hand_action_transform,
     )
     hand_smoothed = (
         act_cfg.hand_moving_average * hand_raw
-        + (1.0 - act_cfg.hand_moving_average) * env._prev_targets[:, 7:]
+        + (1.0 - act_cfg.hand_moving_average) * prev_hand_targets
     )
     hand_smoothed = torch.clamp(hand_smoothed, env._hand_lower, env._hand_upper)
 
@@ -130,4 +169,9 @@ def apply_wrench_dr(env) -> None:
     )
 
 
-__all__ = ["apply_action_pipeline", "apply_wrench_dr", "sample_log_uniform"]
+__all__ = [
+    "apply_action_pipeline",
+    "apply_wrench_dr",
+    "compute_hand_raw_targets",
+    "sample_log_uniform",
+]

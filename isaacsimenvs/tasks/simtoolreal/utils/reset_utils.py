@@ -48,6 +48,18 @@ def allocate_state_buffers(env) -> None:
         [lab_names.index(n) for n in JOINT_NAMES_CANONICAL],
         device=env.device, dtype=torch.long,
     )
+    # Policy arm actions are canonical indices 0:7. Default hand actions are
+    # canonical indices 7:29, with the offset removed for the hand-only slice.
+    env._arm_action_ids = env._perm_canon_to_lab[env._arm_joint_ids]
+    env._hand_action_ids = (
+        env._perm_canon_to_lab[env._hand_joint_ids] - len(env._arm_joint_ids)
+    )
+    assert sorted(env._arm_action_ids.tolist()) == list(
+        range(len(env._arm_joint_ids))
+    )
+    assert sorted(env._hand_action_ids.tolist()) == list(
+        range(len(env._hand_joint_ids))
+    )
 
     limits = env.robot.data.joint_pos_limits  # (N, num_joints, 2), Lab order
 
@@ -63,8 +75,9 @@ def allocate_state_buffers(env) -> None:
 
     # --- Action target buffers  ---
     action_space = env.cfg.action_space
-    env._cur_targets = torch.zeros(env.num_envs, action_space, device=env.device)
-    env._prev_targets = torch.zeros(env.num_envs, action_space, device=env.device)
+    num_joints = len(lab_names)
+    env._cur_targets = torch.zeros(env.num_envs, num_joints, device=env.device)
+    env._prev_targets = torch.zeros(env.num_envs, num_joints, device=env.device)
 
     # --- Keypoint offsets in object local frame ---
     corners = torch.tensor(
