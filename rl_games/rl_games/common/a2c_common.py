@@ -28,6 +28,11 @@ from time import sleep
 
 from rl_games.common import common_losses
 
+
+ROLLING_CHECKPOINT_INTERVAL_SECONDS = 15 * 60
+ARCHIVAL_CHECKPOINT_INTERVAL_SECONDS = 4 * 60 * 60
+
+
 def rescale_actions(low, high, action):
     d = (high - low) / 2.0
     m = (high + low) / 2.0
@@ -156,7 +161,6 @@ class A2CBase(BaseAlgorithm):
         self.has_self_play_config = self.self_play_config is not None
 
         self.self_play = config.get('self_play', False)
-        self.save_freq = config.get('save_frequency', 0)
         self.save_best_after = config.get('save_best_after', 100)
         self.print_stats = config.get('print_stats', True)
         self.rnn_states = None
@@ -652,6 +656,47 @@ class A2CBase(BaseAlgorithm):
         self.game_lengths.clear()
         self.mean_rewards = self.last_mean_rewards = -1000000000
         self.algo_observer.after_clear_stats()
+
+    def _start_checkpoint_schedule(self):
+        now = time.monotonic()
+        self._next_rolling_checkpoint_time = now + ROLLING_CHECKPOINT_INTERVAL_SECONDS
+        self._next_archival_checkpoint_time = now + ARCHIVAL_CHECKPOINT_INTERVAL_SECONDS
+
+    @staticmethod
+    def _advance_checkpoint_time(due_time, now, interval):
+        skipped_intervals = int((now - due_time) // interval) + 1
+        return due_time + skipped_intervals * interval
+
+    def _save_periodic_checkpoints(self, checkpoint_name, override_state=None):
+        now = time.monotonic()
+        if now >= self._next_archival_checkpoint_time:
+            archive_path = os.path.join(self.nn_dir, 'last_' + checkpoint_name)
+            if override_state is None:
+                self.save(archive_path)
+            else:
+                self.save(archive_path, override_state)
+            self._next_archival_checkpoint_time = self._advance_checkpoint_time(
+                self._next_archival_checkpoint_time,
+                now,
+                ARCHIVAL_CHECKPOINT_INTERVAL_SECONDS,
+            )
+
+        if now >= self._next_rolling_checkpoint_time:
+            latest_dir = os.path.join(self.experiment_dir, 'last')
+            torch_ext.safe_filesystem_op(os.makedirs, latest_dir, exist_ok=True)
+            latest_path = os.path.join(latest_dir, 'model.pth')
+            if os.path.exists(latest_path):
+                os.replace(latest_path, latest_path + '.old')
+            save_path = os.path.join(latest_dir, 'model')
+            if override_state is None:
+                self.save(save_path)
+            else:
+                self.save(save_path, override_state)
+            self._next_rolling_checkpoint_time = self._advance_checkpoint_time(
+                self._next_rolling_checkpoint_time,
+                now,
+                ROLLING_CHECKPOINT_INTERVAL_SECONDS,
+            )
 
     def update_epoch(self):
         pass
@@ -1215,6 +1260,7 @@ class DiscreteA2CBase(A2CBase):
     def train(self):
         self.init_tensors()
         start_time = time.time()
+        self._start_checkpoint_schedule()
         total_time = 0
         rep_count = 0
         # self.frame = 0  # loading from checkpoint
@@ -1257,6 +1303,14 @@ class DiscreteA2CBase(A2CBase):
 
                 self.algo_observer.after_print_stats(frame, epoch_num, total_time)
 
+                periodic_mean_reward = (
+                    self.game_rewards.get_mean()[0]
+                    if self.game_rewards.current_size > 0
+                    else self.mean_rewards
+                )
+                periodic_checkpoint_name = self.config['name'] + '_ep_' + str(epoch_num) + '_rew_' + str(periodic_mean_reward)
+                self._save_periodic_checkpoints(periodic_checkpoint_name)
+
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
                     mean_shaped_rewards = self.game_shaped_rewards.get_mean()
@@ -1282,13 +1336,6 @@ class DiscreteA2CBase(A2CBase):
 
                     # removed equal signs (i.e. "rew=") from the checkpoint name since it messes with hydra CLI parsing
                     checkpoint_name = self.config['name'] + '_ep_' + str(epoch_num) + '_rew_' + str(mean_rewards[0])
-
-                    if self.save_freq > 0:
-                        if epoch_num % self.save_freq == 0:
-                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
-                        if epoch_num % 3 == 0:
-                            torch_ext.safe_filesystem_op(os.makedirs, os.path.join(self.experiment_dir, 'last'), exist_ok=True)
-                            self.save(os.path.join(self.experiment_dir, 'last', 'model'))
 
                     if mean_rewards[0] > self.last_mean_rewards and epoch_num >= self.save_best_after:
                         print('saving next best rewards: ', mean_rewards)
@@ -1534,6 +1581,7 @@ class ContinuousA2CBase(A2CBase):
     def train(self):
         self.init_tensors()
         start_time = time.time()
+        self._start_checkpoint_schedule()
         total_time = 0
         rep_count = 0
         if self.obs is None:
@@ -1595,6 +1643,14 @@ class ContinuousA2CBase(A2CBase):
                 else:
                     all_state_dict = None
 
+                periodic_mean_reward = (
+                    self.game_rewards.get_mean()[0]
+                    if self.game_rewards.current_size > 0
+                    else self.mean_rewards
+                )
+                periodic_checkpoint_name = self.config['name'] + '_ep_' + str(epoch_num) + '_rew_' + str(periodic_mean_reward)
+                self._save_periodic_checkpoints(periodic_checkpoint_name, all_state_dict)
+
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
                     mean_shaped_rewards = self.game_shaped_rewards.get_mean()
@@ -1639,15 +1695,6 @@ class ContinuousA2CBase(A2CBase):
                         self.self_play_manager.update(self)
 
                     checkpoint_name = self.config['name'] + '_ep_' + str(epoch_num) + '_rew_' + str(mean_rewards[0])
-
-                    if self.save_freq > 0:
-                        if epoch_num % self.save_freq == 0:
-                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name), all_state_dict)
-                        if epoch_num % 200 == 0:    
-                            torch_ext.safe_filesystem_op(os.makedirs, os.path.join(self.experiment_dir, 'last'), exist_ok=True)
-                            if os.path.exists(os.path.join(self.experiment_dir, 'last', 'model.pth')):
-                                os.system(f"cp {os.path.join(self.experiment_dir, 'last', 'model.pth')} {os.path.join(self.experiment_dir, 'last', 'model.pth.old')}")
-                            self.save(os.path.join(self.experiment_dir, 'last', 'model'), all_state_dict)
 
                     if mean_rewards[0] > self.last_mean_rewards and epoch_num >= 10:
                         print('saving next best rewards: ', mean_rewards)
