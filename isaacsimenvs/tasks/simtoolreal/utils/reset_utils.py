@@ -78,6 +78,15 @@ def allocate_state_buffers(env) -> None:
     num_joints = len(lab_names)
     env._cur_targets = torch.zeros(env.num_envs, num_joints, device=env.device)
     env._prev_targets = torch.zeros(env.num_envs, num_joints, device=env.device)
+    env._slow_hand_targets = (
+        torch.zeros(
+            env.num_envs,
+            len(env._hand_joint_ids),
+            device=env.device,
+        )
+        if env.cfg.action.hand_fast_offset_transform is not None
+        else None
+    )
 
     # --- Keypoint offsets in object local frame ---
     corners = torch.tensor(
@@ -231,6 +240,8 @@ def _randomize_robot_dof_state(env, env_ids: torch.Tensor) -> None:
     env.robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
     env._prev_targets[env_ids] = joint_pos
     env._cur_targets[env_ids] = joint_pos
+    if env._slow_hand_targets is not None:
+        env._slow_hand_targets[env_ids] = joint_pos[:, env._hand_joint_ids]
 
 
 def _reset_table_pose(env, env_ids: torch.Tensor) -> None:

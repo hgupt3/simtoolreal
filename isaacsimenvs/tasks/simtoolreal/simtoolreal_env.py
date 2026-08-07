@@ -47,6 +47,16 @@ class SimToolRealEnv(DirectRLEnv):
             )
         elif not callable(cfg.action.hand_action_transform):
             raise TypeError("action.hand_action_transform must be callable or None")
+        if cfg.action.hand_fast_offset_transform is not None:
+            if cfg.action.hand_action_transform is None:
+                raise ValueError(
+                    "action.hand_fast_offset_transform requires "
+                    "action.hand_action_transform"
+                )
+            if not callable(cfg.action.hand_fast_offset_transform):
+                raise TypeError(
+                    "action.hand_fast_offset_transform must be callable or None"
+                )
         if (
             cfg.action.hand_state_reset_fn is not None
             and not callable(cfg.action.hand_state_reset_fn)

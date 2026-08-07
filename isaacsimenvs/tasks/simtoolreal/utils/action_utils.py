@@ -56,6 +56,10 @@ def apply_action_pipeline(env, actions: torch.Tensor) -> None:
     if replay_target is not None:
         env._cur_targets[:] = replay_target
         env._prev_targets = env._cur_targets.clone()
+        if env._slow_hand_targets is not None:
+            env._slow_hand_targets.copy_(
+                replay_target[:, env._hand_joint_ids]
+            )
         return
 
     dr = env.cfg.domain_randomization
@@ -101,10 +105,32 @@ def apply_action_pipeline(env, actions: torch.Tensor) -> None:
         env._hand_upper,
         act_cfg.hand_action_transform,
     )
+    previous_slow_hand_targets = prev_hand_targets
+    if env._slow_hand_targets is not None:
+        previous_slow_hand_targets = env._slow_hand_targets
     hand_smoothed = (
         act_cfg.hand_moving_average * hand_raw
-        + (1.0 - act_cfg.hand_moving_average) * prev_hand_targets
+        + (1.0 - act_cfg.hand_moving_average) * previous_slow_hand_targets
     )
+    if act_cfg.hand_fast_offset_transform is not None:
+        if env._slow_hand_targets is None:
+            raise RuntimeError("fast-offset control requires slow-target state")
+        fast_offset = act_cfg.hand_fast_offset_transform(hand_action)
+        if fast_offset.shape != hand_smoothed.shape:
+            raise ValueError(
+                "hand_fast_offset_transform must return shape "
+                f"{tuple(hand_smoothed.shape)}, got {tuple(fast_offset.shape)}"
+            )
+        if (
+            fast_offset.device != hand_smoothed.device
+            or fast_offset.dtype != hand_smoothed.dtype
+        ):
+            raise ValueError(
+                "hand_fast_offset_transform output device/dtype must match "
+                "the hand target"
+            )
+        env._slow_hand_targets.copy_(hand_smoothed)
+        hand_smoothed = hand_smoothed + fast_offset
     hand_smoothed = torch.clamp(hand_smoothed, env._hand_lower, env._hand_upper)
 
     # Write Lab-order targets and cache them for the next step.
