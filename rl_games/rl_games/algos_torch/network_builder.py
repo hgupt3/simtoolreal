@@ -45,6 +45,16 @@ class NetworkBuilder:
             self.init_factory = object_factory.ObjectFactory()
             #self.init_factory.register_builder('normc_initializer', lambda **kwargs : normc_initializer(**kwargs))
             self.init_factory.register_builder('const_initializer', lambda **kwargs : _create_initializer(nn.init.constant_,**kwargs))
+            def _vector_init(val):
+                def _apply(tensor):
+                    v = torch.tensor(val, dtype=tensor.dtype)
+                    if v.shape != tensor.shape:
+                        raise ValueError(f"vector_initializer shape {tuple(v.shape)} != param {tuple(tensor.shape)}")
+                    with torch.no_grad():
+                        tensor.copy_(v)
+                    print(f"[action-bench] vector sigma init applied ({v.numel()} dims)")
+                return _apply
+            self.init_factory.register_builder('vector_initializer', lambda **kwargs : _vector_init(kwargs['val']))
             self.init_factory.register_builder('orthogonal_initializer', lambda **kwargs : _create_initializer(nn.init.orthogonal_,**kwargs))
             self.init_factory.register_builder('glorot_normal_initializer', lambda **kwargs : _create_initializer(nn.init.xavier_normal_,**kwargs))
             self.init_factory.register_builder('glorot_uniform_initializer', lambda **kwargs : _create_initializer(nn.init.xavier_uniform_,**kwargs))
