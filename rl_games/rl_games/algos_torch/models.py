@@ -270,6 +270,11 @@ class ModelA2CContinuousLogStd(BaseModel):
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
             if is_train:
                 entropy = distr.entropy().sum(dim=-1)
+                corr = self._corr_factor()
+                if corr is not None:
+                    # exact entropy of the correlated Gaussian: the blend's
+                    # logdet must stay in the graph so entropy_coef sees w
+                    entropy = entropy + corr[3]
                 prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
                 result = {
                     'prev_neglogp' : torch.squeeze(prev_neglogp),
@@ -278,11 +283,15 @@ class ModelA2CContinuousLogStd(BaseModel):
                     'rnn_states' : states,
                     'mus' : mu,
                     'sigmas' : sigma
-                }                
+                }
                 return result
             else:
+                corr = self._corr_factor()
                 L = getattr(self.a2c_network, 'noise_corr_chol', None)
-                if L is not None:
+                if corr is not None:
+                    eps = torch.randn_like(mu)
+                    selected_action = mu + sigma * (eps @ corr[0].T)
+                elif L is not None:
                     eps = torch.randn_like(mu)
                     selected_action = mu + sigma * (eps @ L.T)
                 else:
@@ -299,7 +308,37 @@ class ModelA2CContinuousLogStd(BaseModel):
                 }
                 return result
 
+        def _corr_factor(self):
+            """Learnable per-direction blend C(w) = D^-1/2 V diag(v) V^T D^-1/2.
+
+            v_i = (1-w_i) + w_i * lam_i on the fixed human eigenbasis V;
+            returns (A, v, d, logdet_A) with A A^T = C(w), unit diagonal.
+            """
+            net = self.a2c_network
+            logit = getattr(net, 'noise_corr_logit', None)
+            if logit is None:
+                return None
+            V = net.noise_corr_eigvecs
+            lam = net.noise_corr_eigvals
+            w = torch.sigmoid(logit)
+            v = 1.0 - w + w * lam
+            M = (V * v) @ V.T
+            d = torch.diagonal(M)
+            A = (V * torch.sqrt(v)) * torch.rsqrt(d).unsqueeze(-1)
+            logdet_a = 0.5 * (torch.log(v).sum() - torch.log(d).sum())
+            return A, v, d, logdet_a
+
         def neglogp(self, x, mean, std, logstd):
+            corr = self._corr_factor()
+            if corr is not None:
+                A, v, d, logdet_a = corr
+                y = (x - mean) / std
+                # A^-1 = diag(v^-1/2) V^T diag(d^1/2)
+                z = ((y * torch.sqrt(d)) @ self.a2c_network.noise_corr_eigvecs) \
+                    * torch.rsqrt(v)
+                return 0.5 * (z**2).sum(dim=-1) \
+                    + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
+                    + logstd.sum(dim=-1) + logdet_a
             L = getattr(self.a2c_network, 'noise_corr_chol', None)
             if L is not None:
                 z = torch.linalg.solve_triangular(

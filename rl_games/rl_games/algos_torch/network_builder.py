@@ -330,13 +330,33 @@ class A2CBuilder(NetworkBuilder):
                     if _C.shape != (actions_num, actions_num):
                         raise ValueError(
                             f"noise_correlation shape {_C.shape} != ({actions_num},{actions_num})")
-                    _L = _np.linalg.cholesky(_C)
-                    self.register_buffer('noise_corr_chol',
-                                         torch.tensor(_L, dtype=torch.float32))
-                    with torch.no_grad():
-                        self.mu.weight.copy_(self.noise_corr_chol @ self.mu.weight)
-                    print(f"[action-bench] correlated exploration active "
-                          f"({actions_num}x{actions_num}, mu-init shaped)")
+                    if self.space_config.get('noise_correlation_learnable'):
+                        _lam, _V = _np.linalg.eigh(_C)
+                        self.register_buffer('noise_corr_eigvals',
+                                             torch.tensor(_lam, dtype=torch.float32))
+                        self.register_buffer('noise_corr_eigvecs',
+                                             torch.tensor(_V, dtype=torch.float32))
+                        # per-direction blend logits, sigmoid(0) = 0.5 init
+                        self.noise_corr_logit = nn.Parameter(
+                            torch.zeros(actions_num), requires_grad=True)
+                        _w0 = 0.5
+                        _v = (1.0 - _w0) + _w0 * _lam
+                        _M = (_V * _v) @ _V.T
+                        _d = _np.diag(_M).copy()
+                        _A = (_V * _np.sqrt(_v)) / _np.sqrt(_d)[:, None]
+                        with torch.no_grad():
+                            self.mu.weight.copy_(
+                                torch.tensor(_A, dtype=torch.float32) @ self.mu.weight)
+                        print(f"[action-bench] learnable correlated exploration active "
+                              f"({actions_num} dims, per-direction blend, w init {_w0})")
+                    else:
+                        _L = _np.linalg.cholesky(_C)
+                        self.register_buffer('noise_corr_chol',
+                                             torch.tensor(_L, dtype=torch.float32))
+                        with torch.no_grad():
+                            self.mu.weight.copy_(self.noise_corr_chol @ self.mu.weight)
+                        print(f"[action-bench] correlated exploration active "
+                              f"({actions_num}x{actions_num}, mu-init shaped)")
                 if self.fixed_sigma != 'obs_cond':
                     sigma_init(self.sigma)
                 else:
