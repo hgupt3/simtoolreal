@@ -281,7 +281,12 @@ class ModelA2CContinuousLogStd(BaseModel):
                 }                
                 return result
             else:
-                selected_action = distr.sample()
+                L = getattr(self.a2c_network, 'noise_corr_chol', None)
+                if L is not None:
+                    eps = torch.randn_like(mu)
+                    selected_action = mu + sigma * (eps @ L.T)
+                else:
+                    selected_action = distr.sample()
                 # selected_action = distr.mean # DEBUG
                 neglogp = self.neglogp(selected_action, mu, sigma, logstd)
                 result = {
@@ -295,6 +300,15 @@ class ModelA2CContinuousLogStd(BaseModel):
                 return result
 
         def neglogp(self, x, mean, std, logstd):
+            L = getattr(self.a2c_network, 'noise_corr_chol', None)
+            if L is not None:
+                z = torch.linalg.solve_triangular(
+                    L, ((x - mean) / std).unsqueeze(-1), upper=False
+                ).squeeze(-1)
+                logdet = torch.log(torch.diagonal(L)).sum()
+                return 0.5 * (z**2).sum(dim=-1) \
+                    + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
+                    + logstd.sum(dim=-1) + logdet
             return 0.5 * (((x - mean) / std)**2).sum(dim=-1) \
                 + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
                 + logstd.sum(dim=-1)
