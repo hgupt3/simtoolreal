@@ -326,7 +326,11 @@ class ModelA2CContinuousLogStd(BaseModel):
                 M = (V * v) @ V.T
                 d = torch.diagonal(M)
             else:
-                # covariance blend: trace conserved, per-joint budgets from data
+                # covariance blend: per-joint budgets from data. Renormalize so
+                # total variance is pinned at D for EVERY dial position - the
+                # dials can only redistribute shape, never inflate temperature
+                # (sigma remains the sole loudness knob).
+                v = v * (v.numel() / v.sum())
                 d = torch.ones_like(v)
             A = (V * torch.sqrt(v)) * torch.rsqrt(d).unsqueeze(-1)
             logdet_a = 0.5 * (torch.log(v).sum() - torch.log(d).sum())

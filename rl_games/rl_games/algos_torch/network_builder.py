@@ -351,6 +351,8 @@ class A2CBuilder(NetworkBuilder):
                             self.space_config.get(
                                 'noise_correlation_unit_diagonal', True))
                         _v = (1.0 - _w0) + _w0 * _lam
+                        if not self.noise_corr_unit_diag:
+                            _v = _v * (actions_num / _v.sum())
                         if self.noise_corr_unit_diag:
                             _M = (_V * _v) @ _V.T
                             _d = _np.diag(_M).copy()
