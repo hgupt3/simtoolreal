@@ -336,12 +336,17 @@ class A2CBuilder(NetworkBuilder):
                                              torch.tensor(_lam, dtype=torch.float32))
                         self.register_buffer('noise_corr_eigvecs',
                                              torch.tensor(_V, dtype=torch.float32))
-                        # per-direction blend logits, sigmoid(0) = 0.5 init
+                        # per-direction blend logits, sigmoid(logit0) = w init
+                        _w0 = float(self.space_config.get(
+                            'noise_correlation_w_init', 0.5))
+                        if not 0.0 < _w0 < 1.0:
+                            raise ValueError(
+                                f"noise_correlation_w_init must be in (0,1), got {_w0}")
+                        _logit0 = float(_np.log(_w0 / (1.0 - _w0)))
                         self.noise_corr_logit = nn.Parameter(
-                            torch.zeros(actions_num), requires_grad=True)
+                            torch.full((actions_num,), _logit0), requires_grad=True)
                         self.noise_corr_lr_mul = float(
                             self.space_config.get('noise_correlation_lr_mul', 1.0))
-                        _w0 = 0.5
                         _v = (1.0 - _w0) + _w0 * _lam
                         _M = (_V * _v) @ _V.T
                         _d = _np.diag(_M).copy()
