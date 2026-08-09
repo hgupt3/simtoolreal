@@ -322,8 +322,12 @@ class ModelA2CContinuousLogStd(BaseModel):
             lam = net.noise_corr_eigvals
             w = torch.sigmoid(logit)
             v = 1.0 - w + w * lam
-            M = (V * v) @ V.T
-            d = torch.diagonal(M)
+            if getattr(net, 'noise_corr_unit_diag', True):
+                M = (V * v) @ V.T
+                d = torch.diagonal(M)
+            else:
+                # covariance blend: trace conserved, per-joint budgets from data
+                d = torch.ones_like(v)
             A = (V * torch.sqrt(v)) * torch.rsqrt(d).unsqueeze(-1)
             logdet_a = 0.5 * (torch.log(v).sum() - torch.log(d).sum())
             return A, v, d, logdet_a

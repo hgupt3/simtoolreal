@@ -347,9 +347,15 @@ class A2CBuilder(NetworkBuilder):
                             torch.full((actions_num,), _logit0), requires_grad=True)
                         self.noise_corr_lr_mul = float(
                             self.space_config.get('noise_correlation_lr_mul', 1.0))
+                        self.noise_corr_unit_diag = bool(
+                            self.space_config.get(
+                                'noise_correlation_unit_diagonal', True))
                         _v = (1.0 - _w0) + _w0 * _lam
-                        _M = (_V * _v) @ _V.T
-                        _d = _np.diag(_M).copy()
+                        if self.noise_corr_unit_diag:
+                            _M = (_V * _v) @ _V.T
+                            _d = _np.diag(_M).copy()
+                        else:
+                            _d = _np.ones(actions_num)
                         _A = (_V * _np.sqrt(_v)) / _np.sqrt(_d)[:, None]
                         with torch.no_grad():
                             self.mu.weight.copy_(
