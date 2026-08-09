@@ -40,7 +40,22 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         self.init_rnn_from_model(self.model)
         self.last_lr = float(self.last_lr)
         self.bound_loss_type = self.config.get('bound_loss_type', 'bound') # 'regularisation' or 'bound'
-        self.optimizer = optim.Adam(self.model.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+        _dial_mul = float(getattr(
+            getattr(self.model, 'a2c_network', None), 'noise_corr_lr_mul', 1.0))
+        if _dial_mul != 1.0:
+            _dial = [p for n, p in self.model.named_parameters()
+                     if 'noise_corr_logit' in n]
+            _rest = [p for n, p in self.model.named_parameters()
+                     if 'noise_corr_logit' not in n]
+            self.optimizer = optim.Adam(
+                [{'params': _rest},
+                 {'params': _dial, 'lr': float(self.last_lr) * _dial_mul,
+                  'lr_mul': _dial_mul}],
+                float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+            print(f"[action-bench] noise-corr dial lr multiplier {_dial_mul} "
+                  f"({len(_dial)} params in fast group)")
+        else:
+            self.optimizer = optim.Adam(self.model.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
 
         if self.has_central_value:
             if self.intr_reward_coef_embd is not None and not (self.expl_type.startswith('mixed_expl') and 'disjoint' in self.expl_type):

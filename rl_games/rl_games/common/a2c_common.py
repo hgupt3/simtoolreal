@@ -453,7 +453,7 @@ class A2CBase(BaseAlgorithm):
             lr = lr_tensor.item()
 
         for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
+            param_group['lr'] = lr * param_group.get('lr_mul', 1.0)
         
         #if self.has_central_value:
         #    self.central_value_net.update_lr(lr)
@@ -881,7 +881,7 @@ class A2CBase(BaseAlgorithm):
                     self.learning_rate = param_value
 
                     for param_group in self.optimizer.param_groups:
-                        param_group["lr"] = self.learning_rate
+                        param_group["lr"] = self.learning_rate * param_group.get('lr_mul', 1.0)
         elif param_name == "kl_threshold":
             if self.global_rank == 0:
                 if self.is_adaptive_lr:

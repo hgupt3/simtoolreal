@@ -339,6 +339,8 @@ class A2CBuilder(NetworkBuilder):
                         # per-direction blend logits, sigmoid(0) = 0.5 init
                         self.noise_corr_logit = nn.Parameter(
                             torch.zeros(actions_num), requires_grad=True)
+                        self.noise_corr_lr_mul = float(
+                            self.space_config.get('noise_correlation_lr_mul', 1.0))
                         _w0 = 0.5
                         _v = (1.0 - _w0) + _w0 * _lam
                         _M = (_V * _v) @ _V.T
