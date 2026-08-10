@@ -326,12 +326,24 @@ class A2CBuilder(NetworkBuilder):
                 _corr_path = self.space_config.get('noise_correlation')
                 if _corr_path:
                     import numpy as _np
-                    _C = _np.load(_corr_path)
-                    if _C.shape != (actions_num, actions_num):
-                        raise ValueError(
-                            f"noise_correlation shape {_C.shape} != ({actions_num},{actions_num})")
+                    if not str(_corr_path).endswith('.npz'):
+                        _C = _np.load(_corr_path)
+                        if _C.shape != (actions_num, actions_num):
+                            raise ValueError(
+                                f"noise_correlation shape {_C.shape} != ({actions_num},{actions_num})")
                     if self.space_config.get('noise_correlation_learnable'):
-                        _lam, _V = _np.linalg.eigh(_C)
+                        if str(_corr_path).endswith('.npz'):
+                            # named-basis bundle: rows = directions in artifact
+                            # eigen-rank order, no sorting, stable dial names
+                            _z = _np.load(_corr_path)
+                            _basis = _z['basis']
+                            _lam = _z['gains'].astype(_np.float64)
+                            _V = _basis.T.astype(_np.float64)
+                            if _np.abs(_basis @ _basis.T - _np.eye(actions_num)).max() > 1e-5:
+                                raise ValueError('noise basis rows are not orthonormal')
+                            self.noise_corr_dial_names = [str(x) for x in _z['names']]
+                        else:
+                            _lam, _V = _np.linalg.eigh(_C)
                         self.register_buffer('noise_corr_eigvals',
                                              torch.tensor(_lam, dtype=torch.float32))
                         self.register_buffer('noise_corr_eigvecs',

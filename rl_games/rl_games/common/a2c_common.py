@@ -425,9 +425,19 @@ class A2CBase(BaseAlgorithm):
         _corr_logit = getattr(getattr(self.model, 'a2c_network', None), 'noise_corr_logit', None)
         if _corr_logit is not None:
             _w = torch.sigmoid(_corr_logit.detach()).cpu()
-            self.writer.add_scalar('info/noise_corr_w_mean', _w.mean().item(), frame)
-            for _i, _wi in enumerate(_w.tolist()):
-                self.writer.add_scalar(f'info/noise_corr_w/dir_{_i:02d}', _wi, frame)
+            _names = getattr(getattr(self.model, 'a2c_network', None),
+                             'noise_corr_dial_names', None)
+            if _names:
+                _vals = [(_n, _wi) for _n, _wi in zip(_names, _w.tolist())
+                         if not _n.startswith('arm')]
+                self.writer.add_scalar('info/noise_corr_w_mean',
+                                       sum(v for _, v in _vals) / len(_vals), frame)
+                for _n, _wi in _vals:
+                    self.writer.add_scalar(f'info/noise_corr_w/{_n}', _wi, frame)
+            else:
+                self.writer.add_scalar('info/noise_corr_w_mean', _w.mean().item(), frame)
+                for _i, _wi in enumerate(_w.tolist()):
+                    self.writer.add_scalar(f'info/noise_corr_w/dir_{_i:02d}', _wi, frame)
         self.writer.add_scalar('info/last_lr', last_lr * lr_mul, frame)
         self.writer.add_scalar('info/lr_mul', lr_mul, frame)
         self.writer.add_scalar('info/e_clip', self.e_clip * lr_mul, frame)
