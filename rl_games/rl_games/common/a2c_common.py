@@ -427,7 +427,7 @@ class A2CBase(BaseAlgorithm):
         if _eig_names:
             _sig = getattr(self.model.a2c_network, 'sigma', None)
             if _sig is not None:
-                _sv = torch.exp(_sig.detach()).cpu().tolist()
+                _sv = torch.exp(_sig.detach()).flatten().cpu().tolist()
                 _vals = [(_n, _s) for _n, _s in zip(_eig_names, _sv)
                          if not _n.startswith('arm')]
                 for _n, _s in _vals:
