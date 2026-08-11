@@ -288,12 +288,18 @@ class ModelA2CContinuousLogStd(BaseModel):
             else:
                 corr = self._corr_factor()
                 L = getattr(self.a2c_network, 'noise_corr_chol', None)
+                B = getattr(self.a2c_network, 'noise_eigsig_basis', None)
                 if corr is not None:
                     eps = torch.randn_like(mu)
                     selected_action = mu + sigma * (eps @ corr[0].T)
                 elif L is not None:
                     eps = torch.randn_like(mu)
                     selected_action = mu + sigma * (eps @ L.T)
+                elif B is not None:
+                    # eigen-sigma: noise sampled in the fixed eigenbasis, the
+                    # policy's own per-dim sigma is per-DIRECTION loudness
+                    eps = torch.randn_like(mu)
+                    selected_action = mu + (sigma * eps) @ B
                 else:
                     selected_action = distr.sample()
                 # selected_action = distr.mean # DEBUG
@@ -356,6 +362,13 @@ class ModelA2CContinuousLogStd(BaseModel):
                 return 0.5 * (z**2).sum(dim=-1) \
                     + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
                     + logstd.sum(dim=-1) + logdet
+            B = getattr(self.a2c_network, 'noise_eigsig_basis', None)
+            if B is not None:
+                # rotation is orthonormal (|det|=1): diag normal in z coords
+                z = (x - mean) @ B.t()
+                return 0.5 * ((z / std)**2).sum(dim=-1) \
+                    + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
+                    + logstd.sum(dim=-1)
             return 0.5 * (((x - mean) / std)**2).sum(dim=-1) \
                 + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
                 + logstd.sum(dim=-1)

@@ -422,6 +422,19 @@ class A2CBase(BaseAlgorithm):
         self.writer.add_scalar('losses/c_loss', torch_ext.mean_list(c_losses).item(), frame)
 
         self.writer.add_scalar('losses/entropy', torch_ext.mean_list(entropies).item(), frame)
+        _eig_names = getattr(getattr(self.model, 'a2c_network', None),
+                             'noise_eigsig_names', None)
+        if _eig_names:
+            _sig = getattr(self.model.a2c_network, 'sigma', None)
+            if _sig is not None:
+                _sv = torch.exp(_sig.detach()).cpu().tolist()
+                _vals = [(_n, _s) for _n, _s in zip(_eig_names, _sv)
+                         if not _n.startswith('arm')]
+                for _n, _s in _vals:
+                    self.writer.add_scalar(f'info/noise_sigma/{_n}', _s, frame)
+                self.writer.add_scalar(
+                    'info/noise_sigma_mean',
+                    sum(_s for _, _s in _vals) / len(_vals), frame)
         _corr_logit = getattr(getattr(self.model, 'a2c_network', None), 'noise_corr_logit', None)
         if _corr_logit is not None:
             _w = torch.sigmoid(_corr_logit.detach()).cpu()

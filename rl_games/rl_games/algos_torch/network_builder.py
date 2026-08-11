@@ -386,6 +386,41 @@ class A2CBuilder(NetworkBuilder):
                               f"({actions_num}x{actions_num}, mu-init shaped)")
                 if self.fixed_sigma != 'obs_cond':
                     sigma_init(self.sigma)
+                    _eig_path = self.space_config.get('noise_eigen_sigma')
+                    if _eig_path:
+                        # eigen-sigma exploration: fixed orthonormal artifact
+                        # basis; per-direction loudness = the policy's own
+                        # learnable sigma, initialised at the variant's gain
+                        # profile (0.5*log g).
+                        if _corr_path:
+                            raise ValueError(
+                                'noise_eigen_sigma and noise_correlation '
+                                'are exclusive')
+                        import numpy as _np
+                        _z = _np.load(_eig_path)
+                        _basis = _z['basis'].astype(_np.float32)
+                        if _basis.shape != (actions_num, actions_num):
+                            raise ValueError(
+                                'noise_eigen_sigma basis shape %s != (%d, %d)'
+                                % (_basis.shape, actions_num, actions_num))
+                        if _np.abs(_basis @ _basis.T
+                                   - _np.eye(actions_num)).max() > 1e-5:
+                            raise ValueError(
+                                'noise basis rows are not orthonormal')
+                        self.register_buffer(
+                            'noise_eigsig_basis', torch.tensor(_basis))
+                        self.noise_eigsig_names = [
+                            str(_x) for _x in _z['names']]
+                        _g = _z['gains'].astype(_np.float64)
+                        if _np.any(_g <= 0.0):
+                            raise ValueError(
+                                'noise_eigen_sigma gains must be positive')
+                        with torch.no_grad():
+                            self.sigma.add_(torch.tensor(
+                                0.5 * _np.log(_g), dtype=self.sigma.dtype))
+                        print('[action-bench] eigen-sigma exploration active '
+                              '(%d dims, sigma init offset by 0.5*log gains)'
+                              % actions_num)
                 else:
                     sigma_init(self.sigma.weight)  
 
@@ -786,6 +821,37 @@ class A2CResnetBuilder(NetworkBuilder):
                     sigma_init(self.sigma)
                 else:
                     sigma_init(self.sigma.weight)
+                _eig_path = self.space_config.get('noise_eigen_sigma')
+                if _eig_path:
+                    # eigen-sigma exploration: fixed orthonormal artifact basis,
+                    # per-direction loudness = the policy's own learnable sigma,
+                    # initialised at the variant's gain profile (0.5*log g).
+                    if _corr_path:
+                        raise ValueError(
+                            'noise_eigen_sigma and noise_correlation are exclusive')
+                    if self.fixed_sigma == 'obs_cond':
+                        raise ValueError('noise_eigen_sigma requires fixed sigma')
+                    import numpy as _np
+                    _z = _np.load(_eig_path)
+                    _basis = _z['basis'].astype(_np.float32)
+                    if _basis.shape != (actions_num, actions_num):
+                        raise ValueError(
+                            'noise_eigen_sigma basis shape %s != (%d, %d)'
+                            % (_basis.shape, actions_num, actions_num))
+                    if _np.abs(_basis @ _basis.T - _np.eye(actions_num)).max() > 1e-5:
+                        raise ValueError('noise basis rows are not orthonormal')
+                    self.register_buffer(
+                        'noise_eigsig_basis', torch.tensor(_basis))
+                    self.noise_eigsig_names = [str(_x) for _x in _z['names']]
+                    _g = _z['gains'].astype(_np.float64)
+                    if _np.any(_g <= 0.0):
+                        raise ValueError('noise_eigen_sigma gains must be positive')
+                    with torch.no_grad():
+                        self.sigma.add_(torch.tensor(
+                            0.5 * _np.log(_g), dtype=self.sigma.dtype))
+                    print('[action-bench] eigen-sigma exploration active '
+                          '(%d dims, sigma init offset by 0.5*log gains)'
+                          % actions_num)
 
             mlp_init(self.value.weight)     
 
