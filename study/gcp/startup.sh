@@ -3,6 +3,20 @@ set -euo pipefail
 
 systemctl enable --now ssh.service
 
+# A source image may contain a newer Debian kernel than the kernel that was
+# running when NVIDIA DKMS last built its modules. Repair that normal image-boot
+# mismatch before Isaac Gym starts; otherwise CUDA reports zero devices and the
+# simulator can segfault during initialization.
+if ! nvidia-smi >/dev/null 2>&1; then
+  systemctl stop simtoolreal-study.service 2>/dev/null || true
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "linux-headers-$(uname -r)"
+  /usr/sbin/dkms autoinstall -k "$(uname -r)"
+  depmod -a
+  modprobe nvidia
+  systemctl restart nvidia-persistenced.service
+fi
+
 cat >/etc/systemd/system/simtoolreal-study.service <<'EOF'
 [Unit]
 Description=SimToolReal transformer study
@@ -54,4 +68,3 @@ chmod +x /home/tylerlum/simtoolreal/study/gcp/sync_worker.sh
 systemctl daemon-reload
 systemctl enable --now simtoolreal-study-sync.timer
 systemctl enable --now simtoolreal-study.service
-
