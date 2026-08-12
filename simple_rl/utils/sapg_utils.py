@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -47,29 +47,39 @@ def remove_envs_from_info(infos: Dict[str, Any], num_envs: int) -> Dict[str, Any
     return infos
 
 
-def shuffle_batch(batch_dict: Dict[str, Any], horizon_length: int) -> Dict[str, Any]:
+def shuffle_batch(
+    batch_dict: Dict[str, Any],
+    horizon_length: int,
+    seq_length: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Shuffle complete temporal units and their matching memory snapshots.
+
+    Feed-forward policies use a whole environment horizon as the unit. Recurrent
+    policies use ``seq_length`` because each sequence has a distinct initial
+    LSTM/transformer state.
+    """
     N = len(batch_dict["returns"])
-    assert N % horizon_length == 0, (
-        f"N={N} must be divisible by horizon_length={horizon_length}"
+    rnn_states = batch_dict.get("rnn_states")
+    unit_length = seq_length if rnn_states is not None else horizon_length
+    if unit_length is None:
+        raise ValueError("seq_length is required when shuffling recurrent data")
+    assert N % unit_length == 0, (
+        f"N={N} must be divisible by temporal unit length={unit_length}"
     )
-    batch_size = N // horizon_length
+    num_units = N // unit_length
     device = batch_dict["returns"].device
 
-    indices = torch.randperm(batch_size).to(device).reshape(
-        batch_size, 1
-    ) * horizon_length + torch.arange(horizon_length).to(device).reshape(
-        1, horizon_length
-    )
-    assert indices.shape == (batch_size, horizon_length), (
-        f"indices.shape={indices.shape} must be (batch_size, horizon_length)=({batch_size}, {horizon_length})"
-    )
+    unit_order = torch.randperm(num_units, device=device)
+    indices = unit_order.reshape(num_units, 1) * unit_length + torch.arange(
+        unit_length, device=device
+    ).reshape(1, unit_length)
 
     flattened_indices = indices.reshape(-1)
     for key, val in batch_dict.items():
         if key == "rnn_states":
             if val is None:
                 continue
-            batch_dict[key] = [s[:, indices[:, 0] // horizon_length] for s in val]
+            batch_dict[key] = [s[:, unit_order].contiguous() for s in val]
         elif key in ["played_frames", "step_time"]:
             continue
         else:

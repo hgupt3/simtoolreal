@@ -24,12 +24,15 @@ class SimpleRLEnvWrapper:
         self._env = env
 
     def get_env_info(self) -> dict:
-        return {
+        env_info = {
             "observation_space": self._env.observation_space,
             "action_space": self._env.action_space,
             "agents": 1,
             "value_size": 1,
         }
+        if getattr(self._env, "num_states", 0) > 0:
+            env_info["state_space"] = self._env.state_space
+        return env_info
 
     # ── forward all other attribute access to the underlying env ──────────
 

@@ -118,6 +118,9 @@ class ExperienceBuffer:
         self.tensor_dict["dones"] = self._create_tensor_from_space(
             gym.spaces.Box(low=0, high=1, shape=(), dtype=np.uint8), obs_base_shape
         )
+        self.tensor_dict["memory_resets"] = self._create_tensor_from_space(
+            gym.spaces.Box(low=0, high=1, shape=(), dtype=np.uint8), obs_base_shape
+        )
 
         if self.is_discrete or self.is_multi_discrete:
             self.tensor_dict["actions"] = self._create_tensor_from_space(

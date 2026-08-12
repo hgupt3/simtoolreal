@@ -97,18 +97,19 @@ def main(cfg: DictConfig) -> None:
     # ── W&B ───────────────────────────────────────────────────────────────
     train = not cfg.test
     if train and cfg.wandb_activate:
-        from datetime import datetime as _dt
-        _timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
-        _display_name = f"{_wandb_name}_{_timestamp}"
-        _run_id = f"{_wandb_name}_{_timestamp}"
+        _display_name = _wandb_name
+        _run_id = experiment_name.replace("/", "-")
         wandb.init(
             project=cfg.wandb_project,
             entity=cfg.wandb_entity,
             name=_display_name,
             id=_run_id,
             group=cfg.wandb_group,
+            tags=list(cfg.wandb_tags),
+            notes=str(cfg.get("wandb_notes", "")),
             config=omegaconf_to_dict(cfg),
             sync_tensorboard=True,
+            resume="allow",
         )
 
     # ── Build env ─────────────────────────────────────────────────────────

@@ -1,0 +1,92 @@
+diff --git a/simple_rl/agent.py b/simple_rl/agent.py
+index 7c6b4d9..c6ed4c6 100644
+--- a/simple_rl/agent.py
++++ b/simple_rl/agent.py
+@@ -425,17 +425,11 @@ class Agent:
+         # For SAPG with experience sharing, the training batch is augmented:
+         #   augmented_batch = batch + (num_repeat-1) * block_size_steps
+         # where block_size_steps = horizon * (num_actors / M).
+-        # Require M * minibatch_size | batch_size so that minibatch_size also divides
+-        # the augmented batch.
+         if (
+             self.cfg.sapg is not None
+             and self.cfg.sapg.use_others_experience
+         ):
+             M = self.cfg.sapg.num_conditionings
+-            assert self.batch_size % (M * self.minibatch_size) == 0, (
+-                f"For SAPG use_others_experience, batch_size ({self.batch_size}) must be "
+-                f"divisible by M * minibatch_size = {M} * {self.minibatch_size} = {M * self.minibatch_size}"
+-            )
+             num_repeat = min(M, self.cfg.sapg.off_policy_ratio + 1)
+             self.augmented_batch_size = self.batch_size + (num_repeat - 1) * (self.batch_size // M)
+         else:
+@@ -604,6 +598,7 @@ class Agent:
+                 max_epochs=self.cfg.max_epochs,
+                 multi_gpu=self.cfg.multi_gpu,
+                 zero_rnn_on_done=self.cfg.zero_rnn_on_done,
++                training_batch_size=self.augmented_batch_size,
+                 conditioning_dim=self.cfg.sapg.conditioning_dim if self.cfg.sapg is not None else None,
+                 num_conditionings=self.cfg.sapg.num_conditionings if self.cfg.sapg is not None else None,
+             ).to(self.device)
+diff --git a/simple_rl/utils/asymmetric_critic.py b/simple_rl/utils/asymmetric_critic.py
+index 3738705..875b976 100644
+--- a/simple_rl/utils/asymmetric_critic.py
++++ b/simple_rl/utils/asymmetric_critic.py
+@@ -46,6 +46,7 @@ class AsymmetricCritic(nn.Module):
+         max_epochs: int,
+         multi_gpu: bool,
+         zero_rnn_on_done: bool,
++        training_batch_size: Optional[int] = None,
+         conditioning_dim: Optional[int] = None,
+         num_conditionings: Optional[int] = None,
+     ) -> None:
+@@ -98,7 +99,8 @@ class AsymmetricCritic(nn.Module):
+         )
+         assert self.minibatch_size > 0
+         self.batch_size = self.horizon_length * self.num_actors
+-        self.num_minibatches = self.batch_size // self.minibatch_size
++        self.training_batch_size = training_batch_size or self.batch_size
++        self.num_minibatches = max(1, self.training_batch_size // self.minibatch_size)
+ 
+         self.writer = writer
+         self.optimizer = torch.optim.Adam(
+@@ -145,7 +147,7 @@ class AsymmetricCritic(nn.Module):
+             self.device_name = "cuda:" + str(self.local_rank)
+ 
+         self.dataset = datasets.PPODataset(
+-            batch_size=self.batch_size,
++            batch_size=self.training_batch_size,
+             minibatch_size=self.minibatch_size,
+             is_rnn=self.is_rnn,
+             device=self.ppo_device,
+diff --git a/simple_rl/utils/datasets.py b/simple_rl/utils/datasets.py
+index 8ed87fd..dff6451 100644
+--- a/simple_rl/utils/datasets.py
++++ b/simple_rl/utils/datasets.py
+@@ -18,7 +18,7 @@ class PPODataset(Dataset):
+         self.batch_size = batch_size
+         self.minibatch_size = minibatch_size
+         self.device = device
+-        self.length = self.batch_size // self.minibatch_size
++        self.length = max(1, self.batch_size // self.minibatch_size)
+         total_games = self.batch_size // self.seq_length
+         self.num_games_batch = self.minibatch_size // self.seq_length
+         self.game_indexes = torch.arange(
+@@ -58,6 +58,8 @@ class PPODataset(Dataset):
+     def _get_item_rnn(self, idx: int) -> Dict[str, Any]:
+         gstart = idx * self.num_games_batch
+         gend = (idx + 1) * self.num_games_batch
++        if idx == self.length - 1:
++            gend = self.batch_size // self.seq_length
+         start = gstart * self.seq_length
+         end = gend * self.seq_length
+         self.last_range = (start, end)
+@@ -86,6 +88,8 @@ class PPODataset(Dataset):
+     def _get_item(self, idx: int) -> Dict[str, Any]:
+         start = idx * self.minibatch_size
+         end = (idx + 1) * self.minibatch_size
++        if idx == self.length - 1:
++            end = self.batch_size
+         self.last_range = (start, end)
+         input_dict = {}
+         for k, v in self.values_dict.items():

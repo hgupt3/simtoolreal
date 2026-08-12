@@ -46,6 +46,7 @@ class AsymmetricCritic(nn.Module):
         max_epochs: int,
         multi_gpu: bool,
         zero_rnn_on_done: bool,
+        training_batch_size: Optional[int] = None,
         conditioning_dim: Optional[int] = None,
         num_conditionings: Optional[int] = None,
     ) -> None:
@@ -98,7 +99,8 @@ class AsymmetricCritic(nn.Module):
         )
         assert self.minibatch_size > 0
         self.batch_size = self.horizon_length * self.num_actors
-        self.num_minibatches = self.batch_size // self.minibatch_size
+        self.training_batch_size = training_batch_size or self.batch_size
+        self.num_minibatches = max(1, self.training_batch_size // self.minibatch_size)
 
         self.writer = writer
         self.optimizer = torch.optim.Adam(
@@ -115,13 +117,15 @@ class AsymmetricCritic(nn.Module):
         self.rnn_states = None
 
         if self.is_rnn:
+            if self.training_batch_size != self.batch_size:
+                raise ValueError(
+                    "recurrent asymmetric critics do not support augmented SAPG batches; "
+                    "use an MLP asymmetric critic"
+                )
             self.rnn_states = self.model.get_default_rnn_state()
             self.rnn_states = [s.to(self.ppo_device) for s in self.rnn_states]
             total_agents = self.num_actors
             num_seqs = self.horizon_length // self.seq_length
-            assert (
-                self.horizon_length * total_agents // self.num_minibatches
-            ) % self.seq_length == 0
             self.mb_rnn_states = [
                 torch.zeros(
                     (num_seqs, s.size()[0], total_agents, s.size()[2]),
@@ -145,7 +149,7 @@ class AsymmetricCritic(nn.Module):
             self.device_name = "cuda:" + str(self.local_rank)
 
         self.dataset = datasets.PPODataset(
-            batch_size=self.batch_size,
+            batch_size=self.training_batch_size,
             minibatch_size=self.minibatch_size,
             is_rnn=self.is_rnn,
             device=self.ppo_device,

@@ -24,25 +24,20 @@ class RnnWithDones(nn.Module):
         input: torch.Tensor,
         states: Any,
         done_masks: Optional[torch.Tensor] = None,
-        bptt_len: int = 0,
     ) -> Tuple[torch.Tensor, Any]:
-        # ignoring bptt_len for now
         if done_masks is None:
             return self.rnn(input, states)
 
         max_steps = input.size()[0]
-        _batch_size = input.size()[1]
-        out_batch = []
-        not_dones = 1.0 - done_masks
-        has_zeros = (
-            (not_dones.squeeze()[1:] == 0.0).any(dim=-1).nonzero().squeeze().cpu()
-        )
-        # +1 to correct the masks[1:]
-        if has_zeros.dim() == 0:
-            # Deal with scalar
-            has_zeros = [has_zeros.item() + 1]
+        not_dones = ~done_masks.bool()
+        # Preserve both time and batch axes even when either has length one.
+        if max_steps > 1:
+            reset_times = (~not_dones[1:].reshape(max_steps - 1, -1)).any(dim=1)
+            has_zeros = (
+                (reset_times.nonzero(as_tuple=False).flatten() + 1).cpu().tolist()
+            )
         else:
-            has_zeros = (has_zeros + 1).numpy().tolist()
+            has_zeros = []
 
         # add t=0 and t=T to the list
         has_zeros = [0] + has_zeros + [max_steps]
@@ -51,7 +46,7 @@ class RnnWithDones(nn.Module):
         for i in range(len(has_zeros) - 1):
             start_idx = has_zeros[i]
             end_idx = has_zeros[i + 1]
-            not_done = not_dones[start_idx].float().unsqueeze(0)
+            not_done = not_dones[start_idx].to(input.dtype).reshape(1, -1, 1)
             states = multiply_hidden(states, not_done)
             out, states = self.rnn(input[start_idx:end_idx], states)
             out_batch.append(out)

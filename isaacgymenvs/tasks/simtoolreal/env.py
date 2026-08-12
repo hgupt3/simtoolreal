@@ -1253,6 +1253,13 @@ class SimToolReal(VecTask):
                 )
             )
 
+        elif object_name == "allegro_kuka_cuboids":
+            object_asset_files, object_asset_scales, need_vhacds = (
+                self._allegro_kuka_cuboids(
+                    str(Path(tmp_assets_dir) / "allegro_kuka_cuboids")
+                )
+            )
+
         else:
             raise ValueError(f"Unknown object name: {object_name}")
 
@@ -1838,6 +1845,48 @@ class SimToolReal(VecTask):
             # print(f"All scales: {all_scales}")
 
         return all_files, all_scales, need_vhacds
+
+    def _allegro_kuka_cuboids(self, generated_assets_dir):
+        """Generate the easy cuboid pool used by Allegro-Kuka reorientation.
+
+        The source task uses a 5 cm base cube and all ordered triples from its
+        small-cuboid scale list whose normalized volume is in [1, 2.5]. We use
+        simple box URDFs at the source task's 400 kg/m^3 density. The ordering is
+        deterministic; object assignment remains reproducible across algorithms.
+        """
+        os.makedirs(generated_assets_dir, exist_ok=True)
+        for filename in os.listdir(generated_assets_dir):
+            if filename.endswith(".urdf"):
+                os.remove(join(generated_assets_dir, filename))
+
+        from isaacgymenvs.tasks.simtoolreal.generate_objects import (
+            generate_cuboid_urdf_constant_density,
+        )
+
+        from isaacgymenvs.utils.study_objects import (
+            allegro_kuka_small_cuboid_scales,
+        )
+
+        base_size = 0.05
+        density = 400.0
+        files = []
+        scales = []
+        for metric_scale in allegro_kuka_small_cuboid_scales(base_size):
+            filename = Path(generated_assets_dir) / (
+                f"{len(files):03d}_cuboid_"
+                + "_".join(f"{dimension:.5f}" for dimension in metric_scale)
+                + ".urdf"
+            )
+            generate_cuboid_urdf_constant_density(
+                filepath=filename, scale=metric_scale, density=density
+            )
+            files.append(filename)
+            scales.append(
+                tuple(dimension / self.object_base_size for dimension in metric_scale)
+            )
+
+        assert len(files) == 654, f"Expected 654 Allegro-Kuka cuboids, got {len(files)}"
+        return files, scales, [False] * len(files)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
         if self.should_load_initial_states:

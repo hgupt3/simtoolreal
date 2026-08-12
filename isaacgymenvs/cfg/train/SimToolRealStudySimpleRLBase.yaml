@@ -1,0 +1,73 @@
+# Shared current-simple_rl configuration for the GCP architecture study.
+# Derived configs only replace the temporal policy. Environment/object overrides
+# live in launch_transformer_study.py so every algorithm sees the same task.
+
+ppo:
+  num_actors: ${...task.env.numEnvs}
+  learning_rate: 1e-4
+  entropy_coef: 0.0
+  horizon_length: 16
+  normalize_advantage: True
+  normalize_input: True
+  grad_norm: 1.0
+  critic_coef: 4.0
+  gamma: 0.99
+  tau: 0.95
+  reward_shaper:
+    scale_value: 0.01
+  mini_epochs: 2
+  e_clip: 0.1
+  truncate_grads: True
+  mixed_precision: True
+  normalize_value: True
+  save_frequency: 1800
+  save_best_after: 100
+  max_epochs: -1
+  max_frames: 70000000000
+  max_wall_time_seconds: 604800
+  games_to_track: 100
+  minibatch_size: 98304
+  seq_length: 16
+  zero_rnn_on_done: True
+  bounds_loss_coef: 0.0
+  sapg:
+    num_conditionings: 6
+    conditioning_dim: 32
+    use_others_experience: True
+    recurrent_experience_sharing: reuse_state
+    off_policy_ratio: 1
+    use_entropy_bonus: True
+    entropy_coef_scale: 0.005
+    entropy_in_returns: False
+  asymmetric_critic:
+    name: mlp
+    minibatch_size: 98304
+    mini_epochs: 2
+    learning_rate: 1e-4
+    normalize_input: True
+    truncate_grads: True
+    grad_norm: 1.0
+    e_clip: 0.1
+    network:
+      asymmetric_critic: True
+      separate_value_mlp: False
+      mlp:
+        units: [1024, 1024, 512, 512]
+
+network:
+  separate_value_mlp: False
+  sigma_init: 0.0
+  mlp:
+    units: [1024, 1024, 512, 512]
+  rnn:
+    name: lstm
+    units: 1024
+    layers: 1
+    before_mlp: True
+    layer_norm: True
+
+player:
+  deterministic: True
+  games_num: 100000
+  print_stats: True
+  conditioning_index: 5

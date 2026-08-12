@@ -18,7 +18,9 @@ class PPODataset(Dataset):
         self.batch_size = batch_size
         self.minibatch_size = minibatch_size
         self.device = device
-        self.length = self.batch_size // self.minibatch_size
+        # Match the reference SAPG dataset: if augmentation leaves a remainder,
+        # the last minibatch absorbs it instead of silently dropping samples.
+        self.length = max(1, self.batch_size // self.minibatch_size)
         total_games = self.batch_size // self.seq_length
         self.num_games_batch = self.minibatch_size // self.seq_length
         self.game_indexes = torch.arange(
@@ -39,8 +41,13 @@ class PPODataset(Dataset):
             for k, v in self.values_dict.items():
                 if v is None:
                     continue
-                # rnn_states is a list of tensors — handled specially in _get_item_rnn
                 if k == "rnn_states":
+                    expected_sequences = self.batch_size // self.seq_length
+                    for state in v:
+                        assert state.shape[1] == expected_sequences, (
+                            f"rnn state sequence count {state.shape[1]} does not "
+                            f"match expected {expected_sequences}"
+                        )
                     continue
                 assert v.shape[0] == self.batch_size, (
                     f"values_dict[{k}].shape[0]: {v.shape[0]}, batch_size: {self.batch_size}"
@@ -58,6 +65,8 @@ class PPODataset(Dataset):
     def _get_item_rnn(self, idx: int) -> Dict[str, Any]:
         gstart = idx * self.num_games_batch
         gend = (idx + 1) * self.num_games_batch
+        if idx == self.length - 1:
+            gend = self.batch_size // self.seq_length
         start = gstart * self.seq_length
         end = gend * self.seq_length
         self.last_range = (start, end)
@@ -86,6 +95,8 @@ class PPODataset(Dataset):
     def _get_item(self, idx: int) -> Dict[str, Any]:
         start = idx * self.minibatch_size
         end = (idx + 1) * self.minibatch_size
+        if idx == self.length - 1:
+            end = self.batch_size
         self.last_range = (start, end)
         input_dict = {}
         for k, v in self.values_dict.items():

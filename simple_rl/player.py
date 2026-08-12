@@ -38,6 +38,8 @@ class PlayerConfig:
     evaluation: bool = False
     update_checkpoint_freq: int = 100
     dir_to_monitor: Optional[str] = None
+    conditioning_index: Optional[int] = None
+    """Run every environment with one SAPG/EPO policy. None evaluates all blocks."""
 
 
 class Player:
@@ -105,16 +107,24 @@ class Player:
             and self.inference_config.num_conditionings is not None
         ):
             M = self.inference_config.num_conditionings
-            if self.env.num_envs < M:
-                conditioning_idxs = (
-                    torch.arange(self.env.num_envs)
-                    .to(self.device)
-                    .reshape(self.env.num_envs, CONDITIONING_IDX_DIM)
+            selected = self.player_config.conditioning_index
+            if selected is not None:
+                if not 0 <= selected < M:
+                    raise ValueError(
+                        f"conditioning_index must be in [0, {M}), got {selected}"
+                    )
+                conditioning_idxs = torch.full(
+                    (self.env.num_envs, CONDITIONING_IDX_DIM),
+                    selected,
+                    device=self.device,
+                )
+            elif self.env.num_envs < M or self.env.num_envs % M != 0:
+                raise ValueError(
+                    "evaluating all conditionings requires num_envs to be at least "
+                    f"and divisible by num_conditionings ({self.env.num_envs} vs {M}); "
+                    "set player.conditioning_index to evaluate one policy"
                 )
             else:
-                assert self.env.num_envs % M == 0, (
-                    f"Number of environments must be divisible by number of conditionings: {self.env.num_envs} % {M} != 0"
-                )
                 block_size = self.env.num_envs // M
                 conditioning_idxs = (
                     torch.arange(M)
@@ -178,7 +188,7 @@ class Player:
         else:
             current_action = action
         if not self.has_batch_dimension:
-            current_action = torch.squeeze(current_action.detach())
+            current_action = current_action.detach().squeeze(0)
 
         if self.inference_config.clip_actions:
             return torch_utils.rescale_actions(
@@ -194,14 +204,14 @@ class Player:
             raise FileNotFoundError(f"Checkpoint file {filename} does not exist")
 
         self.loaded_checkpoint = filename
-        checkpoint = torch_utils.load_checkpoint(filename)
+        checkpoint = torch_utils.load_checkpoint(filename, map_location=self.device)
 
-        # Assume that checkpoint is a dict mapping GLOBAL_RANK to the checkpoint
-        GLOBAL_RANK = 0
-        assert GLOBAL_RANK in checkpoint, (
-            f"Checkpoint does not contain GLOBAL_RANK {GLOBAL_RANK}, available keys: {checkpoint.keys()}"
-        )
-        checkpoint = checkpoint[GLOBAL_RANK]
+        if "model" not in checkpoint:
+            if 0 not in checkpoint:
+                raise KeyError(
+                    f"checkpoint has no rank-0 state; keys={checkpoint.keys()}"
+                )
+            checkpoint = checkpoint[0]
 
         self.model.load_state_dict(checkpoint["model"])
         if self.normalize_input and "running_mean_std" in checkpoint:
@@ -211,8 +221,11 @@ class Player:
         if self.env is not None and env_state is not None:
             self.env.set_env_state(env_state)
 
+        if self.is_rnn and self.states is not None:
+            self.init_rnn()
+
     def override_sigma(self, sigma) -> None:
-        net = self.model.network
+        net = self.model.a2c_network
         if hasattr(net, "sigma") and hasattr(net, "fixed_sigma"):
             if net.fixed_sigma:
                 with torch.no_grad():
@@ -445,11 +458,23 @@ class Player:
                 done_count = len(done_indices)
                 games_played += done_count
 
-                if done_count > 0:
-                    if self.is_rnn:
-                        for s in self.states:
-                            s[:, all_done_indices, :] = s[:, all_done_indices, :] * 0.0
+                if self.is_rnn:
+                    memory_reset = (
+                        info.get("memory_reset", done)
+                        if isinstance(info, dict)
+                        else done
+                    )
+                    if not isinstance(memory_reset, torch.Tensor):
+                        memory_reset = torch.as_tensor(memory_reset)
+                    memory_reset_indices = memory_reset.nonzero(as_tuple=False)
+                    if len(memory_reset_indices) > 0:
+                        self.states = list(
+                            self.model.reset_memory_states(
+                                self.states, memory_reset_indices.to(self.device)
+                            )
+                        )
 
+                if done_count > 0:
                     cumulative_rewards_when_done = (
                         cumulative_rewards[done_indices].sum().item()
                     )

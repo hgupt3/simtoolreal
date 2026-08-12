@@ -1,4 +1,3 @@
-import math
 import os
 import time
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from simple_rl.utils.asymmetric_critic import AsymmetricCriticConfig
 from simple_rl.utils.conditioning_utils import CONDITIONING_IDX_DIM
 from simple_rl.utils.experience import ExperienceBuffer
 from simple_rl.utils.network import NetworkConfig
+from simple_rl.utils.observer import DefaultAlgoObserver
 from simple_rl.utils.rewards_shaper import (
     DefaultRewardsShaper,
     RewardsShaperParams,
@@ -63,6 +63,16 @@ class SapgConfig:
     (rl_games 'lf' / leader-follower mode).  Disabled for very small env counts where
     the augmented batch size would not divide evenly."""
 
+    recurrent_experience_sharing: Literal["reject", "reuse_state"] = "reject"
+    """How recurrent memory is handled when leader/follower sharing is enabled.
+
+    ``reject`` is the safe default because a saved LSTM/transformer state was
+    produced under the trajectory's original conditioning. ``reuse_state``
+    explicitly opts into the approximation used by the reference SAPG code:
+    observations are relabelled, while the saved recurrent state is reused.
+    This is empirically useful but is not an exactly on-policy history.
+    """
+
     off_policy_ratio: int = 1
     """Number of extra off-policy blocks added per minibatch when use_others_experience=True.
     Each extra block increases the effective minibatch by batch_size / M.
@@ -80,7 +90,7 @@ class SapgConfig:
     True (default): block k gets entropy coef = linspace(0.5, 0.0, M)[k] * entropy_coef_scale.
     False: all blocks are trained with no entropy bonus (equivalent to SAPG without exploration)."""
 
-    entropy_coef_scale: float = 1.0
+    entropy_coef_scale: float = 0.005
     """Scale multiplier applied to the linspace(0.5, 0.0, M) entropy coefficient schedule.
     Actual per-block coefs = linspace(0.5, 0.0, M) * entropy_coef_scale.
     Block 0 (leader) gets the maximum coef = 0.5 * entropy_coef_scale.
@@ -110,13 +120,13 @@ class EpoConfig:
     Our default of 50 epochs is calibrated for large-scale runs (24576 envs); it fires
     more frequently at smaller env counts (e.g. every ~5M frames at 6144 envs)."""
 
-    evolution_kill_ratio: float = 0.3
+    evolution_kill_ratio: float = 0.02
     """Fraction of blocks to kill and replace per evolutionary update.
     Killed blocks have their conditioning embeddings replaced with pairwise-averaged
     embeddings of the surviving (top-ranked) blocks.
     NOTE: the reference EPO implementation (EPOObserver in EPO/isaacgymenvs/utils/rlgames_utils.py)
     hardcodes killing exactly 1 block per update regardless of M (effective ratio ≈ 1/M ≈ 0.016
-    for M=64).  Our 0.3 is more aggressive; set lower (e.g. 0.05) to match the reference."""
+    for M=64). The conservative 0.02 default replaces one block when M=64."""
 
     log_sigma: bool = False
     """Log mean action standard deviation (sigma) to TensorBoard each epoch.
@@ -180,14 +190,16 @@ class PpoConfig:
     weight_decay: float = 0.0
     asymmetric_critic: Optional[AsymmetricCriticConfig] = None
     truncate_grads: bool = False
-    """If True, skip the gradient step when the clipped norm would exceed grad_norm.
-    Conservative alternative to clipping: avoids corrupt updates entirely."""
+    """If True, clip the total gradient norm to ``grad_norm`` before stepping."""
 
     save_frequency: int = 0
     save_best_after: int = 100
     print_stats: bool = True
     max_epochs: int = -1
     max_frames: int = -1
+    max_wall_time_seconds: float = -1.0
+    """Stop cleanly at the first epoch boundary after this many wall-clock seconds.
+    A negative value disables the limit. The final checkpoint is always written."""
     lr_schedule: Optional[str] = None
     """Learning rate schedule type. None = constant. "adaptive" = adjust based on KL divergence
     (requires kl_threshold). "linear" = linear decay to 0 over max_epochs/max_frames."""
@@ -252,8 +264,12 @@ class PpoConfig:
             clip_actions=self.clip_actions,
             device=self.device,
             normalize_value=self.normalize_value,
-            conditioning_dim=self.sapg.conditioning_dim if self.sapg is not None else None,
-            num_conditionings=self.sapg.num_conditionings if self.sapg is not None else None,
+            conditioning_dim=self.sapg.conditioning_dim
+            if self.sapg is not None
+            else None,
+            num_conditionings=self.sapg.num_conditionings
+            if self.sapg is not None
+            else None,
         )
 
 
@@ -303,12 +319,72 @@ def print_statistics(
 
 
 class Agent:
+    def _validate_config(self) -> None:
+        cfg = self.cfg
+        positive_ints = {
+            "num_actors": cfg.num_actors,
+            "horizon_length": cfg.horizon_length,
+            "seq_length": cfg.seq_length,
+            "mini_epochs": cfg.mini_epochs,
+            "games_to_track": cfg.games_to_track,
+        }
+        for name, value in positive_ints.items():
+            if not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer, got {value}")
+        if cfg.learning_rate <= 0 or cfg.grad_norm <= 0 or cfg.e_clip <= 0:
+            raise ValueError("learning_rate, grad_norm, and e_clip must be positive")
+        if not 0 <= cfg.gamma <= 1 or not 0 <= cfg.tau <= 1:
+            raise ValueError("gamma and tau must be in [0, 1]")
+        if cfg.max_wall_time_seconds == 0:
+            raise ValueError("max_wall_time_seconds must be negative or positive")
+        if hasattr(self.env, "num_envs") and self.env.num_envs != cfg.num_actors:
+            raise ValueError(
+                f"env.num_envs ({self.env.num_envs}) must equal num_actors "
+                f"({cfg.num_actors})"
+            )
+
+        if cfg.epo is not None and cfg.sapg is None:
+            raise ValueError("epo requires a sapg configuration")
+        if cfg.sapg is None:
+            return
+
+        sapg = cfg.sapg
+        if self.num_agents != 1:
+            raise ValueError(
+                "SAPG/EPO currently requires exactly one agent per environment"
+            )
+        if sapg.num_conditionings <= 0 or sapg.conditioning_dim <= 0:
+            raise ValueError("SAPG conditioning counts and dimensions must be positive")
+        if cfg.num_actors < sapg.num_conditionings:
+            raise ValueError("num_actors must be at least num_conditionings")
+        if cfg.num_actors % sapg.num_conditionings != 0:
+            raise ValueError("num_conditionings must evenly divide num_actors")
+        if not isinstance(sapg.off_policy_ratio, int) or sapg.off_policy_ratio < 0:
+            raise ValueError("off_policy_ratio must be a non-negative integer")
+        if sapg.entropy_coef_scale < 0:
+            raise ValueError("entropy_coef_scale must be non-negative")
+        if sapg.recurrent_experience_sharing not in ("reject", "reuse_state"):
+            raise ValueError(
+                "recurrent_experience_sharing must be 'reject' or 'reuse_state'"
+            )
+
+        if cfg.epo is not None:
+            if sapg.num_conditionings < 2:
+                raise ValueError("EPO requires at least two conditionings")
+            if cfg.epo.evolution_frequency <= 0:
+                raise ValueError("evolution_frequency must be positive")
+            if not 0 < cfg.epo.evolution_kill_ratio < 1:
+                raise ValueError(
+                    "evolution_kill_ratio must be strictly between 0 and 1"
+                )
+
     def __init__(
         self,
         experiment_dir: Path,
         ppo_config: PpoConfig,
         network_config: NetworkConfig,
         env: Any,
+        observer: Optional[Any] = None,
     ):
         self.cfg = ppo_config
 
@@ -337,10 +413,12 @@ class Agent:
                 self.cfg.lr_schedule = None
 
         self.env = env
+        self.observer = observer if observer is not None else DefaultAlgoObserver()
         self.env_info = self.env.get_env_info()
         self.value_size = self.env_info.get("value_size", 1)
         self.observation_space = self.env_info["observation_space"]
         self.num_agents = self.env_info.get("agents", 1)
+        self._validate_config()
 
         self.has_asymmetric_critic = self.cfg.asymmetric_critic is not None
         if self.has_asymmetric_critic:
@@ -425,28 +503,24 @@ class Agent:
         # For SAPG with experience sharing, the training batch is augmented:
         #   augmented_batch = batch + (num_repeat-1) * block_size_steps
         # where block_size_steps = horizon * (num_actors / M).
-        # Require M * minibatch_size | batch_size so that minibatch_size also divides
-        # the augmented batch.
-        if (
-            self.cfg.sapg is not None
-            and self.cfg.sapg.use_others_experience
-        ):
+        if self.cfg.sapg is not None and self.cfg.sapg.use_others_experience:
             M = self.cfg.sapg.num_conditionings
-            assert self.batch_size % (M * self.minibatch_size) == 0, (
-                f"For SAPG use_others_experience, batch_size ({self.batch_size}) must be "
-                f"divisible by M * minibatch_size = {M} * {self.minibatch_size} = {M * self.minibatch_size}"
-            )
             num_repeat = min(M, self.cfg.sapg.off_policy_ratio + 1)
-            self.augmented_batch_size = self.batch_size + (num_repeat - 1) * (self.batch_size // M)
+            self.augmented_batch_size = self.batch_size + (num_repeat - 1) * (
+                self.batch_size // M
+            )
         else:
             self.augmented_batch_size = self.batch_size
 
         self.num_minibatches = self.augmented_batch_size // self.minibatch_size
-        assert self.num_minibatches > 0, f"{self.augmented_batch_size}, {self.minibatch_size}"
-
-        self.scaler = torch.cuda.amp.GradScaler(
-            enabled=self.cfg.mixed_precision and self.device != "cpu"
+        assert self.num_minibatches > 0, (
+            f"{self.augmented_batch_size}, {self.minibatch_size}"
         )
+
+        self.mixed_precision = (
+            self.cfg.mixed_precision and torch.device(self.device).type == "cuda"
+        )
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.mixed_precision)
 
         self.current_lr = float(self.cfg.learning_rate)
         self.frame = 0
@@ -470,11 +544,10 @@ class Agent:
             self.writer = writer
         else:
             self.writer = None
+        self.games_to_track = self.cfg.games_to_track
+        self.observer.after_init(self)
 
         self.is_tensor_obses = False
-
-        if self.cfg.epo is not None:
-            assert self.cfg.sapg is not None, "epo config requires sapg config to also be set"
 
         # SAPG/EPO: entropy intrinsic reward setup
         # uses_intrinsic_reward: controls per-block entropy in the LOSS (always True for SAPG)
@@ -485,12 +558,10 @@ class Agent:
         #   False semantics (entropy only in loss).  Both default to this.  Set True to explore
         #   the alternative formulation.
         self.uses_intrinsic_reward = (
-            self.cfg.sapg is not None
-            and self.cfg.sapg.use_entropy_bonus
+            self.cfg.sapg is not None and self.cfg.sapg.use_entropy_bonus
         )
         self.uses_entropy_in_returns = (
-            self.uses_intrinsic_reward
-            and self.cfg.sapg.entropy_in_returns
+            self.uses_intrinsic_reward and self.cfg.sapg.entropy_in_returns
         )
         if self.uses_intrinsic_reward:
             M = self.cfg.sapg.num_conditionings
@@ -529,24 +600,13 @@ class Agent:
         # Conditioning idxs: integer index per env, appended to obs/states
         if self.cfg.sapg is not None:
             M = self.cfg.sapg.num_conditionings
-            if self.env.num_envs < M:
-                conditioning_idxs = (
-                    torch.arange(self.env.num_envs)
-                    .to(self.device)
-                    .reshape(self.env.num_envs, CONDITIONING_IDX_DIM)
-                )
-            else:
-                assert self.env.num_envs % M == 0, (
-                    f"Number of environments must be divisible by num_conditionings: "
-                    f"{self.env.num_envs} % {M} != 0"
-                )
-                block_size = self.env.num_envs // M
-                conditioning_idxs = (
-                    torch.arange(M)
-                    .repeat_interleave(block_size)
-                    .to(self.device)
-                    .reshape(self.env.num_envs, CONDITIONING_IDX_DIM)
-                )
+            block_size = self.env.num_envs // M
+            conditioning_idxs = (
+                torch.arange(M)
+                .repeat_interleave(block_size)
+                .to(self.device)
+                .reshape(self.env.num_envs, CONDITIONING_IDX_DIM)
+            )
             self.conditioning_idxs = conditioning_idxs
         else:
             self.conditioning_idxs = None
@@ -571,14 +631,48 @@ class Agent:
             normalize_input=self.cfg.normalize_input,
             value_size=self.env_info.get("value_size", 1),
             num_seqs=self.cfg.num_actors * self.num_agents,
-            conditioning_dim=self.cfg.sapg.conditioning_dim if self.cfg.sapg is not None else None,
-            num_conditionings=self.cfg.sapg.num_conditionings if self.cfg.sapg is not None else None,
+            conditioning_dim=self.cfg.sapg.conditioning_dim
+            if self.cfg.sapg is not None
+            else None,
+            num_conditionings=self.cfg.sapg.num_conditionings
+            if self.cfg.sapg is not None
+            else None,
         )
 
         self.model.to(self.device)
 
         self.states = None
         self.init_rnn_from_model(self.model)
+        if self.is_rnn:
+            if self.cfg.horizon_length % self.cfg.seq_length != 0:
+                raise ValueError("horizon_length must be divisible by seq_length")
+            if self.minibatch_size % self.cfg.seq_length != 0:
+                raise ValueError("minibatch_size must be divisible by seq_length")
+            if self.cfg.sapg is not None and self.cfg.sapg.use_others_experience:
+                if self.cfg.sapg.recurrent_experience_sharing == "reject":
+                    raise ValueError(
+                        "SAPG off-policy experience sharing does not relabel saved recurrent "
+                        "history. Set sapg.recurrent_experience_sharing='reuse_state' to "
+                        "explicitly use the reference SAPG approximation, or disable sharing."
+                    )
+                print(
+                    "WARNING: recurrent SAPG sharing is reusing saved LSTM/transformer "
+                    "state under counterfactual conditioning (reference SAPG behavior)."
+                )
+        transformer_config = network_config.transformer
+        if transformer_config is not None and not self.cfg.zero_rnn_on_done:
+            raise ValueError(
+                "transformer policies require zero_rnn_on_done=True so PPO replay "
+                "cannot attend across outer episode boundaries"
+            )
+        if (
+            transformer_config is not None
+            and transformer_config.memory_mode == "segment"
+            and self.cfg.seq_length != transformer_config.context_length
+        ):
+            raise ValueError(
+                "segment transformer requires PPO seq_length to equal transformer context_length"
+            )
         self.optimizer = optim.Adam(
             self.model.parameters(),
             float(self.current_lr),
@@ -604,8 +698,13 @@ class Agent:
                 max_epochs=self.cfg.max_epochs,
                 multi_gpu=self.cfg.multi_gpu,
                 zero_rnn_on_done=self.cfg.zero_rnn_on_done,
-                conditioning_dim=self.cfg.sapg.conditioning_dim if self.cfg.sapg is not None else None,
-                num_conditionings=self.cfg.sapg.num_conditionings if self.cfg.sapg is not None else None,
+                training_batch_size=self.augmented_batch_size,
+                conditioning_dim=self.cfg.sapg.conditioning_dim
+                if self.cfg.sapg is not None
+                else None,
+                num_conditionings=self.cfg.sapg.num_conditionings
+                if self.cfg.sapg is not None
+                else None,
             ).to(self.device)
 
         self.dataset = datasets.PPODataset(
@@ -745,7 +844,12 @@ class Agent:
         )
 
         # EPO: action sigma logging
-        if self.cfg.epo is not None and self.cfg.epo.log_sigma and csigmas is not None and len(csigmas) > 0:
+        if (
+            self.cfg.epo is not None
+            and self.cfg.epo.log_sigma
+            and csigmas is not None
+            and len(csigmas) > 0
+        ):
             self.writer.add_scalar(
                 tag="auxiliary_stats/sigma",
                 scalar_value=torch.stack(csigmas).mean().item(),
@@ -871,7 +975,9 @@ class Agent:
             extra_states_dim=CONDITIONING_IDX_DIM
             if self.has_asymmetric_critic and self.cfg.sapg is not None
             else None,
-            aux_tensor_dict={"intr_rewards": (1,)} if self.uses_entropy_in_returns else None,
+            aux_tensor_dict={"intr_rewards": (1,)}
+            if self.uses_entropy_in_returns
+            else None,
         )
 
         _val_shape = (self.cfg.horizon_length, batch_size, self.value_size)
@@ -886,6 +992,7 @@ class Agent:
             batch_size, dtype=torch.float32, device=self.device
         )
         self.dones = torch.ones((batch_size,), dtype=torch.uint8, device=self.device)
+        self.memory_resets = self.dones.clone()
 
         if self.is_rnn:
             self.rnn_states = self.model.get_default_rnn_state()
@@ -893,9 +1000,6 @@ class Agent:
 
             total_agents = self.num_agents * self.cfg.num_actors
             num_seqs = self.cfg.horizon_length // self.cfg.seq_length
-            assert (
-                self.cfg.horizon_length * total_agents // self.num_minibatches
-            ) % self.cfg.seq_length == 0
             self.mb_rnn_states = [
                 torch.zeros(
                     (num_seqs, s.size()[0], total_agents, s.size()[2]),
@@ -907,10 +1011,29 @@ class Agent:
 
         ## ContinuousA2CBase ##
         self.update_list = ["actions", "neglogpacs", "values", "mus", "sigmas"]
-        self.tensor_list = self.update_list + ["obses", "states", "dones"]
+        self.tensor_list = self.update_list + [
+            "obses",
+            "states",
+            "dones",
+            "memory_resets",
+        ]
 
     def init_rnn_from_model(self, model) -> None:
         self.is_rnn = self.model.is_rnn()
+
+    def _get_memory_resets(self, dones: torch.Tensor, infos: Any) -> torch.Tensor:
+        """Return state-reset flags for the transition that just completed.
+
+        Environments may preserve policy memory across a physical trial reset by
+        returning ``infos["memory_reset"]``. Existing environments retain the
+        historical behavior because the default is ``dones``.
+        """
+        if not isinstance(infos, dict) or "memory_reset" not in infos:
+            return dones.byte()
+        resets = infos["memory_reset"]
+        if not isinstance(resets, torch.Tensor):
+            resets = torch.as_tensor(resets, device=self.device)
+        return resets.to(device=self.device, dtype=torch.uint8).reshape_as(dones)
 
     def cast_obs(self, obs) -> torch.Tensor:
         if isinstance(obs, torch.Tensor):
@@ -1052,6 +1175,7 @@ class Agent:
         self.init_tensors()
         self.last_mean_rewards = -100500
         total_time = 0
+        wall_time_start = time.monotonic()
         self.obs_dict = self.env_reset()
         self.curr_frames = self.batch_size_envs
 
@@ -1137,6 +1261,7 @@ class Agent:
                     curr_frames=curr_frames,
                     csigmas=csigmas,
                 )
+                self.observer.after_print_stats(frame, epoch_num, total_time)
 
                 if len(b_losses) > 0:
                     self.writer.add_scalar(
@@ -1264,6 +1389,24 @@ class Agent:
                     print("MAX FRAMES NUM!")
                     should_exit = True
 
+                wall_time = time.monotonic() - wall_time_start
+                if (
+                    self.cfg.max_wall_time_seconds > 0
+                    and wall_time >= self.cfg.max_wall_time_seconds
+                ):
+                    if self.game_rewards.current_size == 0:
+                        mean_rewards = -np.inf
+                    self.save(
+                        filename=(
+                            self.nn_dir
+                            / f"last_walltime_{int(wall_time)}s_frame_{self.frame}_rew_"
+                            f"{str(mean_rewards).replace('[', '_').replace(']', '_')}.pth"
+                        ),
+                        override_state=all_state_dict,
+                    )
+                    print("MAX WALL TIME!")
+                    should_exit = True
+
                 update_time = 0
             else:
                 if self.cfg.multi_gpu:
@@ -1281,6 +1424,7 @@ class Agent:
         obses = batch_dict["obses"]
         returns = batch_dict["returns"]
         dones = batch_dict["dones"]
+        memory_resets = batch_dict.get("memory_resets", dones)
         values = batch_dict["values"]
         actions = batch_dict["actions"]
         neglogpacs = batch_dict["neglogpacs"]
@@ -1320,6 +1464,7 @@ class Agent:
         dataset_dict["actions"] = actions
         dataset_dict["obs"] = obses
         dataset_dict["dones"] = dones
+        dataset_dict["memory_resets"] = memory_resets
         dataset_dict["rnn_states"] = rnn_states
         dataset_dict["mu"] = mus
         dataset_dict["sigma"] = sigmas
@@ -1371,7 +1516,9 @@ class Agent:
             # which destabilises per-block gradient updates.
             if self.cfg.sapg is not None:
                 batch_dict = shuffle_batch(
-                    batch_dict=batch_dict, horizon_length=self.cfg.horizon_length
+                    batch_dict=batch_dict,
+                    horizon_length=self.cfg.horizon_length,
+                    seq_length=self.cfg.seq_length if self.is_rnn else None,
                 )
 
         play_time_end = time.perf_counter()
@@ -1502,8 +1649,9 @@ class Agent:
 
             if self.cfg.zero_rnn_on_done:
                 batch_dict["dones"] = input_dict["dones"]
+                batch_dict["memory_resets"] = input_dict["memory_resets"]
 
-        with torch.cuda.amp.autocast(enabled=self.cfg.mixed_precision):
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             res_dict = self.model(batch_dict)
             action_log_probs = res_dict["prev_neglogp"]
             values = res_dict["values"]
@@ -1518,13 +1666,17 @@ class Agent:
             surr2 = advantage * torch.clamp(ratio, 1.0 - curr_e_clip, 1.0 + curr_e_clip)
             a_losses = torch.max(-surr1, -surr2)
 
-            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(
-                -curr_e_clip, curr_e_clip
-            )
-            value_losses = (values - returns_batch) ** 2
-            value_losses_clipped = (value_pred_clipped - returns_batch) ** 2
-            c_losses = torch.max(value_losses, value_losses_clipped)
-            c_losses = c_losses.squeeze(dim=1)
+            if self.has_asymmetric_critic:
+                # The external asymmetric critic owns the value loss and optimizer.
+                # This matches rl_games with central_value_config enabled.
+                c_losses = torch.zeros(N, dtype=values.dtype, device=values.device)
+            else:
+                value_pred_clipped = value_preds_batch + (
+                    values - value_preds_batch
+                ).clamp(-curr_e_clip, curr_e_clip)
+                value_losses = (values - returns_batch) ** 2
+                value_losses_clipped = (value_pred_clipped - returns_batch) ** 2
+                c_losses = torch.max(value_losses, value_losses_clipped).squeeze(dim=1)
 
             if self.cfg.bounds_loss_coef is not None:
                 if self.cfg.bound_loss_type == "regularisation":
@@ -1576,7 +1728,11 @@ class Agent:
                 a_loss
                 + 0.5 * c_loss * self.cfg.critic_coef
                 - entropy_loss
-                + (b_loss * self.cfg.bounds_loss_coef if self.cfg.bounds_loss_coef is not None else 0.0)
+                + (
+                    b_loss * self.cfg.bounds_loss_coef
+                    if self.cfg.bounds_loss_coef is not None
+                    else 0.0
+                )
             )
             if self.cfg.multi_gpu:
                 self.optimizer.zero_grad()
@@ -1648,13 +1804,13 @@ class Agent:
             self.env.set_env_state(env_state)
 
     def get_weights(self) -> Dict[str, Any]:
-        state = self.get_stats_weights()
+        state = self.get_stats_weights(model_stats=True)
         state["model"] = self.model.state_dict()
         return state
 
     def get_stats_weights(self, model_stats=False) -> Dict[str, Any]:
         state = {}
-        if self.cfg.mixed_precision:
+        if self.mixed_precision:
             state["scaler"] = self.scaler.state_dict()
         if self.has_asymmetric_critic:
             state["central_val_stats"] = self.asymmetric_critic_net.get_stats_weights(
@@ -1671,9 +1827,9 @@ class Agent:
     def set_stats_weights(self, weights) -> None:
         if self.cfg.normalize_input and "running_mean_std" in weights:
             self.model.running_mean_std.load_state_dict(weights["running_mean_std"])
-        if self.cfg.normalize_value and "normalize_value" in weights:
+        if self.cfg.normalize_value and "reward_mean_std" in weights:
             self.model.value_mean_std.load_state_dict(weights["reward_mean_std"])
-        if self.cfg.mixed_precision and "scaler" in weights:
+        if self.mixed_precision and "scaler" in weights:
             self.scaler.load_state_dict(weights["scaler"])
 
     def set_weights(self, weights) -> None:
@@ -1684,8 +1840,15 @@ class Agent:
         update_list = self.update_list
         step_time = 0.0
 
+        store_step_rnn_states = (
+            self.is_rnn
+            and self.cfg.sapg is not None
+            and self.cfg.sapg.use_others_experience
+            and not self.has_asymmetric_critic
+        )
         if self.is_rnn:
             mb_rnn_states = self.mb_rnn_states
+        if store_step_rnn_states:
             rnn_state_buffer = [
                 torch.zeros(
                     (self.cfg.horizon_length, *s.shape), dtype=s.dtype, device=s.device
@@ -1699,8 +1862,9 @@ class Agent:
                     for s, mb_s in zip(self.rnn_states, mb_rnn_states):
                         mb_s[n // self.cfg.seq_length, :, :, :] = s
 
-                for i, s in enumerate(self.rnn_states):
-                    rnn_state_buffer[i][n, :, :, :] = s
+                if store_step_rnn_states:
+                    for i, s in enumerate(self.rnn_states):
+                        rnn_state_buffer[i][n, :, :, :] = s
 
                 if self.has_asymmetric_critic:
                     self.asymmetric_critic_net.pre_step_rnn(n)
@@ -1712,6 +1876,9 @@ class Agent:
 
             self.experience_buffer.update_data("obses", n, self.obs_dict["obs"])
             self.experience_buffer.update_data("dones", n, self.dones.byte())
+            self.experience_buffer.update_data(
+                "memory_resets", n, self.memory_resets.byte()
+            )
 
             for k in update_list:
                 self.experience_buffer.update_data(k, n, res_dict[k])
@@ -1732,6 +1899,7 @@ class Agent:
             self.obs_dict, rewards, self.dones, infos = self.env_step(
                 res_dict["actions"]
             )
+            self.memory_resets = self._get_memory_resets(self.dones, infos)
             step_time_end = time.perf_counter()
 
             step_time += step_time_end - step_time_start
@@ -1752,11 +1920,17 @@ class Agent:
             self.current_lengths += 1
             all_done_indices = self.dones.nonzero(as_tuple=False).flatten()
             env_done_indices = all_done_indices[:: self.num_agents]
+            self.observer.process_infos(infos, env_done_indices)
 
-            if self.is_rnn and len(all_done_indices) > 0:
+            memory_reset_indices = self.memory_resets.nonzero(as_tuple=False)
+            if self.is_rnn and len(memory_reset_indices) > 0:
                 if self.cfg.zero_rnn_on_done:
-                    for s in self.rnn_states:
-                        s[:, all_done_indices, :] = s[:, all_done_indices, :] * 0.0
+                    self.rnn_states = list(
+                        self.model.reset_memory_states(
+                            self.rnn_states, memory_reset_indices
+                        )
+                    )
+            if len(all_done_indices) > 0:
                 if self.has_asymmetric_critic:
                     self.asymmetric_critic_net.post_step_rnn(all_done_indices)
 
@@ -1764,7 +1938,9 @@ class Agent:
             self.game_shaped_rewards.update(
                 self.current_shaped_rewards[env_done_indices]
             )
-            self.game_lengths.update(self.current_lengths[env_done_indices].unsqueeze(-1))
+            self.game_lengths.update(
+                self.current_lengths[env_done_indices].unsqueeze(-1)
+            )
 
             if self.block_game_rewards is not None and len(env_done_indices) > 0:
                 M = self.cfg.sapg.num_conditionings
@@ -1836,7 +2012,7 @@ class Agent:
             "states": self.experience_buffer.tensor_dict.get("states", None),
             "dones": mb_fdones,
             "last_dones": fdones,
-            "rnn_states": rnn_state_buffer if self.is_rnn else None,
+            "rnn_states": rnn_state_buffer if store_step_rnn_states else None,
             "last_rnn_states": self.rnn_states,
             "mb_extr_rewards": mb_rewards,
             "mb_intr_rewards": mb_intr_rewards,  # SAPG: per-step entropy, or None
@@ -1933,19 +2109,16 @@ class Agent:
                 pass  # handled below
             elif key == "rnn_states":
                 if val is not None:
-                    repeated = [
-                        torch.cat([val[i]] * len(sampled_block_idxs), dim=1)
-                        for i in range(len(val))
-                    ]
-                    new_batch_dict[key] = [
-                        filter_leader(
-                            val=repeated[i],
-                            orig_len=val[i].shape[1],
-                            sampled_block_idxs=sampled_block_idxs,
-                            num_blocks=num_blocks,
-                        )
-                        for i in range(len(val))
-                    ]
+                    augmented_states = []
+                    for state in val:
+                        sequences_per_block = state.shape[1] // num_blocks
+                        parts = [state]
+                        for block_idx in sampled_block_idxs[1:]:
+                            start = (block_idx - 1) * sequences_per_block
+                            end = block_idx * sequences_per_block
+                            parts.append(state[:, start:end])
+                        augmented_states.append(torch.cat(parts, dim=1))
+                    new_batch_dict[key] = augmented_states
                 else:
                     new_batch_dict[key] = None
             else:
@@ -1976,7 +2149,11 @@ class Agent:
             # Also update states conditioning if using asymmetric critic
             if mb_states is not None and self.conditioning_idxs is not None:
                 mb_states[:, :, -CONDITIONING_IDX_DIM:] = rolled_conditioning
-            if "states" in last_obs_dict and last_obs_dict["states"] is not None and self.conditioning_idxs is not None:
+            if (
+                "states" in last_obs_dict
+                and last_obs_dict["states"] is not None
+                and self.conditioning_idxs is not None
+            ):
                 last_obs_dict["states"][:, -CONDITIONING_IDX_DIM:] = rolled_conditioning
 
             flattened_rnn_states = (
@@ -1997,32 +2174,41 @@ class Agent:
                 else None
             )
 
-            mb_values = []
             CHUNK_SIZE = 8192  # Can't do this in one pass because OOM
-            num_chunks = math.ceil(flattened_mb_obs.shape[0] / CHUNK_SIZE)
-            for i in range(num_chunks):
-                start_idx = i * CHUNK_SIZE
-                end_idx = (i + 1) * CHUNK_SIZE
-                if end_idx >= flattened_mb_obs.shape[0]:
-                    end_idx = flattened_mb_obs.shape[0]
+            all_indices = torch.arange(flattened_mb_obs.shape[0], device=self.device)
+            transformer_config = self.model.a2c_network.config.transformer
+            if (
+                transformer_config is not None
+                and transformer_config.memory_mode == "segment"
+                and flattened_rnn_states is not None
+            ):
+                # Segment inference requires a common phase within each vectorized
+                # call. Flattening time and environments mixes phases, so group by
+                # the saved global segment phase and scatter back afterward.
+                phase = flattened_rnn_states[-1][0, :, 0].round().long()
+                index_groups = [all_indices[phase == p] for p in phase.unique()]
+            else:
+                index_groups = [all_indices]
 
-                mb_values.append(
-                    self.get_values(
+            mb_values = torch.empty(
+                (len(flattened_mb_obs), self.value_size),
+                dtype=batch_dict["values"].dtype,
+                device=self.device,
+            )
+            for group in index_groups:
+                for start_idx in range(0, len(group), CHUNK_SIZE):
+                    indices = group[start_idx : start_idx + CHUNK_SIZE]
+                    mb_values[indices] = self.get_values(
                         obs_dict={
-                            "obs": flattened_mb_obs[start_idx:end_idx],
-                            "states": flattened_mb_states[start_idx:end_idx]
+                            "obs": flattened_mb_obs[indices],
+                            "states": flattened_mb_states[indices]
                             if mb_states is not None
                             else None,
                         },
-                        rnn_states=[
-                            s[:, start_idx:end_idx] for s in flattened_rnn_states
-                        ]
+                        rnn_states=[s[:, indices] for s in flattened_rnn_states]
                         if flattened_rnn_states is not None
                         else None,
                     )
-                )
-
-            mb_values = torch.cat(mb_values, dim=0)
             last_values = self.get_values(
                 obs_dict=last_obs_dict, rnn_states=last_rnn_states
             )
@@ -2072,10 +2258,19 @@ class Agent:
         play_steps_extras["last_obs_dict"]["obs"][:, -CONDITIONING_IDX_DIM:] = (
             self.conditioning_idxs
         )
-        if play_steps_extras["states"] is not None and self.conditioning_idxs is not None:
-            play_steps_extras["states"][:, :, -CONDITIONING_IDX_DIM:] = self.conditioning_idxs
+        if (
+            play_steps_extras["states"] is not None
+            and self.conditioning_idxs is not None
+        ):
+            play_steps_extras["states"][:, :, -CONDITIONING_IDX_DIM:] = (
+                self.conditioning_idxs
+            )
         last_obs_dict = play_steps_extras["last_obs_dict"]
-        if "states" in last_obs_dict and last_obs_dict["states"] is not None and self.conditioning_idxs is not None:
+        if (
+            "states" in last_obs_dict
+            and last_obs_dict["states"] is not None
+            and self.conditioning_idxs is not None
+        ):
             last_obs_dict["states"][:, -CONDITIONING_IDX_DIM:] = self.conditioning_idxs
 
         return new_batch_dict
@@ -2087,37 +2282,70 @@ class Agent:
         fraction. Replaces dead slots with pairwise-averaged conditioning
         embeddings of the survivors.
         """
-        assert self.cfg.sapg is not None, "_run_evolutionary_update requires sapg config"
+        assert self.cfg.sapg is not None, (
+            "_run_evolutionary_update requires sapg config"
+        )
         assert self.cfg.epo is not None, "_run_evolutionary_update requires epo config"
         M = self.cfg.sapg.num_conditionings
-        num_kill = int(M * self.cfg.epo.evolution_kill_ratio)
+        num_kill = max(1, min(M - 1, int(M * self.cfg.epo.evolution_kill_ratio)))
         num_survive = M - num_kill
 
-        if num_survive <= 0 or num_kill <= 0:
+        # Aggregate reward sums and counts so every distributed rank performs
+        # exactly the same evolution. Do not kill unevaluated policies.
+        reward_sums = torch.stack(
+            [meter.mean[0] * meter.current_size for meter in self.block_game_rewards]
+        ).to(self.device)
+        reward_counts = torch.stack(
+            [meter.current_size for meter in self.block_game_rewards]
+        ).to(device=self.device, dtype=torch.float32)
+        if self.cfg.multi_gpu:
+            dist.all_reduce(reward_sums, op=dist.ReduceOp.SUM)
+            dist.all_reduce(reward_counts, op=dist.ReduceOp.SUM)
+        if (reward_counts == 0).any():
+            if self.global_rank == 0:
+                missing = (reward_counts == 0).nonzero(as_tuple=False).flatten()
+                print(
+                    "EPO evolution skipped: no completed episodes for blocks "
+                    f"{missing.tolist()}"
+                )
             return
 
-        # Get mean reward per block; default to -inf if no data yet
-        block_rewards_vals: List[float] = []
-        for k in range(M):
-            meter = self.block_game_rewards[k]
-            if meter.current_size > 0:
-                block_rewards_vals.append(meter.get_mean()[0].item())
-            else:
-                block_rewards_vals.append(-1e9)
-
-        block_rewards = torch.tensor(block_rewards_vals, device=self.device)
+        block_rewards = reward_sums / reward_counts
         sorted_idx = torch.argsort(block_rewards, descending=True)  # best first
         survivor_idx = sorted_idx[:num_survive]
         dead_idx = sorted_idx[num_survive:]
 
         # Recombine: pairwise averaging of survivors → replace dead slots
-        cond_matrix = self.model.a2c_network.conditioning.data  # (M, C)
-        survivors = cond_matrix[survivor_idx]  # (num_survive, C)
+        network = self.model.a2c_network
+        evolved_parameters = [network.conditioning]
+        if network.fixed_sigma and network.sigma.ndim == 2:
+            evolved_parameters.append(network.sigma)
 
-        for i, dead in enumerate(dead_idx):
-            parent_a = survivors[i % num_survive]
-            parent_b = survivors[(i + 1) % num_survive]
-            cond_matrix[dead] = (parent_a + parent_b) / 2.0
+        with torch.no_grad():
+            for parameter in evolved_parameters:
+                survivors = parameter[survivor_idx].clone()
+                for i, dead in enumerate(dead_idx):
+                    parent_a = survivors[i % num_survive]
+                    parent_b = survivors[(i + 1) % num_survive]
+                    parameter[dead] = (parent_a + parent_b) / 2.0
+
+                # Adam momentum from a killed policy must not be applied to its
+                # newly inherited parameters on the next optimizer step.
+                optimizer_state = self.optimizer.state.get(parameter, {})
+                for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+                    if key in optimizer_state:
+                        optimizer_state[key][dead_idx] = 0
+
+        # The active recurrent state was produced by the killed policy. Clear
+        # only those environment blocks whose conditioning was replaced.
+        if self.is_rnn and self.rnn_states is not None:
+            dead_envs = torch.isin(
+                self.conditioning_idxs[:, 0].long(), dead_idx
+            ).nonzero(as_tuple=False)
+            if len(dead_envs) > 0:
+                self.rnn_states = list(
+                    self.model.reset_memory_states(self.rnn_states, dead_envs)
+                )
 
         # Reset per-block trackers so next evaluation reflects new embeddings
         for k in range(M):
@@ -2137,11 +2365,24 @@ class Agent:
         torch_utils.save_checkpoint(filename=filename, state=state)
 
     def restore(self, filename: Path, set_epoch: bool = True) -> None:
-        checkpoint = torch_utils.load_checkpoint(filename)
+        checkpoint = torch_utils.load_checkpoint(filename, map_location=self.device)
+        # Training checkpoints are keyed by global rank so a distributed run
+        # can restore each rank's optimizer/environment state. Plain model
+        # dictionaries remain accepted for backward compatibility.
+        if "model" not in checkpoint:
+            rank = self.global_rank if self.global_rank in checkpoint else 0
+            if rank not in checkpoint:
+                raise KeyError(
+                    f"checkpoint has no state for rank {rank}; keys={checkpoint.keys()}"
+                )
+            checkpoint = checkpoint[rank]
         self.set_full_state_weights(checkpoint, set_epoch=set_epoch)
+        if self.is_rnn and self.rnn_states is not None:
+            self.rnn_states = list(self.model.get_default_rnn_state())
+            self.rnn_states = [state.to(self.device) for state in self.rnn_states]
 
     def override_sigma(self, sigma) -> None:
-        net = self.model.network
+        net = self.model.a2c_network
         if hasattr(net, "sigma") and hasattr(net, "fixed_sigma"):
             if net.fixed_sigma:
                 with torch.no_grad():

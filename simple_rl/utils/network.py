@@ -14,6 +14,7 @@ import torch.nn as nn
 
 from simple_rl.utils.conditioning_utils import CONDITIONING_IDX_DIM
 from simple_rl.utils.layers.recurrent import RnnWithDones
+from simple_rl.utils.layers.transformer import StatefulTransformer, TransformerConfig
 
 
 @dataclass
@@ -36,8 +37,10 @@ class RnnConfig:
 class NetworkConfig:
     mlp: MlpConfig
     rnn: Optional[RnnConfig] = None
+    transformer: Optional[TransformerConfig] = None
     separate_value_mlp: bool = False
     asymmetric_critic: bool = False
+    sigma_init: float = 0.0
 
 
 class Network(nn.Module):
@@ -96,7 +99,21 @@ class Network(nn.Module):
 
         # rnn concat_input: rnn's new input will be its [original input, output from previous stage (if exists)]
         # rnn concat_output: rnn's new output will be its [original output, output from the previous stage (if exists)]
-        if self.has_rnn:
+        if self.has_transformer:
+            if self.has_rnn:
+                raise ValueError("rnn and transformer are mutually exclusive")
+            if self.separate_value_mlp:
+                raise NotImplementedError(
+                    "transformer policies use a shared backbone; separate_value_mlp is unsupported"
+                )
+            if self.asymmetric_critic:
+                raise NotImplementedError(
+                    "use the existing external asymmetric MLP critic with a transformer policy"
+                )
+            if len(self.units) == 0:
+                raise ValueError("transformer requires a non-empty mlp token embedding")
+            out_size = mlp_output_size
+        elif self.has_rnn:
             if not self.is_rnn_before_mlp:
                 # mlp -> rnn
 
@@ -154,11 +171,29 @@ class Network(nn.Module):
                 input_size=mlp_input_size, units=self.units
             )
 
-        self.value = torch.nn.Linear(out_size, self.value_size)
+        if self.has_transformer:
+            assert self.config.transformer is not None
+            self.transformer = StatefulTransformer(
+                config=self.config.transformer,
+                d_model=mlp_output_size,
+                num_seqs=self.num_seqs,
+            )
+            self.actor_head, actor_output_size = self._build_head(
+                mlp_output_size, self.config.transformer.actor_head_units
+            )
+            self.critic_head, critic_output_size = self._build_head(
+                mlp_output_size, self.config.transformer.critic_head_units
+            )
+        else:
+            self.actor_head = nn.Identity()
+            self.critic_head = nn.Identity()
+            actor_output_size = critic_output_size = out_size
+
+        self.value = torch.nn.Linear(critic_output_size, self.value_size)
         self.value_act = nn.Identity()
 
         if self.is_continuous:
-            self.mu = torch.nn.Linear(out_size, actions_num)
+            self.mu = torch.nn.Linear(actor_output_size, actions_num)
             self.mu_act = nn.Identity()
             self.sigma_act = nn.Identity()
 
@@ -170,14 +205,18 @@ class Network(nn.Module):
                 if num_conditionings is not None:
                     self.sigma = nn.Parameter(
                         torch.zeros(
-                            num_conditionings, actions_num,
-                            requires_grad=True, dtype=torch.float32
+                            num_conditionings,
+                            actions_num,
+                            requires_grad=True,
+                            dtype=torch.float32,
                         ),
                         requires_grad=True,
                     )
                 else:
                     self.sigma = nn.Parameter(
-                        torch.zeros(actions_num, requires_grad=True, dtype=torch.float32),
+                        torch.zeros(
+                            actions_num, requires_grad=True, dtype=torch.float32
+                        ),
                         requires_grad=True,
                     )
             else:
@@ -193,7 +232,7 @@ class Network(nn.Module):
 
         if self.is_continuous:
             mu_init = nn.Identity()
-            sigma_init = partial(nn.init.constant_, val=0)
+            sigma_init = partial(nn.init.constant_, val=self.config.sigma_init)
             mu_init(self.mu.weight)
             if self.fixed_sigma:
                 sigma_init(self.sigma)
@@ -230,8 +269,33 @@ class Network(nn.Module):
             obs = torch.cat([normal_obs, conditioning], dim=1)
 
         states = obs_dict.get("rnn_states", None)
-        dones = obs_dict.get("dones", None)
-        bptt_len = obs_dict.get("bptt_len", 0)
+        dones = obs_dict.get("memory_resets", obs_dict.get("dones", None))
+
+        if self.has_transformer:
+            if states is None:
+                raise ValueError("transformer forward requires memory states")
+            out = self.actor_mlp(obs.flatten(1))
+            out, states = self.transformer(
+                embeddings=out,
+                states=states,
+                is_train=obs_dict.get("is_train", False),
+                seq_length=obs_dict.get("seq_length", 1),
+                memory_resets=obs_dict.get("memory_resets", dones),
+            )
+            actor_out = self.actor_head(out)
+            critic_out = self.critic_head(out)
+            value = self.value_act(self.value(critic_out))
+            mu = self.mu_act(self.mu(actor_out))
+            if self.fixed_sigma:
+                sigma_param = (
+                    self.sigma[conditioning_idxs]
+                    if self.num_conditionings is not None
+                    else self.sigma
+                )
+                sigma = mu * 0.0 + self.sigma_act(sigma_param)
+            else:
+                sigma = self.sigma_act(self.sigma(actor_out))
+            return mu, sigma, value, states
 
         if self.separate_value_mlp:
             a_out = c_out = obs
@@ -276,8 +340,8 @@ class Network(nn.Module):
                 else:
                     a_states = states[:2]
                     c_states = states[2:]
-                a_out, a_states = self.a_rnn(a_out, a_states, dones, bptt_len)
-                c_out, c_states = self.c_rnn(c_out, c_states, dones, bptt_len)
+                a_out, a_states = self.a_rnn(a_out, a_states, dones)
+                c_out, c_states = self.c_rnn(c_out, c_states, dones)
 
                 a_out = a_out.transpose(0, 1)
                 c_out = c_out.transpose(0, 1)
@@ -362,7 +426,7 @@ class Network(nn.Module):
                 if dones is not None:
                     dones = dones.reshape(num_seqs, seq_length, -1)
                     dones = dones.transpose(0, 1)
-                out, states = self.rnn(out, states, dones, bptt_len)
+                out, states = self.rnn(out, states, dones)
                 out = out.transpose(0, 1)
                 out = out.contiguous().reshape(out.size()[0] * out.size()[1], -1)
 
@@ -408,9 +472,12 @@ class Network(nn.Module):
         return self.separate_value_mlp
 
     def is_rnn(self) -> bool:
-        return self.has_rnn
+        # Kept for compatibility with the existing PPO sequence-state plumbing.
+        return self.has_rnn or self.has_transformer
 
     def get_default_rnn_state(self) -> Optional[Tuple[torch.Tensor, ...]]:
+        if self.has_transformer:
+            return self.transformer.get_default_state()
         if not self.has_rnn:
             return None
         num_layers = self.rnn_layers
@@ -450,6 +517,10 @@ class Network(nn.Module):
         return self.config.rnn is not None
 
     @property
+    def has_transformer(self) -> bool:
+        return self.config.transformer is not None
+
+    @property
     def asymmetric_critic(self) -> bool:
         return self.config.asymmetric_critic
 
@@ -484,6 +555,17 @@ class Network(nn.Module):
     def get_value_layer(self) -> nn.Module:
         return self.value
 
+    def reset_memory_states(
+        self, states: Sequence[torch.Tensor], indices: torch.Tensor
+    ) -> Tuple[torch.Tensor, ...]:
+        indices = indices.reshape(-1)
+        if self.has_transformer:
+            return self.transformer.reset_state(states, indices)
+        reset_states = list(states)
+        for state in reset_states:
+            state[:, indices, :] = 0
+        return tuple(reset_states)
+
     def _calc_input_size(self, input_shape: Sequence[int]) -> int:
         assert len(input_shape) == 1, f"Input shape must be 1D, got {input_shape}"
         return input_shape[0]
@@ -514,3 +596,10 @@ class Network(nn.Module):
             in_size = unit
 
         return nn.Sequential(*layers)
+
+    def _build_head(
+        self, input_size: int, units: Sequence[int]
+    ) -> Tuple[nn.Sequential, int]:
+        if len(units) == 0:
+            return nn.Sequential(), input_size
+        return self._build_mlp(input_size, units), units[-1]

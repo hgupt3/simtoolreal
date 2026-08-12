@@ -74,6 +74,9 @@ class BaseModel(nn.Module):
             f"Observation shape mismatch: {D} != {expected_obs_dim}"
         )
 
+    def reset_memory_states(self, states, indices):
+        return self.a2c_network.reset_memory_states(states, indices)
+
     def norm_obs(self, observation: torch.Tensor) -> torch.Tensor:
         self.validate_obs_shape(observation)
 
@@ -117,7 +120,7 @@ class ModelA2CContinuousLogStd(BaseModel):
             entropy = distr.entropy().sum(dim=-1)
             prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
             result = {
-                "prev_neglogp": torch.squeeze(prev_neglogp),
+                "prev_neglogp": prev_neglogp.reshape(-1),
                 "values": value,
                 "entropy": entropy,
                 "rnn_states": states,
@@ -129,7 +132,7 @@ class ModelA2CContinuousLogStd(BaseModel):
             selected_action = distr.sample()
             neglogp = self.neglogp(selected_action, mu, sigma, logstd)
             result = {
-                "neglogpacs": torch.squeeze(neglogp),
+                "neglogpacs": neglogp.reshape(-1),
                 "values": self.denorm_value(value),
                 "actions": selected_action,
                 "rnn_states": states,

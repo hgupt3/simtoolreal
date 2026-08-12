@@ -1,0 +1,24 @@
+defaults:
+  - SimToolRealStudySimpleRLBase
+  - _self_
+
+network:
+  separate_value_mlp: False
+  sigma_init: -1.0
+  rnn: null
+  mlp:
+    units: [256, 128]
+  transformer:
+    memory_mode: rolling
+    block_type: qwen
+    context_length: 16
+    n_layers: 2
+    n_heads: 4
+    n_kv_heads: 2
+    ffn_hidden: 256
+    dropout: 0.0
+
+ppo:
+  horizon_length: 16
+  seq_length: 16
+  learning_rate: 3e-4

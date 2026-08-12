@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Any, Callable, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -77,12 +77,12 @@ def safe_save(state: Any, filename: Path) -> Any:
     return safe_filesystem_op(torch.save, state, filename)
 
 
-def safe_load(filename: Path) -> Any:
-    # Always load to cuda:0 — reasonable for single-GPU inference.
-    # Callers that need flexibility should pass map_location themselves.
+def safe_load(
+    filename: Path, map_location: Optional[Union[str, torch.device]] = "cpu"
+) -> Any:
     from functools import partial
 
-    load_fn = partial(torch.load, map_location=torch.device("cuda"))
+    load_fn = partial(torch.load, map_location=map_location)
     return safe_filesystem_op(load_fn, filename)
 
 
@@ -91,9 +91,11 @@ def save_checkpoint(filename: Path, state: Any) -> None:
     safe_save(state, filename)
 
 
-def load_checkpoint(filename: Path) -> Any:
+def load_checkpoint(
+    filename: Path, map_location: Optional[Union[str, torch.device]] = "cpu"
+) -> Any:
     print(f"=> loading checkpoint '{filename}'")
-    state = safe_load(filename)
+    state = safe_load(filename, map_location=map_location)
     return state
 
 
@@ -140,12 +142,12 @@ class AverageMeter(nn.Module):
             return
 
         new_mean = torch.mean(values.float(), dim=0)
-        M = int(np.clip(M, a_min=None, a_max=self.max_size))
-        old_size = int(np.clip(self.current_size.item(), a_min=None, a_max=self.max_size - M))
+        M = min(M, self.max_size)
+        old_size = min(int(self.current_size.item()), self.max_size - M)
         new_size = old_size + M
 
-        self.current_size = torch.tensor(new_size, dtype=torch.int32)
-        self.mean = (self.mean * old_size + new_mean * M) / new_size
+        self.current_size.fill_(new_size)
+        self.mean.copy_((self.mean * old_size + new_mean * M) / new_size)
 
     def clear(self) -> None:
         self.current_size.fill_(0)
