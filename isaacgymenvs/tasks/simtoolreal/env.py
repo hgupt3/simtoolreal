@@ -1874,7 +1874,10 @@ class SimToolReal(VecTask):
         for metric_scale in allegro_kuka_small_cuboid_scales(base_size):
             filename = Path(generated_assets_dir) / (
                 f"{len(files):03d}_cuboid_"
-                + "_".join(f"{dimension:.5f}" for dimension in metric_scale)
+                # Isaac Gym infers the asset type from everything following the
+                # first dot in a basename, so decimal points make an otherwise
+                # valid URDF look like it has extension `.05000_...urdf`.
+                + "_".join(f"{round(dimension * 100_000):05d}" for dimension in metric_scale)
                 + ".urdf"
             )
             generate_cuboid_urdf_constant_density(
