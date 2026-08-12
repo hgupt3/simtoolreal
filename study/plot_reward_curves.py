@@ -19,6 +19,17 @@ RUNS = {
     "current-simplerl-loco128-sapg-seed0": ("LocoFormer / TXL (128)", "#b04cc2"),
 }
 
+PARITY_RUNS = {
+    "legacy-simplerl-lstm-sapg-parity-seed0": (
+        "Legacy simple_rl LSTM (rl_games settings)",
+        "#c45a00",
+    ),
+    "current-simplerl-lstm-sapg-parity-seed0": (
+        "Current simple_rl LSTM (rl_games settings)",
+        "#174f86",
+    ),
+}
+
 
 def load_scalars(run_dir: Path, tag: str = "rewards/step") -> tuple[np.ndarray, np.ndarray]:
     """Merge restarted event files, keeping the newest value at duplicate steps."""
@@ -58,6 +69,11 @@ def main() -> None:
     parser.add_argument("output", type=Path)
     parser.add_argument("--window-frames", type=int, default=25_000_000)
     parser.add_argument(
+        "--include-parity",
+        action="store_true",
+        help="Add the two strict rl_games-settings bridge runs.",
+    )
+    parser.add_argument(
         "--evaluation-block",
         action="store_true",
         help=(
@@ -69,7 +85,10 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     curves = {}
-    for run, (label, color) in RUNS.items():
+    selected_runs = dict(RUNS)
+    if args.include_parity:
+        selected_runs.update(PARITY_RUNS)
+    for run, (label, color) in selected_runs.items():
         tag = (
             "rewards/step"
             if not args.evaluation_block or run == "rlgames-lstm-sapg-seed0"

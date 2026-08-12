@@ -1,6 +1,6 @@
 # SimToolReal SAPG Transformer Study
 
-This directory records the decisions behind the five-run GCP study. The launch
+This directory records the decisions behind the seven-run GCP study. The launch
 entry point is `python isaacgymenvs/launch_transformer_study.py --variant ...`.
 
 ## Matrix
@@ -12,6 +12,8 @@ entry point is `python isaacgymenvs/launch_transformer_study.py --variant ...`.
 | `current-simplerl-lstm-sapg` | current simple_rl | 1024-unit LSTM | 16 / 16 / n/a |
 | `current-simplerl-rolling16-sapg` | current simple_rl | 2-layer Qwen-style rolling cache | 16 / 16 / 16 |
 | `current-simplerl-loco128-sapg` | current simple_rl | 6-layer Transformer-XL segment memory | 128 / 128 / 128 |
+| `legacy-simplerl-lstm-sapg-parity` | April simple_rl snapshot | 1024-unit LSTM, rl_games optimizer settings | 16 / 16 / n/a |
+| `current-simplerl-lstm-sapg-parity` | current simple_rl | 1024-unit LSTM, rl_games optimizer settings | 16 / 16 / n/a |
 
 Every run uses seed 0, six SAPG policies, leader/follower experience sharing,
 one off-policy block, conditioning width 32, entropy scale 0.005, an asymmetric
@@ -39,7 +41,7 @@ remaining implementation limitations and a ranked next-experiment plan.
 
 ## Environment
 
-All five runs use `objectName=allegro_kuka_cuboids`: the ordered 654-shape small
+All seven runs use `objectName=allegro_kuka_cuboids`: the ordered 654-shape small
 cuboid pool from Allegro-Kuka, generated deterministically from a 5 cm base,
 normalized volumes 1.0–2.5, density 400 kg/m^3, side lengths 2.5–15 cm, and
 masses 50–125 g. Tool heads, cylinders, big cuboids, and sticks are excluded.
@@ -68,6 +70,24 @@ configs, logs, and a heartbeat are synchronized externally.
   outer `done` boundary does. This is required for LocoFormer-style in-context
   adaptation across locomotion/task trials.
 - Transformer dropout is zero so rollout and PPO replay use identical models.
+
+## Parity bridge interpretation
+
+The two parity workers were added after resolving the hidden optimizer defaults.
+They use adaptive/standard actor LR with KL target `0.016`, bounds coefficient
+`1e-4`, central value clip `0.2`, and the actor-side auxiliary value loss. This
+matches the existing rl_games run while changing only the backend generation.
+
+- If both parity curves approach rl_games, configuration explains most of the
+  original gap.
+- If legacy parity stays near legacy simple_rl, the remaining gap is primarily
+  implementation or random-stream behavior.
+- If current parity separates from legacy parity, a post-April simple_rl change
+  remains behaviorally important.
+
+Seed 0 is a diagnostic bridge, not a statistical conclusion. Only after seeing
+which branch of this decision tree occurs should the most informative pair be
+repeated at seeds 1 and 2.
 
 ## GCP operation
 
