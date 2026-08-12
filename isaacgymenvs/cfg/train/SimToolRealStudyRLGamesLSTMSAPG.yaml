@@ -15,6 +15,9 @@ params:
     use_others_experience: lf
     off_policy_ratio: 1.0
     expl_type: mixed_expl_learn_param
+    # The generic train.py otherwise guesses this value from a legacy numeric
+    # experiment-name prefix, which study run names intentionally do not use.
+    expl_reward_coef: 1.0
     expl_reward_coef_embd_size: 32
     expl_reward_coef_scale: 0.005
     expl_reward_type: entropy
