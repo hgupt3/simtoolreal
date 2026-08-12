@@ -68,6 +68,7 @@ def main() -> None:
         "force_render=False",
         "task.env.objectName=allegro_kuka_cuboids",
         "task.env.capture_video=False",
+        "task.env.capture_viewer=False",
         "task.env.viserViz=False",
         f"wandb_activate={not args.no_wandb}",
         f"wandb_project={args.wandb_project}",
