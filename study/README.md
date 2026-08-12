@@ -65,8 +65,9 @@ Workers receive `study-variant`, `study-num-envs`, `study-seed`, and
 `study-bucket` as instance metadata. Logs, TensorBoard events, configs,
 checkpoints, GPU status, and heartbeats are mirrored to
 `gs://gcp-gentoolreal-simtoolreal-transformer` every ten minutes. A failed
-service resumes the newest local checkpoint; successful seven-day completion
-is not restarted.
+service resumes the newest local checkpoint. The worker maps its intentional
+seven-day timeout to a successful service exit, so completion is not restarted;
+current simple_rl gets a ten-minute margin to checkpoint at an epoch boundary.
 
 No W&B credential was present on the workstation or source image. Runs still
 activate W&B with project `simtoolreal_transformer` in offline mode, preserving

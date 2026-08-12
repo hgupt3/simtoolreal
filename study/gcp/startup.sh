@@ -30,7 +30,6 @@ WorkingDirectory=/home/tylerlum/simtoolreal
 ExecStart=/usr/bin/bash /home/tylerlum/simtoolreal/study/gcp/run_worker.sh
 Restart=on-failure
 RestartSec=60
-RuntimeMaxSec=7d
 KillMode=control-group
 KillSignal=SIGINT
 TimeoutStopSec=120

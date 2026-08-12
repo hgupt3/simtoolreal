@@ -32,6 +32,8 @@ if [[ -n "$checkpoint" ]]; then
   checkpoint_args=(--checkpoint "$checkpoint")
 fi
 
+set +e
+timeout --signal=INT --kill-after=120s 604800 \
 python isaacgymenvs/launch_transformer_study.py \
   --variant "$VARIANT" \
   --num-envs "$NUM_ENVS" \
@@ -39,7 +41,15 @@ python isaacgymenvs/launch_transformer_study.py \
   --experiment "$EXPERIMENT" \
   --wandb-project simtoolreal_transformer \
   --wandb-group 2026-08-12-transformer-study \
-  --max-wall-time-seconds 604800 \
+  --max-wall-time-seconds 603600 \
   "${checkpoint_args[@]}" \
   2>&1 | tee -a "$RUNTIME_DIR/$EXPERIMENT.log"
+run_status=${PIPESTATUS[0]}
+set -e
 
+# GNU timeout returns 124 after enforcing the planned study deadline. Treat it
+# as successful completion so Restart=on-failure only retries genuine crashes.
+if [[ "$run_status" -eq 124 ]]; then
+  exit 0
+fi
+exit "$run_status"
