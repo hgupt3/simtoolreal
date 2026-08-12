@@ -26,6 +26,11 @@ The April snapshot is extracted from SimToolReal commit `5e831aaa` at launch.
 asymmetric-critic dataset sizing so the legacy run can use exactly the same
 98,304 minibatch setting. It does not backport current model or PPO behavior.
 
+The rl_games and legacy simple_rl LSTM runs are not strict optimizer-parity
+runs. See [`rlgames_vs_simplerl_parity.md`](rlgames_vs_simplerl_parity.md) for
+the confirmed similarities, configuration differences, reward-metric caveat,
+and the recommended parity follow-up.
+
 ## Environment
 
 All five runs use `objectName=allegro_kuka_cuboids`: the ordered 654-shape small
