@@ -31,6 +31,11 @@ runs. See [`rlgames_vs_simplerl_parity.md`](rlgames_vs_simplerl_parity.md) for
 the confirmed similarities, configuration differences, reward-metric caveat,
 and the recommended parity follow-up.
 
+See [`transformer_reference_audit.md`](transformer_reference_audit.md) for the
+detailed comparison against Denys88's IsaacGymEnvs transformer example,
+rl_games PR #163 and issue #194, and the LocoFormer paper. It also records the
+remaining implementation limitations and a ranked next-experiment plan.
+
 ## Environment
 
 All five runs use `objectName=allegro_kuka_cuboids`: the ordered 654-shape small

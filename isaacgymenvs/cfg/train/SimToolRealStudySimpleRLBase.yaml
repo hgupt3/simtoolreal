@@ -1,6 +1,7 @@
 # Shared current-simple_rl configuration for the GCP architecture study.
-# Derived configs only replace the temporal policy. Environment/object overrides
-# live in launch_transformer_study.py so every algorithm sees the same task.
+# Derived configs select the temporal policy and may override policy-specific
+# optimizer/exploration settings. Environment/object overrides live in
+# launch_transformer_study.py so every algorithm sees the same task.
 
 ppo:
   num_actors: ${...task.env.numEnvs}

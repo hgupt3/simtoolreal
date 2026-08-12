@@ -31,6 +31,8 @@ Both runs use:
 - LSTM layer normalization, horizon 16, sequence length 16, and recurrent state
   reset on true environment `done`;
 - an asymmetric central critic with the same MLP widths;
+- an actor-network value head that is also trained on the PPO value target,
+  despite the separate asymmetric critic;
 - two actor and critic mini-epochs and a nominal 98,304-sample minibatch;
 - reward scale 0.01, gamma 0.99, GAE lambda 0.95, PPO clip 0.1, critic
   coefficient 4.0, and gradient norm 1.0;
@@ -122,6 +124,20 @@ The evidence supports these statements:
 
 The evidence does **not** support attributing the curve difference specifically
 to the simple_rl cleanup, nor does it support calling the difference only noise.
+
+## Current simple_rl is a third behavior
+
+Current simple_rl sets the actor-network critic loss to zero whenever the
+external asymmetric critic is enabled. The comment in `simple_rl/agent.py` says
+this matches rl_games, but the vendored rl_games configuration does not do that:
+`use_experimental_cv` defaults to `True`, which makes `has_value_loss=True` even
+with `central_value_config`. The April simple_rl snapshot also trains both value
+heads.
+
+This means the current-simple_rl LSTM curve is not just the April snapshot plus
+bug fixes. Its shared LSTM/MLP backbone receives no actor-side value-loss
+gradient. This is a plausible reason for its different learning transition and
+must be made an explicit option before a strict three-way comparison.
 
 ## Recommended strict-parity follow-up
 
