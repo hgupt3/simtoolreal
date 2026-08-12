@@ -90,3 +90,18 @@ index 8ed87fd..dff6451 100644
          self.last_range = (start, end)
          input_dict = {}
          for k, v in self.values_dict.items():
+diff --git a/simple_rl/agent.py b/simple_rl/agent.py
+index 7c6b4d9..e517e70 100644
+--- a/simple_rl/agent.py
++++ b/simple_rl/agent.py
+@@ -2139,3 +2133,10 @@ class Agent:
+     def restore(self, filename: Path, set_epoch: bool = True) -> None:
+         checkpoint = torch_utils.load_checkpoint(filename)
++        # Historical save() wraps state by global rank, while restore() expected
++        # the unwrapped state. Accept the format the snapshot itself writes.
++        if "model" not in checkpoint:
++            rank = self.global_rank if self.global_rank in checkpoint else 0
++            if rank not in checkpoint:
++                raise KeyError(f"checkpoint has no state for rank {rank}; keys={checkpoint.keys()}")
++            checkpoint = checkpoint[rank]
+         self.set_full_state_weights(checkpoint, set_epoch=set_epoch)
