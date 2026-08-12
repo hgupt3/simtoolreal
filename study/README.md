@@ -37,10 +37,13 @@ curve is context rather than a direct reproduction target.
 
 ## Scale and stopping
 
-Start with 12,288 environments. A full-memory smoke must leave at least 10% of
-the A100's 40 GB free after one collection and update. If any architecture does
-not, lower all five runs to the same largest value that is divisible by six and
-keeps `num_envs * 16` divisible by 98,304 (6,144 is the next candidate).
+The production matrix uses 6,144 environments. A 12,288-environment LocoFormer
+cannot fit. The full 6,144-environment LocoFormer smoke completed collection and
+updates, peaking at about 38.5 GiB on the 40 GiB A100. This is tighter than the
+preferred 10% reserve, but 6,144 is the smallest environment count compatible
+with both six equal policy blocks and the unchanged 98,304 minibatch. Reducing
+again would also change the optimizer batch and confound the comparison, so the
+validated exact-batch configuration was retained.
 
 Runs stop at the first of 70 billion frames or seven days. Current simple_rl
 does this at an epoch boundary and writes a final checkpoint. Infrastructure
@@ -54,3 +57,18 @@ configs, logs, and a heartbeat are synchronized externally.
   outer `done` boundary does. This is required for LocoFormer-style in-context
   adaptation across locomotion/task trials.
 - Transformer dropout is zero so rollout and PPO replay use identical models.
+
+## GCP operation
+
+`study/gcp/startup.sh` installs the run and ten-minute synchronization services.
+Workers receive `study-variant`, `study-num-envs`, `study-seed`, and
+`study-bucket` as instance metadata. Logs, TensorBoard events, configs,
+checkpoints, GPU status, and heartbeats are mirrored to
+`gs://gcp-gentoolreal-simtoolreal-transformer` every ten minutes. A failed
+service resumes the newest local checkpoint; successful seven-day completion
+is not restarted.
+
+No W&B credential was present on the workstation or source image. Runs still
+activate W&B with project `simtoolreal_transformer` in offline mode, preserving
+complete run directories for later `wandb sync` without baking a secret into a
+shared image. GCS and TensorBoard are the live durable telemetry meanwhile.

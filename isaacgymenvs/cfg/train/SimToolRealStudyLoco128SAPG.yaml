@@ -24,3 +24,6 @@ ppo:
   horizon_length: 128
   seq_length: 128
   learning_rate: 1e-4
+  # A 128-step transformer epoch is much slower than the 16-step baselines.
+  # Keep periodic checkpoint wall cadence near tens of minutes, not 13+ hours.
+  save_frequency: 100

@@ -44,6 +44,7 @@ def main() -> None:
     parser.add_argument("--num-envs", type=int, default=12288)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--experiment", default="")
+    parser.add_argument("--checkpoint", default="")
     parser.add_argument("--wandb-project", default="simtoolreal_transformer")
     parser.add_argument("--wandb-entity", default="tylerlum")
     parser.add_argument("--wandb-group", default="2026-08-12-transformer-study")
@@ -78,6 +79,8 @@ def main() -> None:
         f"wandb_tags=[transformer-study,{args.variant},easy-cuboids,seed-{args.seed}]",
         "++wandb_notes='Six-policy SAPG LF sharing; deterministic Allegro-Kuka cuboids'",
     ]
+    if args.checkpoint:
+        common.append(f"checkpoint={Path(args.checkpoint).resolve()}")
 
     environment = os.environ.copy()
     if backend == "rlgames":

@@ -21,4 +21,5 @@ network:
 ppo:
   horizon_length: 16
   seq_length: 16
+  save_frequency: 300
   learning_rate: 3e-4
