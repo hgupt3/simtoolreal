@@ -25,4 +25,6 @@ gcloud storage rsync --recursive "study/gcp/runtime" "$DESTINATION/runtime"
 if [[ -d "runs/$EXPERIMENT" ]]; then
   gcloud storage rsync --recursive "runs/$EXPERIMENT" "$DESTINATION/run"
 fi
-
+if [[ -d wandb ]]; then
+  gcloud storage rsync --recursive wandb "$DESTINATION/wandb"
+fi
