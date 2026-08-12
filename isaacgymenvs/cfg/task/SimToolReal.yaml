@@ -26,6 +26,13 @@ env:
   dofSpeedScale: 1.5  # often set to 1.0
   handMovingAverage: 0.1  # often set to 0.1 or 1.0
   armMovingAverage: 0.1  # often set to 0.1 or 1.0
+  # Hand action decoder. joint_absolute preserves the historical 22 independent
+  # normalized joint targets. pca_absolute uses a retargeted-human eigengrasp
+  # basis while keeping observations and PD targets in physical joint space.
+  handActionSpace: joint_absolute
+  eigengraspArtifact: assets/eigengrasp/sharpa_arctic_30hz_v1_pca.json
+  eigengraspNumComponents: 22
+  eigengraspNormalization: clamp  # clamp | gauge (gauge requires all 22)
   dofSpeedScaleFinal: ${eval:"None"}  # often set to 1.0
   armMovingAverageFinal: ${eval:"None"}  # often set to 0.1
   handMovingAverageFinal: ${eval:"None"}  # often set to 0.1

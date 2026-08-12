@@ -24,6 +24,36 @@ VARIANTS = {
         "current",
         "SimToolRealStudyCurrentLSTMSAPGParity",
     ),
+    "current-simplerl-lstm-sapg-pca22-clamp": (
+        "current",
+        "SimToolRealStudyCurrentLSTMSAPG",
+    ),
+    "current-simplerl-lstm-sapg-pca22-gauge": (
+        "current",
+        "SimToolRealStudyCurrentLSTMSAPG",
+    ),
+    "current-simplerl-lstm-sapg-pca5-clamp": (
+        "current",
+        "SimToolRealStudyCurrentLSTMSAPG",
+    ),
+}
+
+ACTION_SPACE_OVERRIDES = {
+    "current-simplerl-lstm-sapg-pca22-clamp": (
+        "task.env.handActionSpace=pca_absolute",
+        "task.env.eigengraspNumComponents=22",
+        "task.env.eigengraspNormalization=clamp",
+    ),
+    "current-simplerl-lstm-sapg-pca22-gauge": (
+        "task.env.handActionSpace=pca_absolute",
+        "task.env.eigengraspNumComponents=22",
+        "task.env.eigengraspNormalization=gauge",
+    ),
+    "current-simplerl-lstm-sapg-pca5-clamp": (
+        "task.env.handActionSpace=pca_absolute",
+        "task.env.eigengraspNumComponents=5",
+        "task.env.eigengraspNormalization=clamp",
+    ),
 }
 
 
@@ -87,6 +117,7 @@ def main() -> None:
         f"wandb_tags=[transformer-study,{args.variant},easy-cuboids,seed-{args.seed}]",
         "++wandb_notes='Six-policy SAPG LF sharing; deterministic Allegro-Kuka cuboids'",
     ]
+    common.extend(ACTION_SPACE_OVERRIDES.get(args.variant, ()))
     if args.checkpoint:
         common.append(f"checkpoint={Path(args.checkpoint).resolve()}")
 

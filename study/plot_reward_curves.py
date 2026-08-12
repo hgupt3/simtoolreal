@@ -30,6 +30,21 @@ PARITY_RUNS = {
     ),
 }
 
+EIGENGRASP_RUNS = {
+    "current-simplerl-lstm-sapg-pca22-clamp-seed0": (
+        "LSTM · PCA-22 literal",
+        "#d73027",
+    ),
+    "current-simplerl-lstm-sapg-pca22-gauge-seed0": (
+        "LSTM · PCA-22 gauge",
+        "#7b3294",
+    ),
+    "current-simplerl-lstm-sapg-pca5-clamp-seed0": (
+        "LSTM · PCA-5 literal",
+        "#fdae61",
+    ),
+}
+
 
 def load_scalars(run_dir: Path, tag: str = "rewards/step") -> tuple[np.ndarray, np.ndarray]:
     """Merge restarted event files, keeping the newest value at duplicate steps."""
@@ -81,6 +96,11 @@ def main() -> None:
             "versus rl_games rewards/step (which already filters to that block)."
         ),
     )
+    parser.add_argument(
+        "--include-eigengrasp",
+        action="store_true",
+        help="Add the three current-simple_rl LSTM eigengrasp runs.",
+    )
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +108,8 @@ def main() -> None:
     selected_runs = dict(RUNS)
     if args.include_parity:
         selected_runs.update(PARITY_RUNS)
+    if args.include_eigengrasp:
+        selected_runs.update(EIGENGRASP_RUNS)
     for run, (label, color) in selected_runs.items():
         tag = (
             "rewards/step"

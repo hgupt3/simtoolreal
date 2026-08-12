@@ -70,6 +70,11 @@ from isaacgymenvs.utils.observation_action_utils_sharpa import (
     compute_observation,
     create_urdf_object,
 )
+from isaacgymenvs.utils.eigengrasp import (
+    decode_absolute_eigengrasp,
+    load_eigengrasp_artifact,
+    validate_host_joint_order,
+)
 from isaacgymenvs.utils.torch_jit_utils import (
     get_axis_params,
     quat_rotate,
@@ -149,7 +154,43 @@ class SimToolReal(VecTask):
             self.num_finger_dofs = None  # Different per finger
         self.num_hand_arm_dofs = self.num_hand_dofs + self.num_arm_dofs
 
-        self.num_robot_actions = self.num_hand_arm_dofs
+        self.hand_action_space = self.cfg["env"].get(
+            "handActionSpace", "joint_absolute"
+        )
+        if self.hand_action_space not in ("joint_absolute", "pca_absolute"):
+            raise ValueError(f"Unknown handActionSpace: {self.hand_action_space}")
+        self.eigengrasp_artifact = None
+        self.eigengrasp_num_components = self.num_hand_dofs
+        self.eigengrasp_normalization = "clamp"
+        if self.hand_action_space == "pca_absolute":
+            artifact_path = Path(self.cfg["env"]["eigengraspArtifact"])
+            if not artifact_path.is_absolute():
+                artifact_path = Path(__file__).resolve().parents[3] / artifact_path
+            self.eigengrasp_artifact = load_eigengrasp_artifact(artifact_path)
+            self.eigengrasp_num_components = int(
+                self.cfg["env"]["eigengraspNumComponents"]
+            )
+            self.eigengrasp_normalization = self.cfg["env"].get(
+                "eigengraspNormalization", "clamp"
+            )
+            if not 1 <= self.eigengrasp_num_components <= self.num_hand_dofs:
+                raise ValueError("eigengraspNumComponents must be between 1 and 22")
+            if (
+                self.eigengrasp_normalization == "gauge"
+                and self.eigengrasp_num_components != self.num_hand_dofs
+            ):
+                raise ValueError("gauge normalization requires all 22 components")
+            if self.eigengrasp_normalization not in ("clamp", "gauge"):
+                raise ValueError(
+                    "eigengraspNormalization must be 'clamp' or 'gauge'"
+                )
+
+        self.num_hand_actions = (
+            self.num_hand_dofs
+            if self.hand_action_space == "joint_absolute"
+            else self.eigengrasp_num_components
+        )
+        self.num_robot_actions = self.num_arm_dofs + self.num_hand_actions
         if self.privileged_actions:
             self.num_robot_actions += 3
 
@@ -389,6 +430,8 @@ class SimToolReal(VecTask):
             virtual_screen_capture=virtual_screen_capture,
             force_render=force_render,
         )
+
+        self._initialize_eigengrasp()
 
         # Index of environment to view in viewer and camera
         self.index_to_view = 0
@@ -847,6 +890,57 @@ class SimToolReal(VecTask):
         self._init_tyler_curriculum()
 
         self._init_obs_action_queue()
+
+    def _initialize_eigengrasp(self) -> None:
+        """Validate the live Sharpa layout and stage the PCA tensors on-device."""
+
+        if self.hand_action_space != "pca_absolute":
+            self.eigengrasp_mean = None
+            return
+        artifact = self.eigengrasp_artifact
+        if artifact is None:
+            raise RuntimeError("pca_absolute action space has no artifact")
+        if artifact.joint_dim != self.num_hand_dofs:
+            raise ValueError("eigengrasp artifact does not contain 22 hand joints")
+        validate_host_joint_order(artifact, self.joint_names[7:])
+        self.eigengrasp_mean = artifact.mean.to(self.device)
+        self.eigengrasp_components = artifact.components.to(self.device)
+        self.eigengrasp_coefficient_low = artifact.coefficient_low.to(self.device)
+        self.eigengrasp_coefficient_high = artifact.coefficient_high.to(self.device)
+        self.eigengrasp_artifact_lower = artifact.joint_lower.to(self.device)
+        self.eigengrasp_artifact_upper = artifact.joint_upper.to(self.device)
+        self.eigengrasp_host_lower = self.arm_hand_dof_lower_limits[7:].clone()
+        self.eigengrasp_host_upper = self.arm_hand_dof_upper_limits[7:].clone()
+        print(
+            "Eigengrasp action space: "
+            f"artifact={artifact.artifact_id}, "
+            f"components={self.eigengrasp_num_components}, "
+            f"normalization={self.eigengrasp_normalization}, "
+            f"retained_variance="
+            f"{artifact.cumulative_variance[self.eigengrasp_num_components - 1].item():.6f}"
+        )
+
+    def _decode_hand_actions(self, hand_actions: torch.Tensor) -> torch.Tensor:
+        """Map policy hand outputs to unsmoothed absolute joint targets."""
+
+        if self.hand_action_space == "joint_absolute":
+            return scale(
+                hand_actions,
+                self.arm_hand_dof_lower_limits[7 : self.num_hand_arm_dofs],
+                self.arm_hand_dof_upper_limits[7 : self.num_hand_arm_dofs],
+            )
+        return decode_absolute_eigengrasp(
+            hand_actions,
+            mean=self.eigengrasp_mean,
+            components=self.eigengrasp_components,
+            coefficient_low=self.eigengrasp_coefficient_low,
+            coefficient_high=self.eigengrasp_coefficient_high,
+            artifact_lower=self.eigengrasp_artifact_lower,
+            artifact_upper=self.eigengrasp_artifact_upper,
+            host_lower=self.eigengrasp_host_lower,
+            host_upper=self.eigengrasp_host_upper,
+            normalization=self.eigengrasp_normalization,
+        )
 
     def _sample_log_uniform(
         self, min_value: float, max_value: float, num_samples: int
@@ -3925,7 +4019,7 @@ class SimToolReal(VecTask):
             # arm relative to current position
             targets = (
                 self.arm_hand_dof_pos[:, :7]
-                + self.hand_dof_speed_scale * self.dt * self.actions[:, :7]
+                + self.hand_dof_speed_scale * self.dt * actions[:, :7]
             )
             self.cur_targets[:, :7] = tensor_clamp(
                 targets,
@@ -3936,7 +4030,7 @@ class SimToolReal(VecTask):
             # arm relative to previous target
             targets = (
                 self.prev_targets[:, :7]
-                + self.hand_dof_speed_scale * self.dt * self.actions[:, :7]
+                + self.hand_dof_speed_scale * self.dt * actions[:, :7]
             )
             self.cur_targets[:, :7] = tensor_clamp(
                 targets,
@@ -3951,10 +4045,8 @@ class SimToolReal(VecTask):
         )
 
         # hand
-        self.cur_targets[:, 7 : self.num_hand_arm_dofs] = scale(
-            actions[:, 7 : self.num_hand_arm_dofs],
-            self.arm_hand_dof_lower_limits[7 : self.num_hand_arm_dofs],
-            self.arm_hand_dof_upper_limits[7 : self.num_hand_arm_dofs],
+        self.cur_targets[:, 7 : self.num_hand_arm_dofs] = self._decode_hand_actions(
+            actions[:, 7 : 7 + self.num_hand_actions]
         )
         self.cur_targets[:, 7 : self.num_hand_arm_dofs] = (
             self.hand_moving_average * self.cur_targets[:, 7 : self.num_hand_arm_dofs]

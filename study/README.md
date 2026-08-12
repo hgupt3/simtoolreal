@@ -14,6 +14,9 @@ entry point is `python isaacgymenvs/launch_transformer_study.py --variant ...`.
 | `current-simplerl-loco128-sapg` | current simple_rl | 6-layer Transformer-XL segment memory | 128 / 128 / 128 |
 | `legacy-simplerl-lstm-sapg-parity` | April simple_rl snapshot | 1024-unit LSTM, rl_games optimizer settings | 16 / 16 / n/a |
 | `current-simplerl-lstm-sapg-parity` | current simple_rl | 1024-unit LSTM, rl_games optimizer settings | 16 / 16 / n/a |
+| `current-simplerl-lstm-sapg-pca22-clamp` | current simple_rl | LSTM, full-rank literal ARCTIC PCA hand actions | 16 / 16 / n/a |
+| `current-simplerl-lstm-sapg-pca22-gauge` | current simple_rl | LSTM, full-rank gauge ARCTIC PCA hand actions | 16 / 16 / n/a |
+| `current-simplerl-lstm-sapg-pca5-clamp` | current simple_rl | LSTM, top-5 literal ARCTIC PCA hand actions | 16 / 16 / n/a |
 
 Every run uses seed 0, six SAPG policies, leader/follower experience sharing,
 one off-policy block, conditioning width 32, entropy scale 0.005, an asymmetric
@@ -89,9 +92,49 @@ Seed 0 is a diagnostic bridge, not a statistical conclusion. Only after seeing
 which branch of this decision tree occurs should the most informative pair be
 repeated at seeds 1 and 2.
 
+## Eigengrasp action-space extension
+
+The three eigengrasp workers change only the policy-to-hand-target map. The arm
+keeps its seven historical delta channels, observations and the asymmetric
+critic remain in physical joint space, SAPG still shares experience between all
+six policies, action delay is applied before decoding, and the decoded target
+still passes through the stock `handMovingAverage=0.1` EMA.
+
+The vendored `sharpa_arctic_30hz_v1_pca` artifact comes from Action-Bench's
+validated 436,546-frame, 602-trajectory canonical-right ARCTIC corpus. Its exact
+left/right Sharpa layout contract is checked against Isaac Gym's live joint
+order at environment startup. The artifact is fitted against the full authored
+Sharpa limits, while this task intentionally narrows four finger-abduction
+joints; decoded postures are therefore affinely transferred by normalized joint
+position into the live limits before the EMA.
+
+`pca22-clamp` maps each action coordinate asymmetrically to the demonstrated
+P1/P99 coefficient bounds, reconstructs `mean + coefficients @ components`, and
+clips to the joint box. It is a square orthonormal change of basis, but its
+axis-aligned coefficient cube does not necessarily reach every joint-box
+corner. `pca22-gauge` keeps the PCA-selected direction and radially rescales it
+so the largest absolute policy action controls the fraction of available
+joint-box radius. `pca5-clamp` uses the same literal map with the top five modes,
+which retain 71.37% of ARCTIC posture variance and deliberately cannot express
+the remaining joint-space directions.
+
+This is distinct from LUCID: LUCID uses five eigen directions plus one residual
+channel per hand joint as an integrated delta controller. These runs isolate an
+absolute eigengrasp parameterization with either full or deliberately reduced
+rank and no residual head.
+
+The PCA-5 worker intentionally keeps the same per-coordinate policy sigma and
+SAPG entropy coefficients as the 29-action controls. Because Gaussian entropy
+is summed over coordinates, its 12-action policy has a smaller total entropy
+term than the 29-action policies. We leave that coupled to the dimensionality
+intervention for this first diagnostic; any follow-up claiming an architecture
+gain should also compare entropy normalized per action dimension.
+
 ## GCP operation
 
-`study/gcp/startup.sh` installs the run and ten-minute synchronization services.
+`study/gcp/startup.sh` installs the original run and ten-minute synchronization
+services. New eigengrasp workers use `startup_eigengrasp.sh`, which first
+fast-forwards this branch and otherwise installs the same services.
 Workers receive `study-variant`, `study-num-envs`, `study-seed`, and
 `study-bucket` as instance metadata. Logs, TensorBoard events, configs,
 checkpoints, GPU status, and heartbeats are mirrored to
