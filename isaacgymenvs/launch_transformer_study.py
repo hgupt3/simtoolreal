@@ -16,6 +16,14 @@ VARIANTS = {
     "current-simplerl-lstm-sapg": ("current", "SimToolRealStudyCurrentLSTMSAPG"),
     "current-simplerl-rolling16-sapg": ("current", "SimToolRealStudyRolling16SAPG"),
     "current-simplerl-loco128-sapg": ("current", "SimToolRealStudyLoco128SAPG"),
+    "legacy-simplerl-lstm-sapg-parity": (
+        "legacy",
+        "SimToolRealStudyLegacyLSTMSAPGParity",
+    ),
+    "current-simplerl-lstm-sapg-parity": (
+        "current",
+        "SimToolRealStudyCurrentLSTMSAPGParity",
+    ),
 }
 
 

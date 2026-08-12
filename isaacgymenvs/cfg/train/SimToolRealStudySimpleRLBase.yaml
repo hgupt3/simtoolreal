@@ -21,6 +21,9 @@ ppo:
   truncate_grads: True
   mixed_precision: True
   normalize_value: True
+  # Historical simple_rl and rl_games continuous PPO both train this auxiliary
+  # actor-side value head even when the privileged critic owns rollout values.
+  train_actor_value_with_asymmetric_critic: True
   save_frequency: 1800
   save_best_after: 100
   max_epochs: -1

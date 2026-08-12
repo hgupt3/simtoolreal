@@ -189,6 +189,15 @@ class PpoConfig:
     device: str = "cuda:0"
     weight_decay: float = 0.0
     asymmetric_critic: Optional[AsymmetricCriticConfig] = None
+    train_actor_value_with_asymmetric_critic: bool = True
+    """Also train the policy network's value head when a separate asymmetric
+    critic supplies PPO returns and rollout values.
+
+    This auxiliary loss is the historical simple_rl behavior and matches
+    rl_games continuous PPO's default ``use_experimental_cv=True``. Disable it
+    to let the asymmetric critic own all value learning and remove value-loss
+    gradients from the policy backbone.
+    """
     truncate_grads: bool = False
     """If True, clip the total gradient norm to ``grad_norm`` before stepping."""
 
@@ -319,6 +328,14 @@ def print_statistics(
 
 
 class Agent:
+    @property
+    def trains_actor_value(self) -> bool:
+        """Whether the policy optimizer includes its own value-head loss."""
+        return (
+            not self.has_asymmetric_critic
+            or self.cfg.train_actor_value_with_asymmetric_critic
+        )
+
     def _validate_config(self) -> None:
         cfg = self.cfg
         positive_ints = {
@@ -1666,9 +1683,10 @@ class Agent:
             surr2 = advantage * torch.clamp(ratio, 1.0 - curr_e_clip, 1.0 + curr_e_clip)
             a_losses = torch.max(-surr1, -surr2)
 
-            if self.has_asymmetric_critic:
-                # The external asymmetric critic owns the value loss and optimizer.
-                # This matches rl_games with central_value_config enabled.
+            if not self.trains_actor_value:
+                # Optional clean separation: the external asymmetric critic owns
+                # the value loss and optimizer. rl_games and historical simple_rl
+                # instead enable this actor-side auxiliary value loss by default.
                 c_losses = torch.zeros(N, dtype=values.dtype, device=values.device)
             else:
                 value_pred_clipped = value_preds_batch + (

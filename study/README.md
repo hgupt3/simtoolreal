@@ -28,8 +28,9 @@ asymmetric-critic dataset sizing so the legacy run can use exactly the same
 
 The rl_games and legacy simple_rl LSTM runs are not strict optimizer-parity
 runs. See [`rlgames_vs_simplerl_parity.md`](rlgames_vs_simplerl_parity.md) for
-the confirmed similarities, configuration differences, reward-metric caveat,
-and the recommended parity follow-up.
+the fully resolved three-way configuration, intentional differences, fixed
+actor-value-loss regression, reward-metric caveat, recommended defaults, and
+the two explicit `*-parity` follow-up variants.
 
 See [`transformer_reference_audit.md`](transformer_reference_audit.md) for the
 detailed comparison against Denys88's IsaacGymEnvs transformer example,

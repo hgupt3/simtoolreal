@@ -1,0 +1,13 @@
+defaults:
+  - SimToolRealStudyLegacyLSTMSAPG
+  - _self_
+
+# The April snapshot always trains the actor-side auxiliary value head. These
+# remaining overrides match the resolved rl_games optimizer behavior.
+ppo:
+  lr_schedule: adaptive
+  schedule_type: standard
+  kl_threshold: 0.016
+  bounds_loss_coef: 0.0001
+  asymmetric_critic:
+    e_clip: 0.2

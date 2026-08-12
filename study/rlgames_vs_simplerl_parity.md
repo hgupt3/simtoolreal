@@ -1,157 +1,187 @@
-# rl_games versus legacy simple_rl parity audit
+# rl_games, legacy simple_rl, and current simple_rl parity audit
 
-This note records the audit performed on 2026-08-12 after the seed-0 reward
-curves showed legacy simple_rl learning earlier than vendored rl_games. It
-applies to these study variants:
+Audit date: 2026-08-12. The immutable pre-fix study anchors are commit
+`1fbee38b` in this repository and commit `ef910a8` in standalone simple_rl.
+The five active workers were not modified or restarted by this audit.
 
-- `rlgames-lstm-sapg-seed0`
-- `legacy-simplerl-lstm-sapg-seed0`
+This comparison uses the workers' saved `config_resolved.yaml` files (and the
+rl_games saved Hydra config), the complete Hydra defaults chain, dataclass/code
+fallbacks, launcher overrides, and training-entry-point mutations. It therefore
+describes runtime behavior, not merely text that appears in one YAML file.
 
 ## Conclusion
 
-These runs test substantially similar LSTM SAPG agents, but they are not strict
-implementation-parity runs. In particular, they use different actor learning
-rate schedules. Their curve difference must not be classified as ordinary
-seed noise until a strict optimizer-parity comparison is run.
+The three LSTM SAPG runs use the same task, policy size, rollout shape, SAPG
+population, and nearly all PPO coefficients. They are not strict backend-parity
+runs, however. Four optimizer behaviors differ:
 
-The current experiment remains useful as a historical-backend comparison: it
-tests the original rl_games configuration against the April simple_rl snapshot
-as each was configured. It does not isolate the effect of the code cleanup.
+1. rl_games uses adaptive actor LR; both simple_rl runs use constant LR.
+2. rl_games uses bounds coefficient `1e-4`; both simple_rl runs use zero.
+3. rl_games' central value clip defaults to `0.2`; simple_rl explicitly uses
+   `0.1`.
+4. rl_games and legacy simple_rl train an auxiliary actor-side value head;
+   pre-fix current simple_rl does not.
 
-## Confirmed similarities
+The first three are accidental study-configuration mismatches caused by
+asymmetric inheritance/defaults, not core algorithm bugs. The fourth is a
+current simple_rl parity regression: its comment claimed rl_games parity, but
+rl_games continuous PPO defaults the auxiliary loss on. It is now explicit and
+defaults on again in the post-anchor code.
 
-Both runs use:
+Consequently, the reward difference is not evidence that cleanup alone improves
+or hurts learning, and it should not be dismissed as seed noise. The measured
+LR mismatch is large, and current-versus-legacy also differs in backbone value
+supervision.
 
-- 6,144 environments split into six equal SAPG policy blocks of 1,024
-  environments;
-- a learned 32-dimensional conditioning for each of the six policies;
-- leader/follower experience sharing with one off-policy block;
-- policy-dependent action standard deviations;
-- a one-layer, 1,024-unit LSTM before an `[1024, 1024, 512, 512]` MLP;
-- LSTM layer normalization, horizon 16, sequence length 16, and recurrent state
-  reset on true environment `done`;
-- an asymmetric central critic with the same MLP widths;
-- an actor-network value head that is also trained on the PPO value target,
-  despite the separate asymmetric critic;
-- two actor and critic mini-epochs and a nominal 98,304-sample minibatch;
-- reward scale 0.01, gamma 0.99, GAE lambda 0.95, PPO clip 0.1, critic
-  coefficient 4.0, and gradient norm 1.0;
-- input, value, and advantage normalization; and
-- seed 0 and the same deterministic cuboid task distribution.
+## How configuration actually resolves
 
-The SAPG remainder is not silently dropped. Both dataset implementations extend
-the final recurrent minibatch to the actual number of returns, so the augmented
-remainder is included in the update.
+### rl_games
 
-## Confirmed differences
+Hydra composes:
 
-### Actor learning-rate schedule
-
-rl_games inherits the following from `SimToolRealPPO.yaml`:
-
-```yaml
-learning_rate: 1e-4
-lr_schedule: adaptive
-schedule_type: standard
-kl_threshold: 0.016
+```text
+SimToolRealPPO
+  -> SimToolRealLSTMAsymmetricPPO
+     -> SimToolRealStudyRLGamesLSTMSAPG
+        -> launch_transformer_study.py command-line overrides
+        -> train.py preprocess_train_config
 ```
 
-The legacy simple_rl study configuration only sets:
+`SimToolRealLSTMAsymmetricPPO.yaml` and the study SAPG YAML do **not** override
+the base PPO actor scheduler or bounds coefficient. They therefore retain
+`adaptive`, `standard`, KL `0.016`, and bounds `1e-4`. The nested central critic
+sets `clip_value: true` but no `e_clip`, so `central_value.py` supplies `0.2`.
+The launcher changes `expl_coef_block_size` to `num_envs / 6 = 1024` and
+`train.py` injects device/PBT metadata; neither changes the optimizer values.
+
+### legacy and current simple_rl
+
+The two simple_rl study YAMLs are complete `ppo:` mappings rather than children
+of `SimToolRealPPO.yaml`. `train_simple_rl.py` converts the resolved mapping to
+typed dataclasses, then only replaces the device from `cfg.rl_device`; it does
+not copy rl_games defaults or mutate schedule, bounds, or critic clipping.
+
+Missing simple_rl fields come from dataclass defaults. In particular,
+`lr_schedule=None` means identity/constant LR and a missing `schedule_type` is
+`legacy` but inert. Both study YAMLs explicitly set bounds to zero and central
+`e_clip` to `0.1`.
+
+### Exact effective training values
+
+`default` below means a code/dataclass fallback after Hydra composition.
+
+| Effective value | rl_games | legacy simple_rl | pre-fix current simple_rl |
+| --- | ---: | ---: | ---: |
+| Environments / SAPG blocks | 6144 / 6 | 6144 / 6 | 6144 / 6 |
+| Horizon / sequence | 16 / 16 | 16 / 16 | 16 / 16 |
+| Base / augmented batch | 98,304 / 114,688 | same | same |
+| Requested minibatch / mini-epochs | 98,304 / 2 | same | same |
+| Actor LR | `1e-4` adaptive | constant `1e-4` | constant `1e-4` |
+| Schedule timing / KL target | standard / 0.016 | inert defaults | inert defaults |
+| Bounds coefficient | `1e-4` | `0.0` | `0.0` |
+| Actor PPO clip | 0.1 | 0.1 | 0.1 |
+| Central value clip | default 0.2 | explicit 0.1 | explicit 0.1 |
+| Auxiliary actor value loss | on (default) | on (unconditional) | off (hard-coded) |
+| Actor/central critic mini-epochs | 2 / 2 | 2 / 2 | 2 / 2 |
+| Reward scale / gamma / GAE lambda | .01 / .99 / .95 | same | same |
+| Critic coefficient / grad norm | 4 / 1 | same | same |
+| Input/value/advantage normalization | on/on/on | same | same |
+| Mixed precision / gradient clipping | on/on | same | same |
+| Episode value bootstrap | default false | default false | default false |
+| Recurrent reset on `done` | default true | explicit true | explicit true |
+| Initial log sigma / per-block sigma | 0 / yes | 0 / yes | 0 / yes |
+| SAPG sharing / off-policy blocks | leader-follower / 1 | same | same |
+| Entropy coefficient range | .0025 to 0 | same | same |
+
+The augmented remainder is not dropped. Each implementation lets the final
+minibatch absorb all 114,688 samples. Legacy simple_rl receives only the narrow
+compatibility patch needed to support that batch and its asymmetric critic.
+
+## Differences classified
+
+### Accidental experimental mismatches, not library bugs
+
+- **Adaptive versus constant LR.** Adaptive LR is an intentional rl_games
+  feature, and constant LR is an intentional simple_rl default. Failing to set
+  them identically in a claimed baseline comparison was the mistake. Observed
+  rl_games LR ranged from about `1.98e-5` to `3.84e-3`, while simple_rl stayed at
+  `1e-4`; this can readily alter the learning transition.
+- **Bounds loss.** The rl_games `1e-4` value is inherited historical tuning.
+  Zero is valid because actions are clipped before the environment and the
+  coefficient is tiny. This is a parity mismatch, not evidence either backend
+  computes the loss incorrectly.
+- **Central critic clip 0.2 versus 0.1.** Both implementations correctly apply
+  clipped value loss. The discrepancy comes from an omitted nested rl_games key
+  falling back to `0.2`; simple_rl explicitly chose the main PPO clip of `0.1`.
+
+### Fixed parity bug
+
+Current simple_rl had unconditionally zeroed the policy network's value loss
+whenever a privileged asymmetric critic existed. That is a defensible ablation,
+but it was neither historical simple_rl behavior nor rl_games parity, and there
+was no configuration switch. It also removes value-learning gradients from an
+LSTM/Transformer policy backbone.
+
+Post-anchor simple_rl now exposes:
 
 ```yaml
-learning_rate: 1e-4
+train_actor_value_with_asymmetric_critic: true
 ```
 
-Consequently, legacy simple_rl uses a constant actor learning rate while
-rl_games adapts it from measured PPO KL. TensorBoard data collected during the
-run confirms the difference:
+It defaults to `true`, restoring legacy/rl_games behavior. Setting it `false`
+cleanly makes the external critic own all value learning. This is especially
+important for interpreting the transformer runs: the LocoFormer paper trains a
+value decoder from the temporal representation, while the pre-fix active
+transformer receives policy/entropy gradients but no value-loss gradient in its
+temporal backbone.
 
-| Environment frames | legacy simple_rl | rl_games |
-| ---: | ---: | ---: |
-| 0 | 0.0001000 | 0.0001000 |
-| 100M | 0.0001000 | 0.0002250 |
-| 300M | 0.0001000 | 0.0001500 |
-| 500M | 0.0001000 | 0.0003375 |
-| 700M | 0.0001000 | 0.0000444 |
+### Intentional or behaviorally irrelevant differences
 
-Across the observed run, rl_games ranged from approximately `1.98e-5` to
-`3.84e-3`; legacy simple_rl remained exactly at `1e-4`. This is large enough to
-be a plausible cause of different learning-transition timing.
+- rl_games identifies SAPG blocks with fixed float IDs and then looks up learned
+  rows; simple_rl appends integer IDs and performs the same learned-row lookup.
+  Both avoid normalizing the ID and both initialize learned rows with `randn`.
+- Current simple_rl makes recurrent SAPG state reuse explicit, fixes shuffling
+  for `seq_length < horizon`, and supports `memory_reset`. With the active LSTM
+  `seq_length == horizon` and ordinary `done` resets, these fixes do not explain
+  the legacy/current curve gap.
+- Current has a wall-clock stop; legacy/rl_games use the launcher's external
+  deadline. This changes termination, not updates before termination.
+- Player determinism settings affect evaluation only, not these training jobs.
+- Framework construction order and kernels consume random numbers differently.
+  Equal integer seeds cannot make independent implementations bitwise equal.
 
-### Bounds loss
+## Reward metric caveat
 
-rl_games inherits `bounds_loss_coef: 0.0001`; the legacy simple_rl study sets
-`bounds_loss_coef: 0.0`. This is probably smaller than the learning-rate
-difference but is still a real optimizer mismatch.
+rl_games `rewards/step` excludes exploratory blocks and reports policy 5, the
+zero-entropy exploitation/follower policy. simple_rl `rewards/step` aggregates
+all blocks and separately logs `block_rewards/block_0` through block 5.
 
-### Random-number streams and numerical implementation
+The matching comparison is rl_games `rewards/step` versus simple_rl
+`block_rewards/block_5`, plotted in
+`results/reward_curves_eval_policy_seed0_20260812.png`. The delay remains after
+this correction, so it is not merely a logging artifact.
 
-Using the same seed does not make the runs bitwise equivalent. Module
-construction order, parameter initialization calls, rollout code, shuffling,
-normalization updates, and kernel execution differ between implementations.
-They therefore begin from different sampled parameters and do not encounter
-identical trajectories. Multiple seeds are required to estimate the size of
-this residual stochastic variation.
+## Defaults moving forward
 
-## Reward logging caveat
+There are two distinct goals and they should use named configurations:
 
-For mixed exploration, rl_games excludes the exploratory blocks from its
-`rewards/step` statistic and reports the last 1,024-environment block: policy 5,
-the zero-entropy exploitation/follower policy. simple_rl's `rewards/step`
-aggregates completed episodes from all six blocks and separately records
-`block_rewards/block_0` through `block_rewards/block_5`.
+1. **Production/exploration default:** keep constant actor LR `1e-4`, bounds
+   disabled, central clip `0.1`, and the auxiliary actor value loss enabled.
+   Constant LR has been substantially less volatile in this run and the two
+   simple_rl curves transitioned earlier, although more seeds are still needed.
+   Bounds zero and matching 0.1 actor/critic clips are the simpler choices.
+2. **Backend regression parity:** match historical rl_games exactly with
+   adaptive/standard LR, KL `0.016`, bounds `1e-4`, central clip `0.2`, and the
+   auxiliary actor value loss enabled. New
+   `SimToolRealStudyLegacyLSTMSAPGParity.yaml` and
+   `SimToolRealStudyCurrentLSTMSAPGParity.yaml` encode these values instead of
+   relying on hidden defaults.
 
-Therefore the original all-policy plot was not metric-equivalent. The matching
-evaluation-policy comparison is:
+Do not replace the original run configurations: they are evidence of what the
+active curves actually tested. For the strict parity follow-up, run the existing
+rl_games variant and both new parity variants for at least three seeds, compare
+policy-5 reward, and log LR, KL, actor/central value losses, bounds loss, sigma,
+and normalization statistics.
 
-- rl_games: `rewards/step`
-- simple_rl: `block_rewards/block_5`
-
-The corrected plot is
-`results/reward_curves_eval_policy_seed0_20260812.png`. The rl_games learning
-delay remains in that comparison, so the observed delay is not explained by
-the logging mismatch.
-
-## Interpretation of the current curves
-
-The evidence supports these statements:
-
-1. The initial reward plot contained a metric mismatch.
-2. Correcting that mismatch does not remove the curve difference.
-3. The two runs have a major measured learning-rate mismatch and a smaller
-   bounds-loss mismatch.
-4. One seed is insufficient to measure residual implementation variance.
-
-The evidence does **not** support attributing the curve difference specifically
-to the simple_rl cleanup, nor does it support calling the difference only noise.
-
-## Current simple_rl is a third behavior
-
-Current simple_rl sets the actor-network critic loss to zero whenever the
-external asymmetric critic is enabled. The comment in `simple_rl/agent.py` says
-this matches rl_games, but the vendored rl_games configuration does not do that:
-`use_experimental_cv` defaults to `True`, which makes `has_value_loss=True` even
-with `central_value_config`. The April simple_rl snapshot also trains both value
-heads.
-
-This means the current-simple_rl LSTM curve is not just the April snapshot plus
-bug fixes. Its shared LSTM/MLP backbone receives no actor-side value-loss
-gradient. This is a plausible reason for its different learning transition and
-must be made an explicit option before a strict three-way comparison.
-
-## Recommended strict-parity follow-up
-
-For a regression test of the cleanup itself, run at least three matched seeds
-with:
-
-- adaptive actor LR in both backends;
-- `schedule_type: standard` and `kl_threshold: 0.016` in both;
-- `bounds_loss_coef: 0.0001` in both;
-- the existing matching architecture, SAPG, batch, task, and seed settings; and
-- policy-5 reward as the primary evaluation curve, while retaining all-policy
-  and per-block curves for diagnosis.
-
-Log actor LR, KL, bounds loss, policy loss, critic losses, action sigma, and
-normalization statistics from both backends. First compare their distributions
-over frames; do not expect step-by-step identity because their random streams
-and numerical implementations remain different.
+The existing single-seed evidence supports keeping the stable production
+defaults above; it does not yet establish that they are universally superior.

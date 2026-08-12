@@ -154,9 +154,10 @@ cover about 4.25 seconds.
    use RoPE, pre-layer normalization, GELU FFNs, and no dropout. These are
    reasonable choices, not confirmed reproductions.
 5. **The active run uses a privileged external critic.** The paper describes a
-   value head decoded from the TXL output. Current simple_rl sets that actor-side
-   value loss to zero when the asymmetric critic exists, leaving the TXL
-   backbone without a value-loss gradient.
+   value head decoded from the TXL output. The immutable active-run commit sets
+   that actor-side value loss to zero when the asymmetric critic exists, leaving
+   the TXL backbone without a value-loss gradient. Post-anchor simple_rl restores
+   the historical auxiliary loss by default and exposes an explicit opt-out.
 6. **SAPG sharing is an additional off-policy approximation.** Relabelled
    follower samples reuse memory generated under their source conditioning.
    The code makes this explicit as `recurrent_experience_sharing: reuse_state`,
@@ -245,11 +246,11 @@ Current simple_rl adds or fixes:
 For all active variants `seq_length == horizon_length`, so the legacy recurrent
 shuffle issue and ignored `bptt_len` do not change these particular LSTM runs.
 
-One current change is not a pure parity fix: current simple_rl disables the
-actor value loss when the external asymmetric critic is enabled. Both legacy
-simple_rl and this vendored rl_games train that auxiliary actor value head. The
-current comment claiming rl_games parity is incorrect. Make this behavior an
-explicit configuration option before the next parity matrix.
+One current change was not a pure parity fix: the immutable active-run commit
+disables the actor value loss when the external asymmetric critic is enabled.
+Both legacy simple_rl and this vendored rl_games train that auxiliary actor
+value head. Post-anchor code now makes the behavior explicit and defaults it on
+for historical parity; the active processes remain unchanged.
 
 ## Correctness checks completed
 

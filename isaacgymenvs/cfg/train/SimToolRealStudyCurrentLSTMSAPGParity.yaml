@@ -1,0 +1,15 @@
+defaults:
+  - SimToolRealStudyCurrentLSTMSAPG
+  - _self_
+
+# Strict optimizer-parity variant for comparing current simple_rl against the
+# existing rl_games study run. The production study defaults intentionally stay
+# constant-LR with a 0.1 central-value clip and no bounds penalty.
+ppo:
+  lr_schedule: adaptive
+  schedule_type: standard
+  kl_threshold: 0.016
+  bounds_loss_coef: 0.0001
+  train_actor_value_with_asymmetric_critic: True
+  asymmetric_critic:
+    e_clip: 0.2

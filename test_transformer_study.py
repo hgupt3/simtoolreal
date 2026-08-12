@@ -1,11 +1,54 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
 
 from isaacgymenvs.utils.study_objects import (
     allegro_kuka_small_cuboid_scales,
 )
 from isaacgymenvs.utils.simple_rl_env_wrapper import SimpleRLEnvWrapper
+
+
+def test_parity_configs_resolve_all_hidden_optimizer_defaults() -> None:
+    cfg_dir = str((Path(__file__).parent / "isaacgymenvs" / "cfg").resolve())
+    with initialize_config_dir(version_base="1.1", config_dir=cfg_dir):
+        for config_name, actor_value_key in (
+            ("SimToolRealStudyCurrentLSTMSAPGParity", True),
+            ("SimToolRealStudyLegacyLSTMSAPGParity", None),
+        ):
+            cfg = compose(
+                config_name="config",
+                overrides=[
+                    "task=SimToolReal",
+                    f"train={config_name}",
+                    "num_envs=6144",
+                ],
+            )
+            ppo = OmegaConf.to_container(cfg.train.ppo, resolve=True)
+            assert ppo["num_actors"] == 6144
+            assert ppo["lr_schedule"] == "adaptive"
+            assert ppo["schedule_type"] == "standard"
+            assert ppo["kl_threshold"] == 0.016
+            assert ppo["bounds_loss_coef"] == 0.0001
+            assert ppo["asymmetric_critic"]["e_clip"] == 0.2
+            if actor_value_key is not None:
+                assert ppo["train_actor_value_with_asymmetric_critic"] is True
+
+
+def test_current_actor_value_loss_defaults_to_historical_parity() -> None:
+    from simple_rl.agent import Agent, PpoConfig
+
+    assert PpoConfig.__dataclass_fields__[
+        "train_actor_value_with_asymmetric_critic"
+    ].default is True
+    agent = Agent.__new__(Agent)
+    agent.has_asymmetric_critic = True
+    agent.cfg = SimpleNamespace(train_actor_value_with_asymmetric_critic=True)
+    assert agent.trains_actor_value
+    agent.cfg.train_actor_value_with_asymmetric_critic = False
+    assert not agent.trains_actor_value
 
 
 def test_easy_cuboid_pool_matches_allegro_kuka_bounds() -> None:
