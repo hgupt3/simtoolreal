@@ -121,7 +121,7 @@ def main(cfg: DictConfig) -> None:
         graphics_device_id=cfg.graphics_device_id,
         headless=cfg.headless,
         virtual_screen_capture=False,
-        force_render=True,
+        force_render=cfg.force_render,
     )
     env = SimpleRLEnvWrapper(raw_env)
     print(f"Environment built.  obs={env.observation_space}  act={env.action_space}")
