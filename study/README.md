@@ -92,6 +92,9 @@ Seed 0 is a diagnostic bridge, not a statistical conclusion. Only after seeing
 which branch of this decision tree occurs should the most informative pair be
 repeated at seeds 1 and 2.
 
+The eigengrasp worker launch and integration-smoke evidence are recorded in
+[`eigengrasp_experiment_log.md`](eigengrasp_experiment_log.md).
+
 ## Eigengrasp action-space extension
 
 The three eigengrasp workers change only the policy-to-hand-target map. The arm
