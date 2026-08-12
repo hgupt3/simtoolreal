@@ -57,23 +57,36 @@ def main() -> None:
     parser.add_argument("event_root", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--window-frames", type=int, default=25_000_000)
+    parser.add_argument(
+        "--evaluation-block",
+        action="store_true",
+        help=(
+            "Compare the zero-entropy exploitation policy: simple_rl block 5 "
+            "versus rl_games rewards/step (which already filters to that block)."
+        ),
+    )
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     curves = {}
     for run, (label, color) in RUNS.items():
-        frames, rewards = load_scalars(args.event_root / run)
-        curves[run] = (label, color, frames, rewards)
+        tag = (
+            "rewards/step"
+            if not args.evaluation_block or run == "rlgames-lstm-sapg-seed0"
+            else "block_rewards/block_5"
+        )
+        frames, rewards = load_scalars(args.event_root / run, tag=tag)
+        curves[run] = (label, color, tag, frames, rewards)
 
     fig, ax = plt.subplots(figsize=(12, 7), constrained_layout=True)
-    for label, color, frames, rewards in curves.values():
+    for label, color, _, frames, rewards in curves.values():
         x = frames / 1e9
         smoothed = frame_window_mean(frames, rewards, args.window_frames)
         ax.plot(x, rewards, color=color, alpha=0.07, linewidth=0.55)
         ax.plot(x, smoothed, color=color, linewidth=2.4, label=label)
         ax.scatter(x[-1], smoothed[-1], color=color, s=24, zorder=3)
 
-    common_frames = min(curve[2][-1] for curve in curves.values())
+    common_frames = min(curve[3][-1] for curve in curves.values())
     ax.axvline(common_frames / 1e9, color="#777777", linestyle="--", linewidth=1)
     ax.text(
         common_frames / 1e9,
@@ -86,7 +99,12 @@ def main() -> None:
         va="bottom",
         ha="right",
     )
-    ax.set_title("SimToolReal SAPG reward curves — seed 0")
+    title_metric = (
+        "zero-entropy exploitation policy"
+        if args.evaluation_block
+        else "all-policy aggregate"
+    )
+    ax.set_title(f"SimToolReal SAPG reward curves — seed 0 — {title_metric}")
     ax.set_xlabel("Environment frames (billions)")
     ax.set_ylabel("Episode reward")
     ax.grid(True, alpha=0.22)
@@ -105,11 +123,13 @@ def main() -> None:
 
     with args.output.with_suffix(".csv").open("w", newline="") as stream:
         writer = csv.writer(stream)
-        writer.writerow(["run", "label", "frame", "reward", "smoothed_reward"])
-        for run, (label, _, frames, rewards) in curves.items():
+        writer.writerow(
+            ["run", "label", "tensorboard_tag", "frame", "reward", "smoothed_reward"]
+        )
+        for run, (label, _, tag, frames, rewards) in curves.items():
             smoothed = frame_window_mean(frames, rewards, args.window_frames)
             writer.writerows(
-                (run, label, int(frame), float(reward), float(smooth))
+                (run, label, tag, int(frame), float(reward), float(smooth))
                 for frame, reward, smooth in zip(frames, rewards, smoothed)
             )
 
