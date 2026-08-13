@@ -69,7 +69,6 @@ from isaacgymenvs.utils.observation_action_utils_sharpa import (
     create_urdf_object,
 )
 from isaacgymenvs.utils.rendering import render_camera_sensors_for_current_step
-from simtoolreal_shared.pose_html import portable_visual_urdf, render_pose_html
 from isaacgymenvs.utils.torch_jit_utils import (
     get_axis_params,
     quat_rotate,
@@ -79,6 +78,8 @@ from isaacgymenvs.utils.torch_jit_utils import (
     torch_rand_float,
     unscale,
 )
+from simtoolreal_shared.action_config import validate_privileged_actions
+from simtoolreal_shared.pose_html import portable_visual_urdf, render_pose_html
 
 DATETIME_STR = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 VIEWER_PUBLIC_RAW_BASE = "https://raw.githubusercontent.com/tylerlum/simtoolreal/main/"
@@ -123,6 +124,7 @@ class SimToolReal(VecTask):
 
         self.privileged_actions = self.cfg["env"]["privilegedActions"]
         self.privileged_actions_torque = self.cfg["env"]["privilegedActionsTorque"]
+        validate_privileged_actions(self.privileged_actions)
 
         # 4 joints for index, middle, ring, and thumb and 7 for kuka arm
         self.num_arm_dofs = 7
