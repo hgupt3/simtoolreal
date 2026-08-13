@@ -112,6 +112,20 @@ python isaacgymenvs/launch_training.py \
 
 To finetune from a checkpoint, add `--checkpoint <checkpoint_path>` (e.g. `pretrained_policy/model.pth`). If you run out of GPU memory, reduce `--num_envs` (must be divisible by `num_blocks`, default 6).
 
+Generate a local 10-second interactive Three.js rollout from an Isaac Gym
+checkpoint without camera rendering or W&B:
+
+```bash
+scripts/replay_checkpoint_gym.sh \
+  --checkpoint runs/0_example/nn/checkpoint.pth \
+  --output-dir train_dir/local_replays/example
+```
+
+The script defaults to the checkout's `.venv`; pass `--venv PATH` (or set
+`SIMTOOLREAL_VENV`) to reuse a compatible Isaac Gym environment. Use `--task`,
+`--train`, and repeatable `--override` arguments when the checkpoint was trained
+with non-default Hydra configurations.
+
 ## 4. Evaluate a Policy on DexToolBench
 
 Evaluate a policy numerically on all 24 DexToolBench combinations:
