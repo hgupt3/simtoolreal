@@ -37,6 +37,7 @@ import yaml
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from isaacgymenvs.utils.reformat import omegaconf_to_dict
+from isaacgymenvs.utils.training_results import is_pbt_restart_result
 
 
 def preprocess_train_config(cfg, config_dict):
@@ -308,7 +309,7 @@ if __name__ == "__main__":
         vec_env = None
         while True:
             cfg_n_env = launch_rlg_hydra(cfg, vec_env)
-            if not isinstance(cfg_n_env, tuple):
+            if not is_pbt_restart_result(cfg_n_env):
                 break
             cfg, vec_env = cfg_n_env
             vec_env.change_on_restart(omegaconf_to_dict(cfg.task))

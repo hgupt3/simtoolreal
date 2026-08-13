@@ -126,6 +126,9 @@ def main() -> None:
         # sim_device CLI flag still wins — it's a launcher-level concern, not
         # something we expect in the task YAML.
         env_cfg.sim.device = args_cli.sim_device
+        # Keep simulator/object randomization and the policy runner on the same
+        # seed. Previously only rl_games saw the agent seed override.
+        env_cfg.seed = int(agent_cfg["params"]["seed"])
 
         # render_mode="rgb_array" makes DirectRLEnv.render() lazily create a
         # single omni.replicator render_product at cfg.viewer.cam_prim_path —
