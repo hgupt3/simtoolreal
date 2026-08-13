@@ -69,6 +69,7 @@ from isaacgymenvs.utils.observation_action_utils_sharpa import (
     create_urdf_object,
 )
 from isaacgymenvs.utils.rendering import render_camera_sensors_for_current_step
+from simtoolreal_shared.pose_html import portable_visual_urdf, render_pose_html
 from isaacgymenvs.utils.torch_jit_utils import (
     get_axis_params,
     quat_rotate,
@@ -80,6 +81,11 @@ from isaacgymenvs.utils.torch_jit_utils import (
 )
 
 DATETIME_STR = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+VIEWER_PUBLIC_RAW_BASE = "https://raw.githubusercontent.com/tylerlum/simtoolreal/main/"
+VIEWER_ROBOT_URDF_URL = (
+    VIEWER_PUBLIC_RAW_BASE
+    + "assets/urdf/kuka_sharpa_description/iiwa14_left_sharpa_adjusted_restricted.urdf"
+)
 
 
 def assert_equals(a, b):
@@ -385,6 +391,9 @@ class SimToolReal(VecTask):
         # Init camera for wandb logging
         self._initialize_camera_sensor(cam_pos=cam_pos, cam_target=cam_target)
         self._modify_render_settings_if_headless()
+        self.viewer_state_frames = None
+        self._viewer_capture_index = 0
+        self._viewer_capture_done = False
 
         # volume to sample target position from
         target_volume_origin = np.array([0, 0.05, 0.8], dtype=np.float32)
@@ -1782,6 +1791,26 @@ class SimToolReal(VecTask):
         self.object_asset_files, self.object_asset_scales, self.object_need_vhacds = (
             self._main_object_assets_and_scales(object_asset_root, tmp_assets_dir.name)
         )
+        # Procedural URDFs live in a temporary directory. Retain only the XML
+        # needed by the configured viewer environment before cleanup.
+        self._viewer_object_urdf_texts = [None] * len(self.object_asset_files)
+        viewer_env_id = int(self.cfg["env"].get("capture_viewer_env_id", 0))
+        if self.cfg["env"].get("capture_viewer", False):
+            if viewer_env_id < 0 or viewer_env_id >= num_envs:
+                raise ValueError(
+                    f"capture_viewer_env_id={viewer_env_id} out of range for num_envs={num_envs}"
+                )
+            object_index = viewer_env_id % len(self.object_asset_files)
+            object_file = Path(self.object_asset_files[object_index])
+            if not object_file.is_absolute():
+                object_file = Path(object_asset_root) / object_file
+            if not object_file.is_file():
+                raise FileNotFoundError(f"Viewer object URDF does not exist: {object_file}")
+            self._viewer_object_urdf_texts[object_index] = portable_visual_urdf(
+                object_file.read_text(encoding="utf-8"),
+                object_file,
+                VIEWER_PUBLIC_RAW_BASE,
+            )
 
         asset_options = gymapi.AssetOptions()
         # asset_options.vhacd_enabled = True  # Should be False so the robot is not complicated to model, but can test
@@ -1798,6 +1827,7 @@ class SimToolReal(VecTask):
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_POS
 
         print(f"Loading asset {self.robot_asset_file} from {asset_root}")
+        self._robot_urdf_path = Path(asset_root) / self.robot_asset_file
         robot_asset = self.gym.load_asset(
             self.sim, asset_root, self.robot_asset_file, asset_options
         )
@@ -4565,6 +4595,7 @@ class SimToolReal(VecTask):
             self.accumulate_env_states()
 
         self._capture_video_if_needed()
+        self._capture_viewer_if_needed()
 
         if self.viewer and self.debug_viz:
             # draw axes on target object
@@ -4971,6 +5002,123 @@ class SimToolReal(VecTask):
             # Reset variables
             self.video_frames = None
             self.enable_viewer_sync = self.enable_viewer_sync_before
+
+    def _capture_viewer_if_needed(self) -> None:
+        """Periodically record state tensors for camera-free Three.js playback."""
+        if not self.cfg["env"].get("capture_viewer", False):
+            return
+        if self._viewer_capture_done and self.cfg["env"].get("capture_viewer_once", False):
+            return
+
+        frequency = int(self.cfg["env"].get("capture_viewer_freq", 6000))
+        length = int(self.cfg["env"].get("capture_viewer_len", 600))
+        if length <= 0:
+            raise ValueError(f"capture_viewer_len must be positive, got {length}")
+        if self.viewer_state_frames is None:
+            if frequency <= 0 or self.control_steps % frequency != 0:
+                return
+            self.viewer_state_frames = []
+            print(f"[pose_viewer] starting {length}-frame capture", flush=True)
+
+        env_id = int(self.cfg["env"].get("capture_viewer_env_id", 0))
+        origin = self.gym.get_env_origin(self.envs[env_id])
+        offset = np.asarray([origin.x, origin.y, origin.z], dtype=np.float32)
+
+        def local_pose(tensor):
+            pose = tensor.detach().cpu().numpy().copy()
+            pose[:3] -= offset
+            return pose.tolist()
+
+        self.viewer_state_frames.append(
+            {
+                "joint_pos": self.arm_hand_dof_pos[env_id].detach().cpu().numpy().tolist(),
+                "robot_pose": local_pose(
+                    self.root_state_tensor[self.robot_indices[env_id], :7]
+                ),
+                "object_pose": local_pose(
+                    self.root_state_tensor[self.object_indices[env_id], :7]
+                ),
+                "goal_pose": local_pose(
+                    self.root_state_tensor[self.goal_object_indices[env_id], :7]
+                ),
+                "table_pose": local_pose(
+                    self.root_state_tensor[self.table_indices[env_id], :7]
+                ),
+            }
+        )
+        if len(self.viewer_state_frames) >= length:
+            self._finalize_viewer_capture(env_id)
+
+    def _finalize_viewer_capture(self, env_id: int) -> None:
+        frames = self.viewer_state_frames
+        assert frames
+        object_index = env_id % len(self._viewer_object_urdf_texts)
+        object_urdf = self._viewer_object_urdf_texts[object_index]
+        if object_urdf is None:
+            raise RuntimeError("Pose viewer did not retain the selected object URDF")
+
+        table_path = Path(__file__).resolve().parents[3] / "assets/urdf/table_narrow.urdf"
+        robots = [
+            {
+                "name": "robot",
+                "urdf_path": VIEWER_ROBOT_URDF_URL,
+                "position": [0, 0, 0],
+                "rpy": [0, 0, 0],
+                "animated": True,
+            },
+            {
+                "name": "table",
+                "urdf_text": table_path.read_text(encoding="utf-8"),
+                "position": [0, 0, 0],
+                "rpy": [0, 0, 0],
+                "animated": False,
+            },
+            {
+                "name": "object",
+                "urdf_text": object_urdf,
+                "position": [0, 0, 0],
+                "rpy": [0, 0, 0],
+                "animated": False,
+            },
+            {
+                "name": "goal",
+                "urdf_text": object_urdf,
+                "position": [0, 0, 0],
+                "rpy": [0, 0, 0],
+                "animated": False,
+                "color_override": [0.20, 0.72, 0.31],
+            },
+        ]
+        html = render_pose_html(
+            robots=robots,
+            joint_names=self.joint_names,
+            joint_positions=[frame["joint_pos"] for frame in frames],
+            object_poses={
+                "table": [frame["table_pose"] for frame in frames],
+                "object": [frame["object_pose"] for frame in frames],
+                "goal": [frame["goal_pose"] for frame in frames],
+            },
+            robot_base_poses=[frame["robot_pose"] for frame in frames],
+            dt=self.control_dt,
+        )
+        output_dir = Path("videos")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / (
+            f"{DATETIME_STR}_viewer_{self.control_steps}_{self._viewer_capture_index:04d}.html"
+        )
+        path.write_text(html, encoding="utf-8")
+        print(f"[pose_viewer] wrote {len(frames)} frames to {path}", flush=True)
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.log({"interactive_viewer": wandb.Html(html)})
+        except Exception as exc:
+            print(f"[pose_viewer] WandB log failed: {exc}", flush=True)
+
+        self._viewer_capture_index += 1
+        self._viewer_capture_done = True
+        self.viewer_state_frames = None
 
     def _draw_transform(
         self, transform: gymapi.Transform, line_length: float = 0.2, env_idx: int = 0

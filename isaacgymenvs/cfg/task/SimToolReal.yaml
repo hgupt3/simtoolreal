@@ -122,6 +122,14 @@ env:
   capture_video_freq: 6_000
   capture_video_len: 600
 
+  # Camera-free interactive Three.js rollout capture. At 60 Hz, 600 frames is
+  # a 10-second trajectory. `capture_viewer_once` is useful for evaluation.
+  capture_viewer: False
+  capture_viewer_freq: 6_000
+  capture_viewer_len: 600
+  capture_viewer_env_id: 0
+  capture_viewer_once: False
+
   turn_off_extra_obs: False
   turn_off_extra_obs_slowly: False
 
