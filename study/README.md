@@ -146,7 +146,22 @@ service resumes the newest local checkpoint. The worker maps its intentional
 seven-day timeout to a successful service exit, so completion is not restarted;
 current simple_rl gets a ten-minute margin to checkpoint at an epoch boundary.
 
-No W&B credential was present on the workstation or source image. Runs still
-activate W&B with project `simtoolreal_transformer` in offline mode, preserving
-complete run directories for later `wandb sync` without baking a secret into a
-shared image. GCS and TensorBoard are the live durable telemetry meanwhile.
+Workers authenticate W&B from Secret Manager secret `wandb-api-key` in project
+`gcp-gentoolreal` and deliberately fail instead of silently switching to
+offline mode when it is unavailable. The VM service account
+`770219753256-compute@developer.gserviceaccount.com` therefore needs
+`roles/secretmanager.secretAccessor`. The secret was initialized from the same
+private `/juno/u/tylerlum/.wandb_api_key` used by the cluster experiments; the
+key itself is never stored in Git or instance metadata. GCS and TensorBoard
+remain independent durable telemetry. The stored key uses W&B's current
+86-character format, so the worker verifies and uses `wandb==0.24.2`; the old
+image-pinned 0.12 client only accepted legacy 40-character keys.
+
+An identity allowed to change project IAM must run this once:
+
+```bash
+gcloud secrets add-iam-policy-binding wandb-api-key \
+  --project=gcp-gentoolreal \
+  --member=serviceAccount:770219753256-compute@developer.gserviceaccount.com \
+  --role=roles/secretmanager.secretAccessor
+```
