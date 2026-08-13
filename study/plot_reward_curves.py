@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
+from tensorboard.util import tensor_util
 
 
 RUNS = {
@@ -47,24 +50,32 @@ EIGENGRASP_RUNS = {
 
 
 def load_scalars(run_dir: Path, tag: str = "rewards/step") -> tuple[np.ndarray, np.ndarray]:
-    """Merge restarted event files, keeping the newest value at duplicate steps."""
+    """Stream one tag across restarts, keeping the newest duplicate step.
+
+    Streaming is important for long GPU runs: EventAccumulator materializes
+    every scalar tag and can consume many gigabytes even though this plot needs
+    only one reward series.
+    """
     newest_by_step = {}
     for event_file in run_dir.glob("events.out.tfevents.*"):
-        accumulator = EventAccumulator(
-            str(event_file), size_guidance={"scalars": 0}
-        ).Reload()
-        if tag not in accumulator.Tags().get("scalars", []):
-            continue
-        for event in accumulator.Scalars(tag):
-            previous = newest_by_step.get(event.step)
-            if previous is None or event.wall_time >= previous.wall_time:
-                newest_by_step[event.step] = event
-    events = [newest_by_step[step] for step in sorted(newest_by_step)]
-    if not events:
+        for event in EventFileLoader(str(event_file)).Load():
+            for value in event.summary.value:
+                if value.tag != tag:
+                    continue
+                scalar = (
+                    tensor_util.make_ndarray(value.tensor).item()
+                    if value.HasField("tensor")
+                    else value.simple_value
+                )
+                previous = newest_by_step.get(event.step)
+                if previous is None or event.wall_time >= previous[0]:
+                    newest_by_step[event.step] = (event.wall_time, scalar)
+    if not newest_by_step:
         raise RuntimeError(f"No {tag!r} events found in {run_dir}")
+    steps = sorted(newest_by_step)
     return (
-        np.asarray([event.step for event in events], dtype=np.int64),
-        np.asarray([event.value for event in events], dtype=np.float64),
+        np.asarray(steps, dtype=np.int64),
+        np.asarray([newest_by_step[step][1] for step in steps], dtype=np.float64),
     )
 
 
@@ -76,6 +87,13 @@ def frame_window_mean(
     starts = np.searchsorted(frames, frames - window_frames, side="left")
     ends = np.arange(1, len(values) + 1)
     return (prefix[ends] - prefix[starts]) / (ends - starts)
+
+
+def load_curve(spec):
+    """Process-isolated event scan so independent runs parse concurrently."""
+    run, label, color, tag, run_dir = spec
+    frames, rewards = load_scalars(run_dir, tag=tag)
+    return run, (label, color, tag, frames, rewards)
 
 
 def main() -> None:
@@ -110,14 +128,18 @@ def main() -> None:
         selected_runs.update(PARITY_RUNS)
     if args.include_eigengrasp:
         selected_runs.update(EIGENGRASP_RUNS)
+    specs = []
     for run, (label, color) in selected_runs.items():
         tag = (
             "rewards/step"
             if not args.evaluation_block or run == "rlgames-lstm-sapg-seed0"
             else "block_rewards/block_5"
         )
-        frames, rewards = load_scalars(args.event_root / run, tag=tag)
-        curves[run] = (label, color, tag, frames, rewards)
+        specs.append((run, label, color, tag, args.event_root / run))
+    worker_count = min(len(specs), os.cpu_count() or 1)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=worker_count) as executor:
+        for run, curve in executor.map(load_curve, specs):
+            curves[run] = curve
 
     fig, ax = plt.subplots(figsize=(12, 7), constrained_layout=True)
     for label, color, _, frames, rewards in curves.values():
