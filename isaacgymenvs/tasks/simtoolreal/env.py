@@ -68,6 +68,7 @@ from isaacgymenvs.utils.observation_action_utils_sharpa import (
     compute_observation,
     create_urdf_object,
 )
+from isaacgymenvs.utils.rendering import render_camera_sensors_for_current_step
 from isaacgymenvs.utils.torch_jit_utils import (
     get_axis_params,
     quat_rotate,
@@ -4918,7 +4919,7 @@ class SimToolReal(VecTask):
 
         # Store image
         self.enable_viewer_sync = True
-        self.gym.render_all_camera_sensors(self.sim)
+        render_camera_sensors_for_current_step(self.gym, self.sim, self.device)
         color_image = self.gym.get_camera_image(
             self.sim,
             self.envs[self.index_to_view],
