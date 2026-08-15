@@ -41,11 +41,18 @@ def main() -> None:
             self.width = width
             self.calls = 0
             self.last_input = None
+            self.last_prev_targets = None
 
-        def __call__(self, hand_joint_pos: torch.Tensor) -> torch.Tensor:
+        def __call__(
+            self,
+            hand_joint_pos: torch.Tensor,
+            hand_prev_targets: torch.Tensor,
+        ) -> torch.Tensor:
             assert hand_joint_pos.shape == (args.num_envs, 22)
+            assert hand_prev_targets.shape == (args.num_envs, 22)
             self.calls += 1
             self.last_input = hand_joint_pos.clone()
+            self.last_prev_targets = hand_prev_targets.clone()
             return hand_joint_pos[:, : self.width]
 
     cfg = SimToolRealEnvCfg()
@@ -116,6 +123,10 @@ def main() -> None:
         assert latent_obs_fn.calls == calls_before_reset + 1
         measured_hand_pos = inner.robot.data.joint_pos[:, inner._hand_joint_ids]
         assert torch.equal(latent_obs_fn.last_input, measured_hand_pos)
+        assert torch.equal(
+            latent_obs_fn.last_prev_targets,
+            inner._prev_targets[:, inner._hand_joint_ids],
+        )
     print(
         f"[smoke] reset → policy obs {obs['policy'].shape}, "
         f"critic obs {obs['critic'].shape}"
@@ -134,6 +145,10 @@ def main() -> None:
             assert latent_obs_fn.calls == calls_before_step + 1
             measured_hand_pos = inner.robot.data.joint_pos[:, inner._hand_joint_ids]
             assert torch.equal(latent_obs_fn.last_input, measured_hand_pos)
+            assert torch.equal(
+                latent_obs_fn.last_prev_targets,
+                inner._prev_targets[:, inner._hand_joint_ids],
+            )
         any_nan = (
             torch.isnan(obs["policy"]).any().item()
             or torch.isnan(obs["critic"]).any().item()

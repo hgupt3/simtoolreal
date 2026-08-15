@@ -38,7 +38,7 @@ OBS_FIELD_SIZES: dict[str, int] = {
 
 def validate_latent_obs_config(
     num_latent_obs: int,
-    latent_obs_fn: Callable[[torch.Tensor], torch.Tensor] | None,
+    latent_obs_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None,
 ) -> int:
     """Validate the adapter seam and return its normalized width."""
     width = int(num_latent_obs)
@@ -67,8 +67,9 @@ def compute_obs_dim(field_list, num_latent_obs: int = 0) -> int:
 
 def compute_latent_state(
     hand_joint_pos: torch.Tensor,
+    hand_prev_targets: torch.Tensor,
     num_latent_obs: int,
-    latent_obs_fn: Callable[[torch.Tensor], torch.Tensor] | None,
+    latent_obs_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None,
 ) -> torch.Tensor:
     """Call the adapter once and validate its ``(N, L)`` result."""
     width = validate_latent_obs_config(num_latent_obs, latent_obs_fn)
@@ -78,10 +79,25 @@ def compute_latent_state(
             "latent_obs_fn input must have shape "
             f"{expected_input_shape}, got {tuple(hand_joint_pos.shape)}"
         )
+    if tuple(hand_prev_targets.shape) != expected_input_shape:
+        raise ValueError(
+            "latent_obs_fn previous-target input must have shape "
+            f"{expected_input_shape}, got {tuple(hand_prev_targets.shape)}"
+        )
+    if hand_prev_targets.device != hand_joint_pos.device:
+        raise ValueError(
+            "latent_obs_fn previous-target input must be on the "
+            "measured-position device"
+        )
+    if hand_prev_targets.dtype != hand_joint_pos.dtype:
+        raise ValueError(
+            "latent_obs_fn previous-target input must have the "
+            "measured-position dtype"
+        )
     if width == 0:
         return hand_joint_pos[:, :0]
 
-    latent_state = latent_obs_fn(hand_joint_pos)
+    latent_state = latent_obs_fn(hand_joint_pos, hand_prev_targets)
     if not isinstance(latent_state, torch.Tensor):
         raise TypeError("obs.latent_obs_fn must return a torch.Tensor")
     expected_output_shape = (hand_joint_pos.shape[0], width)

@@ -149,9 +149,10 @@ class ObsCfg:
     )
 
     num_latent_obs: int = 0
-    # Callable receives raw measured (N, 22) hand positions in Lab joint order
-    # and returns the adapter-defined (N, num_latent_obs) latent state.
-    latent_obs_fn: Callable[[torch.Tensor], torch.Tensor] | None = None
+    # Callable receives raw measured (N, 22) hand positions and the previously
+    # applied (post-EMA) (N, 22) hand targets, both in Lab joint order, and
+    # returns the adapter-defined (N, num_latent_obs) latent state.
+    latent_obs_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None
     clamp_abs_observations: float = 10.0
 
 

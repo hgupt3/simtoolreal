@@ -284,10 +284,13 @@ def build_observations(env) -> dict[str, torch.Tensor]:
     noisy_obj_rot_xyzw = convert_quat(noisy_obj_rot, to="xyzw")
 
     if env.cfg.obs.num_latent_obs > 0:
-        # The joint IDs select raw measured positions in Isaac Lab order.
+        # The joint IDs select raw measured positions and previously applied
+        # (post-EMA) hand targets in Isaac Lab order.
         hand_joint_pos = env.robot.data.joint_pos[:, env._hand_joint_ids]
+        hand_prev_targets = env._prev_targets[:, env._hand_joint_ids]
         latent_state = compute_latent_state(
             hand_joint_pos,
+            hand_prev_targets,
             env.cfg.obs.num_latent_obs,
             env.cfg.obs.latent_obs_fn,
         )

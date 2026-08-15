@@ -54,20 +54,25 @@ def test_zero_width_append_is_bit_exact() -> None:
     )
 
 
-def test_latent_fn_receives_lab_order_hand_positions_once() -> None:
+def test_latent_fn_receives_lab_order_positions_and_prev_targets_once() -> None:
     hand_joint_pos = torch.arange(3 * 22, dtype=torch.float32).reshape(3, 22)
+    hand_prev_targets = hand_joint_pos + 100.0
     received = []
 
-    def latent_obs_fn(positions: torch.Tensor) -> torch.Tensor:
-        received.append(positions)
+    def latent_obs_fn(
+        positions: torch.Tensor,
+        prev_targets: torch.Tensor,
+    ) -> torch.Tensor:
+        received.append((positions, prev_targets))
         return positions[:, :4]
 
     latent_state = OBS_SEAM.compute_latent_state(
-        hand_joint_pos, 4, latent_obs_fn
+        hand_joint_pos, hand_prev_targets, 4, latent_obs_fn
     )
 
     assert len(received) == 1
-    assert received[0] is hand_joint_pos
+    assert received[0][0] is hand_joint_pos
+    assert received[0][1] is hand_prev_targets
     assert torch.equal(latent_state, hand_joint_pos[:, :4])
 
 
@@ -79,10 +84,23 @@ def test_positive_latent_width_requires_callable() -> None:
         OBS_SEAM.validate_latent_obs_config(4, None)
 
 
-def test_latent_fn_result_shape_is_checked() -> None:
+def test_latent_fn_result_and_prev_target_shapes_are_checked() -> None:
     hand_joint_pos = torch.zeros(2, 22)
 
     with pytest.raises(ValueError, match=r"must return shape \(2, 4\)"):
         OBS_SEAM.compute_latent_state(
-            hand_joint_pos, 4, lambda positions: positions[:, :3]
+            hand_joint_pos,
+            torch.zeros(2, 22),
+            4,
+            lambda positions, prev_targets: positions[:, :3],
+        )
+    with pytest.raises(
+        ValueError,
+        match=r"previous-target input must have shape \(2, 22\)",
+    ):
+        OBS_SEAM.compute_latent_state(
+            hand_joint_pos,
+            torch.zeros(2, 21),
+            4,
+            lambda positions, prev_targets: positions[:, :4],
         )
