@@ -435,6 +435,17 @@ class A2CBase(BaseAlgorithm):
                 self.writer.add_scalar(
                     'info/noise_sigma_mean',
                     sum(_s for _, _s in _vals) / len(_vals), frame)
+        _add_names = getattr(getattr(self.model, 'a2c_network', None),
+                             'noise_eigadd_names', None)
+        if _add_names:
+            _ls = getattr(self.model.a2c_network, 'noise_eigadd_logsig', None)
+            if _ls is not None:
+                _sv = torch.exp(_ls.detach()).cpu().tolist()
+                for _n, _s in zip(_add_names, _sv):
+                    self.writer.add_scalar(
+                        f'info/noise_eigadd_sigma/{_n}', _s, frame)
+                self.writer.add_scalar('info/noise_eigadd_sigma_mean',
+                                       sum(_sv) / len(_sv), frame)
         _corr_logit = getattr(getattr(self.model, 'a2c_network', None), 'noise_corr_logit', None)
         if _corr_logit is not None:
             _w = torch.sigmoid(_corr_logit.detach()).cpu()

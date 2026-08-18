@@ -421,8 +421,55 @@ class A2CBuilder(NetworkBuilder):
                         print('[action-bench] eigen-sigma exploration active '
                               '(%d dims, sigma init offset by 0.5*log gains)'
                               % actions_num)
+                    _add_path = self.space_config.get('noise_eigen_additive')
+                    if _add_path:
+                        # additive eigen exploration: independent per-joint iid
+                        # noise (the policy's own per-dim sigma) plus an extra
+                        # learnable-loudness term along K fixed eigen
+                        # directions. The policy has no lever for correlations
+                        # outside those K directions.
+                        if _corr_path or _eig_path:
+                            raise ValueError(
+                                'noise_eigen_additive is exclusive with other '
+                                'noise seams')
+                        import numpy as _np
+                        _z = _np.load(_add_path)
+                        _basis = _z['basis'].astype(_np.float32)
+                        if _basis.ndim != 2 or _basis.shape[1] != actions_num:
+                            raise ValueError(
+                                'noise_eigen_additive basis shape %s != (K, %d)'
+                                % (_basis.shape, actions_num))
+                        _k = _basis.shape[0]
+                        if _np.abs(_basis @ _basis.T
+                                   - _np.eye(_k)).max() > 1e-5:
+                            raise ValueError(
+                                'noise basis rows are not orthonormal')
+                        _jg = _z['joint_gains'].astype(_np.float64)
+                        _eg = _z['eigen_gains'].astype(_np.float64)
+                        if _jg.shape != (actions_num,) or _np.any(_jg <= 0.0):
+                            raise ValueError(
+                                'noise_eigen_additive joint_gains invalid')
+                        if _eg.shape != (_k,) or _np.any(_eg <= 0.0):
+                            raise ValueError(
+                                'noise_eigen_additive eigen_gains invalid')
+                        self.register_buffer('noise_eigadd_basis',
+                                             torch.tensor(_basis))
+                        self.noise_eigadd_names = [
+                            str(_x) for _x in _z['names']]
+                        _s0 = float(self.space_config.get(
+                            'sigma_init', {}).get('val', 0.0))
+                        with torch.no_grad():
+                            self.sigma.add_(torch.tensor(
+                                0.5 * _np.log(_jg), dtype=self.sigma.dtype))
+                        self.noise_eigadd_logsig = nn.Parameter(
+                            torch.tensor(_s0 + 0.5 * _np.log(_eg),
+                                         dtype=torch.float32),
+                            requires_grad=True)
+                        print('[action-bench] additive eigen exploration '
+                              'active (%d iid joint dims + %d eigen dims, '
+                              'no tail lever)' % (actions_num, _k))
                 else:
-                    sigma_init(self.sigma.weight)  
+                    sigma_init(self.sigma.weight)
 
         def forward(self, obs_dict):
             obs = obs_dict['obs']

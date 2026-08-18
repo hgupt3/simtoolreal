@@ -275,6 +275,12 @@ class ModelA2CContinuousLogStd(BaseModel):
                     # exact entropy of the correlated Gaussian: the blend's
                     # logdet must stay in the graph so entropy_coef sees w
                     entropy = entropy + corr[3]
+                elif getattr(self.a2c_network,
+                             'noise_eigadd_basis', None) is not None:
+                    # exact entropy of the additive Gaussian: diagonal part
+                    # plus the capacitance logdet, kept in the graph so
+                    # entropy_coef sees both sigma and the eigen loudness
+                    entropy = entropy + 0.5 * self._eigadd_logdet_k(sigma)
                 prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
                 result = {
                     'prev_neglogp' : torch.squeeze(prev_neglogp),
@@ -289,7 +295,16 @@ class ModelA2CContinuousLogStd(BaseModel):
                 corr = self._corr_factor()
                 L = getattr(self.a2c_network, 'noise_corr_chol', None)
                 B = getattr(self.a2c_network, 'noise_eigsig_basis', None)
-                if corr is not None:
+                A8 = getattr(self.a2c_network, 'noise_eigadd_basis', None)
+                if A8 is not None:
+                    # additive eigen noise: iid per-joint sample plus an
+                    # independent sample along the K eigen directions
+                    s8 = torch.exp(self.a2c_network.noise_eigadd_logsig)
+                    eps = torch.randn_like(mu)
+                    eps8 = torch.randn(mu.shape[0], s8.numel(),
+                                       device=mu.device, dtype=mu.dtype)
+                    selected_action = mu + sigma * eps + (s8 * eps8) @ A8
+                elif corr is not None:
                     eps = torch.randn_like(mu)
                     selected_action = mu + sigma * (eps @ corr[0].T)
                 elif L is not None:
@@ -342,7 +357,49 @@ class ModelA2CContinuousLogStd(BaseModel):
             logdet_a = 0.5 * (torch.log(v).sum() - torch.log(d).sum())
             return A, v, d, logdet_a
 
+        def _eigadd_chol(self, std):
+            """Cholesky of K = I + S B D^-1 B^T S for Sigma = D + B^T S^2 B.
+
+            B is the (K, n) orthonormal eigen block, S = diag(exp(logsig)),
+            D = diag(std^2). K is (N, K, K) when std is per-row.
+            """
+            net = self.a2c_network
+            B8 = net.noise_eigadd_basis
+            s = torch.exp(net.noise_eigadd_logsig)
+            invvar = std.pow(-2)
+            if invvar.dim() == 1:
+                invvar = invvar.unsqueeze(0)
+            G = torch.einsum('ai,ni,bi->nab', B8, invvar, B8)
+            K = (s.unsqueeze(-1) * s.unsqueeze(0)) * G
+            K = K + torch.eye(s.numel(), device=K.device, dtype=K.dtype)
+            return torch.linalg.cholesky(K)
+
+        def _eigadd_logdet_k(self, std):
+            L = self._eigadd_chol(std)
+            return 2.0 * torch.log(
+                torch.diagonal(L, dim1=-2, dim2=-1)).sum(dim=-1)
+
+        def _eigadd_neglogp(self, x, mean, std, logstd):
+            # Sigma = D + B^T S^2 B: Woodbury for the quadratic form and the
+            # matrix determinant lemma for the logdet, both exact via the
+            # K x K capacitance.
+            net = self.a2c_network
+            B8 = net.noise_eigadd_basis
+            s = torch.exp(net.noise_eigadd_logsig)
+            delta = x - mean
+            y2 = ((delta / std) ** 2).sum(dim=-1)
+            w = ((delta / std.pow(2)) @ B8.t()) * s
+            L = self._eigadd_chol(std)
+            t = torch.cholesky_solve(w.unsqueeze(-1), L).squeeze(-1)
+            logdet_k = 2.0 * torch.log(
+                torch.diagonal(L, dim1=-2, dim2=-1)).sum(dim=-1)
+            return 0.5 * (y2 - (w * t).sum(dim=-1)) \
+                + 0.5 * np.log(2.0 * np.pi) * x.size()[-1] \
+                + logstd.sum(dim=-1) + 0.5 * logdet_k
+
         def neglogp(self, x, mean, std, logstd):
+            if getattr(self.a2c_network, 'noise_eigadd_basis', None) is not None:
+                return self._eigadd_neglogp(x, mean, std, logstd)
             corr = self._corr_factor()
             if corr is not None:
                 A, v, d, logdet_a = corr
