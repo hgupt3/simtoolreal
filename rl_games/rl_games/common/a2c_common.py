@@ -762,7 +762,7 @@ class A2CBase(BaseAlgorithm):
                 if previous is not None:
                     signal.signal(signum, previous)
 
-        for signum in (signal.SIGTERM, signal.SIGINT):
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             try:
                 self._previous_signal_handlers[signum] = signal.signal(signum, _request_exit)
             except (ValueError, OSError):
