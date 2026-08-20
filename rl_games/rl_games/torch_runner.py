@@ -138,6 +138,7 @@ class Runner:
     def run_train(self, args):
         print('Started to train')
         agent = self.algo_factory.create(self.algo_name, base_name='run', params=self.params)
+        self.agent = agent  # retained so host shutdown paths can checkpoint
         _restore(agent, args)
         _override_sigma(agent, args)
         return agent.train()

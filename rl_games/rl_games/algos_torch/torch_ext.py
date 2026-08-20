@@ -78,7 +78,12 @@ def safe_symlink(src, dst):
     safe_filesystem_op(os.symlink, src, dst)
 
 def safe_save(state, filename):
-    return safe_filesystem_op(torch.save, state, filename)
+    # Atomic save: serialize to a scratch file in the same directory, then
+    # os.replace it onto the final name so a torn write can never leave a
+    # truncated checkpoint at the destination path.
+    tmp_filename = str(filename) + '.tmp'
+    safe_filesystem_op(torch.save, state, tmp_filename)
+    return safe_filesystem_op(os.replace, tmp_filename, filename)
 
 def safe_load(filename):
     return safe_filesystem_op(torch.load, filename, weights_only=False, map_location='cpu')
