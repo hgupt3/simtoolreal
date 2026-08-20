@@ -21,6 +21,7 @@ from .utils.obs_utils import (
 )
 from .utils.obs_seam import validate_latent_obs_config
 from .utils.reset_utils import allocate_state_buffers, reset_env_state
+from .utils.resume_utils import get_env_state, set_env_state
 from .utils.reward_utils import compute_rewards
 from .utils.scene_utils import apply_physx_material_properties, setup_scene
 from .utils.termination_utils import compute_terminations, update_tolerance_curriculum
@@ -57,11 +58,21 @@ class SimToolRealEnv(DirectRLEnv):
                 raise TypeError(
                     "action.hand_fast_offset_transform must be callable or None"
                 )
-        if (
-            cfg.action.hand_state_reset_fn is not None
-            and not callable(cfg.action.hand_state_reset_fn)
+        for fn_name in (
+            "hand_state_reset_fn",
+            "hand_state_export_fn",
+            "hand_state_import_fn",
         ):
-            raise TypeError("action.hand_state_reset_fn must be callable or None")
+            fn = getattr(cfg.action, fn_name)
+            if fn is not None and not callable(fn):
+                raise TypeError(f"action.{fn_name} must be callable or None")
+        if (cfg.action.hand_state_export_fn is None) != (
+            cfg.action.hand_state_import_fn is None
+        ):
+            raise ValueError(
+                "action.hand_state_export_fn and action.hand_state_import_fn "
+                "must be provided together"
+            )
         num_latent_obs = validate_latent_obs_config(
             cfg.obs.num_latent_obs, cfg.obs.latent_obs_fn
         )
@@ -93,8 +104,17 @@ class SimToolRealEnv(DirectRLEnv):
             self.cfg.action.hand_state_reset_fn(env_ids)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
+        log_warm_resume = getattr(self, "_warm_resume_log_steps", 0) > 0
+        if log_warm_resume:
+            previous_targets = self._prev_targets.clone()
         apply_action_pipeline(self, actions)
         apply_wrench_dr(self)
+        if log_warm_resume:
+            delta = (self._cur_targets - previous_targets).abs().max().item()
+            print(
+                "[simtoolreal] post-resume commanded-target step: "
+                f"max_abs_delta={delta:.6f}"
+            )
 
     def _apply_action(self) -> None:
         # Called decimation times per policy step; idempotent.
@@ -103,7 +123,14 @@ class SimToolRealEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         update_tolerance_curriculum(self)
         compute_intermediate_values(self)
-        return compute_terminations(self)
+        terminated, truncated = compute_terminations(self)
+        if getattr(self, "_warm_resume_log_steps", 0) > 0:
+            self._warm_resume_log_steps -= 1
+            n_reset = int((terminated | truncated).sum().item())
+            print(
+                f"[simtoolreal] post-resume resets: {n_reset}/{self.num_envs}"
+            )
+        return terminated, truncated
 
     def _get_rewards(self) -> torch.Tensor:
         reward = compute_rewards(self)
@@ -116,3 +143,11 @@ class SimToolRealEnv(DirectRLEnv):
     def get_student_obs(self) -> dict[str, torch.Tensor]:
         """Return opt-in student observations for distillation code."""
         return build_student_observations(self)
+
+    def get_env_state(self) -> dict | None:
+        """Warm-resume snapshot carried inside rl_games checkpoints."""
+        return get_env_state(self)
+
+    def set_env_state(self, state: dict | None) -> None:
+        """Restore a warm-resume snapshot (no mass env reset on resume)."""
+        set_env_state(self, state)

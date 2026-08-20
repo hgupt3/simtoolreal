@@ -345,6 +345,11 @@ class ActionCfg:
     # Optional adapter reset notification. Receives the one-dimensional int64
     # tensor of environment indices after their hand positions/targets reset.
     hand_state_reset_fn: Callable[[torch.Tensor], None] | None = None
+    # Optional adapter checkpoint hooks for warm resume. Export returns the
+    # adapter's evolving cross-step state (CPU tensor dict) or None; import
+    # receives exactly what export returned when the checkpoint was written.
+    hand_state_export_fn: Callable[[], dict | None] | None = None
+    hand_state_import_fn: Callable[[dict | None], None] | None = None
 
 
 # ----------------------------------------------------------------------------
@@ -609,6 +614,10 @@ class SimToolRealEnvCfg(DirectRLEnvCfg):
         replicate_physics=False,
         clone_in_fabric=False,
     )
+
+    # Carry full task-level world state in rl_games checkpoints so a resumed
+    # run continues without a mass environment reset (warm resume).
+    checkpoint_env_state: bool = True
 
     # --- Sectioned sub-configs (mirror YAML sections 1:1) ---
     assets: AssetsCfg = AssetsCfg()

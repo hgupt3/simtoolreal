@@ -270,6 +270,15 @@ def register_rlgames_env(
     from rl_games.common import env_configurations, vecenv
     from isaaclab_rl.rl_games import RlGamesGpuEnv, RlGamesVecEnvWrapper
 
+    class _EnvStateRlGamesGpuEnv(RlGamesGpuEnv):
+        """Passthrough for warm-resume env state (rl_games checkpoint hooks)."""
+
+        def get_env_state(self):
+            return self.env.get_env_state()
+
+        def set_env_state(self, env_state):
+            self.env.set_env_state(env_state)
+
     wrapper_cls = RlGamesVecEnvWrapper
     if "teacher_obs" in env.unwrapped.single_observation_space.spaces:
         class _DAggerRlGamesVecEnvWrapper(RlGamesVecEnvWrapper):
@@ -293,10 +302,26 @@ def register_rlgames_env(
                 return gym.spaces.Box(-self._clip_obs, self._clip_obs, spec.shape, dtype=spec.dtype)
         wrapper_cls = _DAggerRlGamesVecEnvWrapper
 
-    wrapped = wrapper_cls(env, rl_device, clip_obs, clip_actions)
+    class _EnvStateVecEnvWrapper(wrapper_cls):
+        """Warm-resume env state, piercing every gym wrapper via unwrapped."""
+
+        def get_env_state(self):
+            fn = getattr(self.unwrapped, "get_env_state", None)
+            return None if fn is None else fn()
+
+        def set_env_state(self, env_state):
+            fn = getattr(self.unwrapped, "set_env_state", None)
+            if fn is not None:
+                fn(env_state)
+            elif env_state is not None:
+                raise ValueError(
+                    "checkpoint carries env_state but the env cannot restore it"
+                )
+
+    wrapped = _EnvStateVecEnvWrapper(env, rl_device, clip_obs, clip_actions)
     vecenv.register(
         "IsaacRlgWrapper",
-        lambda config_name, num_actors, **kw: RlGamesGpuEnv(config_name, num_actors, **kw),
+        lambda config_name, num_actors, **kw: _EnvStateRlGamesGpuEnv(config_name, num_actors, **kw),
     )
     env_configurations.register(
         name,
