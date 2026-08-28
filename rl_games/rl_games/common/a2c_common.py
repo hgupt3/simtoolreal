@@ -436,17 +436,35 @@ class A2CBase(BaseAlgorithm):
                 self.writer.add_scalar(
                     'info/noise_sigma_mean',
                     sum(_s for _, _s in _vals) / len(_vals), frame)
-        _add_names = getattr(getattr(self.model, 'a2c_network', None),
-                             'noise_eigadd_names', None)
+        _net = getattr(self.model, 'a2c_network', None)
+        _add_names = getattr(_net, 'noise_eigadd_names', None)
         if _add_names:
-            _ls = getattr(self.model.a2c_network, 'noise_eigadd_logsig', None)
+            _ls = getattr(_net, 'noise_eigadd_logsig', None)
+            _sig = getattr(_net, 'sigma', None)
             if _ls is not None:
-                _sv = torch.exp(_ls.detach()).cpu().tolist()
-                for _n, _s in zip(_add_names, _sv):
-                    self.writer.add_scalar(
-                        f'info/noise_eigadd_sigma/{_n}', _s, frame)
-                self.writer.add_scalar('info/noise_eigadd_sigma_mean',
-                                       sum(_sv) / len(_sv), frame)
+                with torch.no_grad():
+                    _s = torch.exp(_ls.detach())
+                    _sv = _s.cpu().tolist()
+                    for _n, _si in zip(_add_names, _sv):
+                        self.writer.add_scalar(
+                            f'info/noise_eigadd_sigma/{_n}', _si, frame)
+                    self.writer.add_scalar('info/noise_eigadd_sigma_mean',
+                                           sum(_sv) / len(_sv), frame)
+                    if isinstance(_sig, torch.Tensor):
+                        # decoded eigen-noise RMS over the n action channels:
+                        # diag(B^T S^2 B)_j = sum_k s_k^2 B[k, j]^2
+                        _B = _net.noise_eigadd_basis
+                        _diag = ((_s ** 2).unsqueeze(-1) * _B ** 2).sum(dim=0)
+                        _eig_rms = float(torch.sqrt(_diag.mean()))
+                        _jsig = torch.exp(_sig.detach()).flatten()
+                        _joint_rms = float(torch.sqrt((_jsig ** 2).mean()))
+                        self.writer.add_scalar(
+                            'info/noise_eigadd_eigen_rms', _eig_rms, frame)
+                        self.writer.add_scalar(
+                            'info/noise_eigadd_joint_rms', _joint_rms, frame)
+                        self.writer.add_scalar(
+                            'info/noise_eigadd_eigen_joint_ratio',
+                            _eig_rms / _joint_rms, frame)
         _corr_logit = getattr(getattr(self.model, 'a2c_network', None), 'noise_corr_logit', None)
         if _corr_logit is not None:
             _w = torch.sigmoid(_corr_logit.detach()).cpu()

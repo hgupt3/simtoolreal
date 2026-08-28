@@ -451,17 +451,24 @@ class A2CBuilder(NetworkBuilder):
                         # deliberately NOT orthonormal -- non-uniform joint
                         # half-ranges destroy the radians-space orthogonality.
                         # Guard what actually matters instead: finiteness and
-                        # a non-degenerate (full row rank) direction set.
+                        # a non-degenerate direction set. The rank test uses an
+                        # explicit 1e-6 relative singular-value tolerance, not
+                        # numpy's default: the basis is stored as float32, and
+                        # at numpy's default tolerance a merely near-collinear
+                        # bundle (smallest sv ~1e-8 of the largest) is waved
+                        # through. This is the only structural check left on B
+                        # once orthonormality is relaxed, so it has to bite.
                         if not _np.all(_np.isfinite(_basis)):
                             raise ValueError(
                                 'noise_eigen_additive basis is not finite')
-                        if _np.linalg.matrix_rank(
-                                _basis.astype(_np.float64)) != _k:
+                        _sv = _np.linalg.svd(
+                            _basis.astype(_np.float64), compute_uv=False)
+                        if _sv.size < _k or _sv[-1] < 1e-6 * _sv[0]:
                             raise ValueError(
                                 'noise_eigen_additive basis is rank deficient '
-                                '(%d directions, rank %d)'
-                                % (_k, _np.linalg.matrix_rank(
-                                    _basis.astype(_np.float64))))
+                                '(%d directions, smallest singular value %.3e, '
+                                'largest %.3e, tol 1e-6 relative)'
+                                % (_k, _sv[-1], _sv[0]))
                         _jg = _z['joint_gains'].astype(_np.float64)
                         _eg = _z['eigen_gains'].astype(_np.float64)
                         if _jg.shape != (actions_num,) or _np.any(_jg <= 0.0):
