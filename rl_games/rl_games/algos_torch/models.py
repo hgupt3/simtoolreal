@@ -360,8 +360,9 @@ class ModelA2CContinuousLogStd(BaseModel):
         def _eigadd_chol(self, std):
             """Cholesky of K = I + S B D^-1 B^T S for Sigma = D + B^T S^2 B.
 
-            B is the (K, n) orthonormal eigen block, S = diag(exp(logsig)),
-            D = diag(std^2). K is (N, K, K) when std is per-row.
+            B is the (K, n) eigen direction block (arbitrary, not required to
+            be orthonormal), S = diag(exp(logsig)), D = diag(std^2). K is
+            (N, K, K) when std is per-row.
             """
             net = self.a2c_network
             B8 = net.noise_eigadd_basis

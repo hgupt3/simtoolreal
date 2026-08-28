@@ -440,10 +440,28 @@ class A2CBuilder(NetworkBuilder):
                                 'noise_eigen_additive basis shape %s != (K, %d)'
                                 % (_basis.shape, actions_num))
                         _k = _basis.shape[0]
-                        if _np.abs(_basis @ _basis.T
-                                   - _np.eye(_k)).max() > 1e-5:
+                        # No orthonormality requirement on this path. The
+                        # eigadd covariance Sigma = D + B^T S^2 B and its
+                        # Woodbury/determinant-lemma log-prob are exact for an
+                        # ARBITRARY B; only the eignoise seam above needs an
+                        # orthonormal basis (it is a rotation and relies on
+                        # |det| = 1). The final-paper eig_noise bundles carry
+                        # v18 PCA directions rescaled into normalized action
+                        # units (components / joint_half_range), which are
+                        # deliberately NOT orthonormal -- non-uniform joint
+                        # half-ranges destroy the radians-space orthogonality.
+                        # Guard what actually matters instead: finiteness and
+                        # a non-degenerate (full row rank) direction set.
+                        if not _np.all(_np.isfinite(_basis)):
                             raise ValueError(
-                                'noise basis rows are not orthonormal')
+                                'noise_eigen_additive basis is not finite')
+                        if _np.linalg.matrix_rank(
+                                _basis.astype(_np.float64)) != _k:
+                            raise ValueError(
+                                'noise_eigen_additive basis is rank deficient '
+                                '(%d directions, rank %d)'
+                                % (_k, _np.linalg.matrix_rank(
+                                    _basis.astype(_np.float64))))
                         _jg = _z['joint_gains'].astype(_np.float64)
                         _eg = _z['eigen_gains'].astype(_np.float64)
                         if _jg.shape != (actions_num,) or _np.any(_jg <= 0.0):
