@@ -901,14 +901,35 @@ class A2CBase(BaseAlgorithm):
             self.central_value_net.load_state_dict(weights['assymetric_vf_nets'])
 
         self.optimizer.load_state_dict(weights['optimizer'])
-        # Restore the adaptive-KL scheduler state; checkpoints from before the
-        # last_lr key fall back to the optimizer's restored param-group LR
-        # (pre-fix behavior) and keep the config entropy_coef.
-        self.last_lr = weights.get('last_lr', weights['optimizer']['param_groups'][0]['lr'])
-        self.entropy_coef = weights.get('entropy_coef', self.entropy_coef)
+        # Restore the adaptive-KL scheduler state. Precedence per key:
+        # 1) the value persisted in the checkpoint; 2) an explicit
+        # RLG_RESUME_LAST_LR / RLG_RESUME_ENTROPY_COEF override (rollbacks
+        # onto pre-fix checkpoints, values read from wandb history);
+        # 3) legacy behavior: last_lr falls back to the optimizer's restored
+        # param-group LR and entropy_coef keeps its init (config) value.
         if 'last_lr' in weights:
+            self.last_lr = weights['last_lr']
+            lr_source = 'checkpoint'
+        elif os.environ.get('RLG_RESUME_LAST_LR'):
+            self.last_lr = float(os.environ['RLG_RESUME_LAST_LR'])
+            lr_source = 'override'
+        else:
+            self.last_lr = weights['optimizer']['param_groups'][0]['lr']
+            lr_source = 'legacy-optimizer'
+        if 'entropy_coef' in weights:
+            self.entropy_coef = weights['entropy_coef']
+        elif os.environ.get('RLG_RESUME_ENTROPY_COEF'):
+            self.entropy_coef = float(os.environ['RLG_RESUME_ENTROPY_COEF'])
+        if lr_source != 'legacy-optimizer':
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = self.last_lr * param_group.get('lr_mul', 1.0)
+        # The simulator's internal solver state is not restorable, so the
+        # first post-resume rollout is polluted: collect and count it, but
+        # skip the PPO update on it (flag consumed by train_epoch).
+        self._discard_post_resume_rollout = True
+        print(f'[warm-resume] adaptive LR restored to {self.last_lr:.6g} '
+              f'(source: {lr_source}), entropy_coef {self.entropy_coef:.6g}; '
+              'first post-resume rollout will skip its PPO update')
 
         self.last_mean_rewards = weights.get('last_mean_rewards', -1000000000)
 
@@ -1583,8 +1604,30 @@ class ContinuousA2CBase(A2CBase):
 
         self.set_train()
         self.curr_frames = batch_dict.pop('played_frames')
+        if getattr(self, '_discard_post_resume_rollout', False):
+            # First rollout after a checkpoint restore: the simulator's
+            # internal solver state is not restorable, so this batch is
+            # polluted. It was collected and counted normally; skip the PPO
+            # update on it (audit 2026-08-29: c_loss shock 10-66x otherwise).
+            self._discard_post_resume_rollout = False
+            print('[warm-resume] first post-resume rollout discarded: '
+                  'PPO update skipped, frames still counted')
+            zero = torch.zeros(1, device=self.ppo_device)
+            play_time = play_time_end - play_time_start
+            extra_infos = {
+                'on_policy_contrib': [0.0],
+                'off_policy_contrib': [0.0],
+                'on_policy_grads': [torch.zeros(1)],
+                'off_policy_grads': [torch.zeros(1)],
+                'entropies': [0.0],
+                'mb_intr_rewards': ps_extras['mb_intr_rewards'],
+                'mb_extr_rewards': ps_extras['rewards'],
+            }
+            return (batch_dict['step_time'], play_time, 0.0, play_time,
+                    [zero], [zero], [zero], [zero], [zero],
+                    self.last_lr, 1.0, extra_infos)
         self.prepare_dataset(batch_dict)
-        
+
         ret_val = self.algo_observer.after_steps()
         if isinstance(ret_val, DictConfig):
             return ret_val
