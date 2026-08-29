@@ -1619,7 +1619,10 @@ class ContinuousA2CBase(A2CBase):
                 'off_policy_contrib': [0.0],
                 'on_policy_grads': [torch.zeros(1)],
                 'off_policy_grads': [torch.zeros(1)],
-                'entropies': [0.0],
+                # [] on purpose: the epoch logger indexes entropies as
+                # [minibatch, block] and skips the block loop only on the
+                # empty list; a scalar stub is 1-D and IndexErrors there.
+                'entropies': [],
                 'mb_intr_rewards': ps_extras['mb_intr_rewards'],
                 'mb_extr_rewards': ps_extras['rewards'],
             }
