@@ -370,7 +370,14 @@ class ModelA2CContinuousLogStd(BaseModel):
             invvar = std.pow(-2)
             if invvar.dim() == 1:
                 invvar = invvar.unsqueeze(0)
-            G = torch.einsum('ai,ni,bi->nab', B8, invvar, B8)
+            # G[n, a, b] = sum_i B[a, i] * invvar[n, i] * B[b, i], as a batched
+            # matmul rather than a 3-operand torch.einsum: the einsum path
+            # (opt_einsum.contract_path on its first call) pinned the whole
+            # first-rollout call stack for the life of the process, holding
+            # one rollout's buffers (~5 GB at 24576 envs) forever
+            # (measured 2026-09-06: peak 3451 -> 2571 MiB at 4096 envs,
+            # identical to the plain arm once einsum was gone).
+            G = torch.matmul(B8.unsqueeze(0) * invvar.unsqueeze(1), B8.t())
             K = (s.unsqueeze(-1) * s.unsqueeze(0)) * G
             K = K + torch.eye(s.numel(), device=K.device, dtype=K.dtype)
             return torch.linalg.cholesky(K)
