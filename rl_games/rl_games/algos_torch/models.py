@@ -290,6 +290,9 @@ class ModelA2CContinuousLogStd(BaseModel):
                     'mus' : mu,
                     'sigmas' : sigma
                 }
+                if getattr(self.a2c_network, 'noise_eigadd_basis', None) is not None:
+                    result['eigen_sigmas'] = torch.exp(
+                        self.a2c_network.noise_eigadd_logsig).expand(mu.shape[0], -1)
                 return result
             else:
                 corr = self._corr_factor()
@@ -327,6 +330,9 @@ class ModelA2CContinuousLogStd(BaseModel):
                     'mus' : mu,
                     'sigmas' : sigma
                 }
+                if getattr(self.a2c_network, 'noise_eigadd_basis', None) is not None:
+                    result['eigen_sigmas'] = torch.exp(
+                        self.a2c_network.noise_eigadd_logsig).expand(mu.shape[0], -1)
                 return result
 
         def _corr_factor(self):
