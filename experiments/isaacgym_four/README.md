@@ -160,3 +160,26 @@ friction checks, initial checkpoint saves and W&B API verification. The
 full-size smoke exercised all 24,576 environments and state capture; corrected
 resume passed a separate smoke. Packaging adds CPU checks that the portable
 configs resolve to those same recipes, plus syntax and launcher dry-run checks.
+
+## Eigen-noise KL correction
+
+The adaptive learning-rate scheduler now measures the full Gaussian KL for
+`Sigma = diag(iid_sigma**2) + B.T @ diag(eigen_sigma**2) @ B`. Rollouts save
+eigen scales alongside means and IID scales, and minibatch reference updates
+advance all three together using their pre-optimizer values. The calculation
+uses small eigen-space Cholesky solves, retaining the host's KL direction,
+recurrent masks, scheduler thresholds and plain-Gaussian path.
+
+Model checkpoint keys and noise initialization are unchanged. Existing jobs
+need a checkpoint resume under this revision to use the corrected scheduler;
+updating the source does not alter an already running process.
+
+CPU regression checks (run with the host interpreter):
+
+```bash
+PYTHONPATH=rl_games python rl_games/tests/test_eigen_kl.py
+```
+
+These check dense-Gaussian KL agreement, eigen-only changes driving the
+scheduler, recurrent minibatch snapshots, optimizer timing and native PPO
+epochs. They do not constitute a simulator training smoke.
