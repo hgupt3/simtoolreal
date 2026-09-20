@@ -25,10 +25,7 @@ def _restore(agent, args):
             weights = _load_checkpoint_weights(agent, args['checkpoint'])
             agent.set_weights(weights)
             if getattr(agent, 'has_central_value', False) and 'assymetric_vf_nets' in weights:
-                try:
-                    agent.central_value_net.load_state_dict(weights['assymetric_vf_nets'])
-                except RuntimeError as exc:
-                    print(f"Skipping central value checkpoint weights: {exc}")
+                agent.central_value_net.load_state_dict(weights['assymetric_vf_nets'], strict=True)
             print(f"=> initialized model weights from '{args['checkpoint']}'")
         else:
             raise ValueError(f"checkpoint_load_mode must be resume/weights, got {load_mode!r}")

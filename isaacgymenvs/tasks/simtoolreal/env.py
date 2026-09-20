@@ -382,7 +382,8 @@ class SimToolReal(VecTask):
             )
 
         # Init camera for wandb logging
-        self._initialize_camera_sensor(cam_pos=cam_pos, cam_target=cam_target)
+        if self.enable_camera_sensors:
+            self._initialize_camera_sensor(cam_pos=cam_pos, cam_target=cam_target)
         self._modify_render_settings_if_headless()
 
         # volume to sample target position from
@@ -2244,6 +2245,12 @@ class SimToolReal(VecTask):
 
         try:
             # by this point we don't need the temporary folder for procedurally generated assets
+            # Preserve the four captured tool assets before temporary generation is cleaned.
+            import shutil
+            capture_assets_dir = Path("capture_assets")
+            capture_assets_dir.mkdir(exist_ok=True)
+            for asset_file in self.object_asset_files[:4]:
+                shutil.copy2(asset_file, capture_assets_dir / Path(asset_file).name)
             tmp_assets_dir.cleanup()
         except Exception:
             pass

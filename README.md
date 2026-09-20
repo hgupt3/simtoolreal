@@ -169,3 +169,9 @@ This implementation builds on the following codebases:
 # Contact
 
 If you have any questions, issues, or feedback, please contact [Tyler Lum](https://tylerlum.github.io/) or [Kushal Kedia](https://kushal2000.github.io/).
+
+## Action-Bench IsaacGym fine-tuning recipe
+
+The four-run JABS/EigenDExplore fine-tuning and scratch setup, including frozen
+configs, persistent launch and resume commands, is documented in
+[experiments/isaacgym_four/README.md](experiments/isaacgym_four/README.md).
