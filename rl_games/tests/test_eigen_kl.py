@@ -1,6 +1,10 @@
 """CPU contracts for additive-eigen PPO KL, runnable in each host environment."""
 import inspect
 import math
+import tempfile
+from pathlib import Path
+
+import numpy as np
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -8,7 +12,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 from torch.distributions import MultivariateNormal, kl_divergence
-from rl_games.algos_torch import a2c_continuous, models, torch_ext
+from rl_games.algos_torch import a2c_continuous, models, model_builder, torch_ext
 from rl_games.common import a2c_common, datasets, schedulers
 
 
@@ -19,30 +23,39 @@ def dense(mu, sigma, eigen_sigma, basis):
 
 
 class Actor(nn.Module):
-    def __init__(self, eigen=True):
+    def __init__(self, eigen=True, grouped=False):
         super().__init__()
         self.mu = nn.Parameter(torch.zeros(7))
         self.logstd = nn.Parameter(torch.zeros(7))
         self.value = nn.Parameter(torch.zeros(1))
+        self.grouped = grouped
+        if grouped:
+            self.sigma_ids = torch.tensor([50., 25., 0.])
+            self.sigma_id_idx = 0
+            self.logstd = nn.Parameter(torch.zeros(3, 7))
         if eigen:
             self.register_buffer('noise_eigadd_basis', torch.randn(3, 7) * 0.3)
-            self.noise_eigadd_logsig = nn.Parameter(torch.zeros(3))
+            self.noise_eigadd_logsig = nn.Parameter(torch.zeros(3, 3) if grouped else torch.zeros(3))
 
     def forward(self, data):
         n = len(data['obs'])
-        return (self.mu.expand(n, -1) + 0., self.logstd.expand(n, -1) + 0.,
+        std = self.logstd
+        if self.grouped:
+            idx = (data['obs'][:, 0, None] == self.sigma_ids).float().argmax(1)
+            std = std[idx]
+        return (self.mu.expand(n, -1) + 0., std.expand(n, -1) + 0.,
                 self.value.expand(n, -1) + 0., data.get('rnn_states'))
 
     def get_aux_loss(self):
         return None
 
 
-def model(eigen=True):
+def model(eigen=True, grouped=False):
     kwargs = dict(obs_shape=(2,), normalize_value=False,
                   normalize_input=False, value_size=1)
     if 'extra_info_start_idx' in inspect.signature(models.BaseModelNetwork).parameters:
         kwargs['extra_info_start_idx'] = None
-    return models.ModelA2CContinuousLogStd.Network(Actor(eigen), **kwargs)
+    return models.ModelA2CContinuousLogStd.Network(Actor(eigen, grouped), **kwargs)
 
 
 class EigenKLTest(unittest.TestCase):
@@ -98,15 +111,81 @@ class EigenKLTest(unittest.TestCase):
         self.assertEqual(got.dtype, torch.float32)
         torch.testing.assert_close(got, expected, atol=2e-6, rtol=1e-5)
 
+    def test_grouped_sampling_density_entropy_and_isolation(self):
+        m = model(grouped=True)
+        net = m.a2c_network
+        with torch.no_grad():
+            net.noise_eigadd_logsig.copy_(torch.tensor([
+                [-1., -.8, -.6], [0., .2, .4], [.6, .8, 1.]]))
+            net.logstd.copy_(torch.randn(3, 7) * .2)
+        # Permuted group IDs also model SAPG relabeling: the current obs must
+        # determine scales, never original row order or rollout group index.
+        obs = torch.tensor([[0., 1.], [50., 2.], [25., 3.], [0., 4.]])
+        idx = torch.tensor([2, 0, 1, 2])
+        expected_s = net.noise_eigadd_logsig[idx].exp()
+        eps = torch.tensor([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.], [1., 1., 1.]])
+        with patch.object(torch, 'randn_like', return_value=torch.zeros(4, 7)), \
+                patch.object(torch, 'randn', return_value=eps):
+            sample = m({'is_train': False, 'obs': obs.clone()})
+        torch.testing.assert_close(sample['actions'], (eps * expected_s) @ net.noise_eigadd_basis)
+        torch.testing.assert_close(sample['eigen_sigmas'], expected_s)
+        distr = dense(sample['mus'], sample['sigmas'], expected_s, net.noise_eigadd_basis)
+        train = m({'is_train': True, 'obs': obs.clone(), 'prev_actions': sample['actions'].detach()})
+        torch.testing.assert_close(sample['neglogpacs'], -distr.log_prob(sample['actions']), atol=2e-6, rtol=1e-5)
+        torch.testing.assert_close(train['prev_neglogp'], sample['neglogpacs'])
+        torch.testing.assert_close(train['entropy'], distr.entropy(), atol=2e-6, rtol=1e-5)
+        # Entropy pressure from the exploratory group must leave both other
+        # groups' eigen parameters untouched, including the leader (ID 0).
+        (-train['entropy'][1]).backward()
+        self.assertGreater(float(net.noise_eigadd_logsig.grad[0].norm()), 0.)
+        self.assertEqual(int(torch.count_nonzero(net.noise_eigadd_logsig.grad[1:])), 0)
+        self.assertEqual(int(torch.count_nonzero(net.logstd.grad[1:])), 0)
+        old_leader = net.noise_eigadd_logsig[2].detach().clone()
+        torch.optim.SGD(m.parameters(), lr=.1).step()
+        torch.testing.assert_close(net.noise_eigadd_logsig[2], old_leader, rtol=0, atol=0)
+        with self.assertRaisesRegex(ValueError, 'per-row scales'):
+            m.neglogp(sample['actions'], sample['mus'], sample['sigmas'], sample['sigmas'].log())
+        old = m.state_dict()
+        old['a2c_network.noise_eigadd_logsig'] = old['a2c_network.noise_eigadd_logsig'][0]
+        with self.assertRaisesRegex(RuntimeError, 'size mismatch'):
+            m.load_state_dict(old)
+
+    def test_native_builder_initializes_independent_group_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / 'basis.npz'
+            basis = np.eye(3, 7, dtype=np.float32)
+            gains = np.array([.25, 1., 4.])
+            np.savez(artifact, basis=basis, joint_gains=np.ones(7),
+                     eigen_gains=gains, names=np.array(['a', 'b', 'c']))
+            params = {'model': {'name': 'continuous_a2c_logstd'}, 'network': {
+                'name': 'actor_critic', 'separate': False,
+                'space': {'continuous': {'mu_activation': 'None', 'sigma_activation': 'None',
+                    'mu_init': {'name': 'default'}, 'sigma_init': {'name': 'const_initializer', 'val': 0},
+                    'fixed_sigma': 'coef_cond', 'noise_eigen_additive': str(artifact)}},
+                'mlp': {'units': [16], 'activation': 'elu', 'd2rl': False,
+                    'initializer': {'name': 'default'}, 'regularizer': {'name': 'None'}}}}
+            m = model_builder.ModelBuilder().load(params).build(dict(
+                actions_num=7, input_shape=(3,), num_seqs=6, value_size=1,
+                normalize_value=False, normalize_input=False, type='extra_param',
+                coef_ids=torch.linspace(50., 0., 6), coef_id_idx=2))
+            s = m.a2c_network.noise_eigadd_logsig
+            self.assertEqual(tuple(s.shape), (6, 3))
+            torch.testing.assert_close(s.exp(), torch.tensor(gains).float().sqrt().expand(6, -1))
+            with torch.no_grad():
+                s[0].add_(1.)
+            torch.testing.assert_close(s[1:].exp(), torch.tensor(gains).float().sqrt().expand(5, -1))
+
     def test_collection_and_minibatch_reference_updates(self):
         for eigen in (False, True):
             for rnn in (False, True):
                 with self.subTest(eigen=eigen, rnn=rnn):
                     self.check_training(eigen, rnn)
+                    if eigen:
+                        self.check_training(eigen, rnn, grouped=True)
 
-    def check_training(self, eigen, rnn):
+    def check_training(self, eigen, rnn, grouped=False):
         agent = a2c_continuous.A2CAgent.__new__(a2c_continuous.A2CAgent)
-        agent.model = model(eigen)
+        agent.model = model(eigen, grouped)
         def init_buffer(this):
             this.experience_buffer = SimpleNamespace(tensor_dict={'sigmas': torch.zeros(2, 4, 7)})
         with patch.object(a2c_common.A2CBase, 'init_tensors', init_buffer):
@@ -119,6 +198,8 @@ class EigenKLTest(unittest.TestCase):
         agent.normalize_value = agent.normalize_advantage = agent.has_central_value = False
         agent.dataset = datasets.PPODataset(8, 4, False, rnn, 'cpu', 2)
         obs = torch.randn(8, 2)
+        if grouped:
+            obs[:, 0] = torch.tensor([50., 25., 0., 50., 25., 0., 25., 0.])
         with torch.no_grad():
             rollout = agent.model({'is_train': False, 'obs': obs.clone()})
         batch = {k: v.clone() for k, v in rollout.items() if isinstance(v, torch.Tensor)}
